@@ -102,10 +102,13 @@ else:
             
             if st.button("Ingresar"):
                 clave_hash = encriptar_contrasena(pass_input)
-                # Compara contra Supabase
+                # Consulta correcta a Supabase
                 resultado = supabase.table("usuarios_admin").select("*").eq("usuario", user_input).eq("contrasena_encriptada", clave_hash).execute()
-                if resultado.data:
+                
+                # Verificación correcta de la lista de datos en Python
+                if resultado.data and len(resultado.data) > 0:
                     st.session_state.logged_in = True
+                    st.success("¡Bienvenido de vuelta!")
                     st.rerun()
                 else:
                     st.error("❌ Credenciales incorrectas.")
