@@ -24,9 +24,14 @@ def encriptar_contrasena(password):
     return hashlib.sha256(password.encode()).hexdigest()
 
 def verificar_primer_inicio():
-    # Consulta si la tabla de administradores está vacía
-    respuesta = supabase.table("usuarios_admin").select("id", count="exact").execute()
-    return respuesta.count == 0
+    try:
+        # En Python se pide el conteo dentro del select pero con un formato limpio
+        respuesta = supabase.table("usuarios_admin").select("*", count="exact").execute()
+        # Si la lista de datos está vacía, significa que no hay administradores
+        return len(respuesta.data) == 0
+    except Exception as e:
+        # Si la tabla aún no se crea o hay otro problema, asumimos que está vacío por seguridad
+        return True
 
 # --- ESTADOS DE LA SESIÓN ---
 if "logged_in" not in st.session_state:
