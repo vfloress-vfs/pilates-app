@@ -2,10 +2,10 @@ import streamlit as st
 import hashlib
 from supabase import create_client, Client
 
-# 1. Configuración de la página de Streamlit
+# 1. CONFIGURACIÓN DE LA PÁGINA (Debe ser la primera línea de Streamlit)
 st.set_page_config(page_title="Pilates Studio Cloud", page_icon="🧘", layout="wide")
 
-# 2. Conexión segura a Supabase usando Secrets
+# 2. CONEXIÓN SEGURA A SUPABASE USANDO SECRETS
 @st.cache_resource
 def conectar_supabase() -> Client:
     url = st.secrets["SUPABASE_URL"]
@@ -18,7 +18,7 @@ except Exception as e:
     st.error("❌ Error de conexión a la base de datos. Verifica tus Secrets.")
     st.stop()
 
-# 3. Funciones de Seguridad
+# 3. FUNCIONES DE SEGURIDAD
 def encriptar_contrasena(password):
     return hashlib.sha256(password.encode()).hexdigest()
 
@@ -55,13 +55,16 @@ if verificar_primer_inicio():
         elif len(nueva_clave) < 6:
             st.error("⚠️ La contraseña debe tener al menos 6 caracteres.")
         else:
-            clave_segura = encriptar_contrasena(nueva_clave)
-            supabase.table("usuarios_admin").insert({
-                "usuario": nuevo_usuario,
-                "contrasena_encriptada": clave_segura
-            }).execute()
-            st.success("¡Sistema activado con éxito! Recargando la aplicación...")
-            st.rerun()
+            try:
+                clave_segura = encriptar_contrasena(nueva_clave)
+                supabase.table("usuarios_admin").insert({
+                    "usuario": nuevo_usuario,
+                    "contrasena_encriptada": clave_segura
+                }).execute()
+                st.success("¡Sistema activado con éxito! Recargando la aplicación...")
+                st.rerun()
+            except Exception as e:
+                st.error(f"❌ Error al guardar el administrador: {e}")
 
 # CASO 2: EL SISTEMA YA TIENE DUEÑO (Flujo Normal)
 else:
@@ -73,13 +76,21 @@ else:
         st.title("📱 Portal del Alumno")
         telefono_alumno = st.text_input("Ingresa tu teléfono registrado para ver tu pase de acceso:")
         if telefono_alumno:
-            alumno = supabase.table("alumnos").select("*").eq("telefono", telefono_alumno).execute()
-            if alumno.data and len(alumno.data) > 0:
-                datos_alumno = alumno.data[0]
-                st.success(f"¡Hola, {datos_alumno['nombre']} {datos_alumno['apellido']}!")
-                st.info("Aquí podrás ver tus clases restantes, reservar según tu Plan y generar tu código QR.")
-            else:
-                st.error("❌ Teléfono no registrado. Por favor, inscríbete con el administrador.")
+            try:
+                # Consulta blindada a Supabase
+                alumno = supabase.table("alumnos").select("*").eq("telefono", telefono_alumno).execute()
+                
+                # Validación segura del formato de datos devuelto
+                if alumno and hasattr(alumno, 'data') and alumno.data and len(alumno.data) > 0:
+                    datos_alumno = alumno.data[0] # Extrae de forma segura el primer registro de la lista
+                    nombre = datos_alumno.get('nombre', '')
+                    apellido = datos_alumno.get('apellido', '')
+                    st.success(f"¡Hola, {nombre} {apellido}!")
+                    st.info("Aquí podrás ver tus clases restantes, reservar según tu Plan y generar tu código QR.")
+                else:
+                    st.error("❌ Teléfono no registrado. Por favor, inscríbete con el administrador.")
+            except Exception as e:
+                st.warning("💡 El portal de alumnos está activo, pero aún no hay clientes registrados en la base de datos.")
                 
     # --- VISTA TABLET ---
     elif rol_acceso == "📲 Tablet Check-in":
@@ -90,20 +101,23 @@ else:
     # --- VISTA ADMINISTRADOR ---
     elif rol_acceso == "💼 Administrador":
         if not st.session_state.logged_in:
-            st.title("🔐 Panel Administrativo Private")
+            st.title("🔐 Panel Administrativo Privado")
             user_input = st.text_input("Usuario:")
             pass_input = st.text_input("Contraseña:", type="password")
             
             if st.button("Ingresar"):
-                clave_hash = encriptar_contrasena(pass_input)
-                resultado = supabase.table("usuarios_admin").select("*").eq("usuario", user_input).eq("contrasena_encriptada", clave_hash).execute()
-                
-                if resultado.data and len(resultado.data) > 0:
-                    st.session_state.logged_in = True
-                    st.success("¡Bienvenido de vuelta!")
-                    st.rerun()
-                else:
-                    st.error("❌ Credenciales incorrectas.")
+                try:
+                    clave_hash = encriptar_contrasena(pass_input)
+                    resultado = supabase.table("usuarios_admin").select("*").eq("usuario", user_input).eq("contrasena_encriptada", clave_hash).execute()
+                    
+                    if resultado and hasattr(resultado, 'data') and resultado.data and len(resultado.data) > 0:
+                        st.session_state.logged_in = True
+                        st.success("¡Bienvenido de vuelta!")
+                        st.rerun()
+                    else:
+                        st.error("❌ Credenciales incorrectas.")
+                except Exception as e:
+                    st.error(f"❌ Error al validar credenciales: {e}")
         else:
             st.title("💼 Panel de Control Global (Dueño)")
             if st.sidebar.button("Cerrar Sesión"):
@@ -118,8 +132,11 @@ else:
                 direccion_local = st.text_input("Dirección:")
                 if st.button("Guardar Local"):
                     if nombre_local:
-                        supabase.table("locales").insert({"nombre": nombre_local, "direccion": direccion_local}).execute()
-                        st.success(f"¡Sede {nombre_local} registrada exitosamente!")
+                        try:
+                            supabase.table("locales").insert({"nombre": nombre_local, "direccion": direccion_local}).execute()
+                            st.success(f"¡Sede {nombre_local} registrada exitosamente!")
+                        except Exception as e:
+                            st.error(f"❌ Error al guardar el local: {e}")
                     else:
                         st.error("❌ El nombre del local es obligatorio.")
                         
