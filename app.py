@@ -5,10 +5,9 @@ from supabase import create_client, Client
 # 1. Configuración de la página de Streamlit
 st.set_page_config(page_title="Pilates Studio Cloud", page_icon="🧘", layout="wide")
 
-# 2. Conclusión segura a Supabase usando Secrets
+# 2. Conexión segura a Supabase usando Secrets
 @st.cache_resource
 def conectar_supabase() -> Client:
-    # Lee los datos ocultos configurados en Streamlit Cloud
     url = st.secrets["SUPABASE_URL"]
     key = st.secrets["SUPABASE_KEY"]
     return create_client(url, key)
@@ -25,12 +24,9 @@ def encriptar_contrasena(password):
 
 def verificar_primer_inicio():
     try:
-        # En Python se pide el conteo dentro del select pero con un formato limpio
         respuesta = supabase.table("usuarios_admin").select("*", count="exact").execute()
-        # Si la lista de datos está vacía, significa que no hay administradores
         return len(respuesta.data) == 0
     except Exception as e:
-        # Si la tabla aún no se crea o hay otro problema, asumimos que está vacío por seguridad
         return True
 
 # --- ESTADOS DE LA SESIÓN ---
@@ -59,7 +55,6 @@ if verificar_primer_inicio():
         elif len(nueva_clave) < 6:
             st.error("⚠️ La contraseña debe tener al menos 6 caracteres.")
         else:
-            # Guarda el administrador real en Supabase
             clave_segura = encriptar_contrasena(nueva_clave)
             supabase.table("usuarios_admin").insert({
                 "usuario": nuevo_usuario,
@@ -78,34 +73,31 @@ else:
         st.title("📱 Portal del Alumno")
         telefono_alumno = st.text_input("Ingresa tu teléfono registrado para ver tu pase de acceso:")
         if telefono_alumno:
-            # Busca al alumno real en la base de datos
             alumno = supabase.table("alumnos").select("*").eq("telefono", telefono_alumno).execute()
-    if alumno.data:
-        # Seleccionamos el primer alumno encontrado en la lista [0]
-        datos_alumno = alumno.data[0]
-        st.success(f"¡Hola, {datos_alumno['nombre']} {datos_alumno['apellido']}!")
-        st.info("Aquí podrás ver tus clases restantes, reservar según tu Plan y generar tu código QR.")
-    else:
-        st.error("❌ Teléfono no registrado. Por favor, inscríbete con el administrador.")
+            if alumno.data and len(alumno.data) > 0:
+                datos_alumno = alumno.data[0]
+                st.success(f"¡Hola, {datos_alumno['nombre']} {datos_alumno['apellido']}!")
+                st.info("Aquí podrás ver tus clases restantes, reservar según tu Plan y generar tu código QR.")
+            else:
+                st.error("❌ Teléfono no registrado. Por favor, inscríbete con el administrador.")
                 
     # --- VISTA TABLET ---
     elif rol_acceso == "📲 Tablet Check-in":
         st.title("📸 Estación de Check-in (Tablet del Local)")
+        st.write("Coloca esta pantalla fija en la entrada de tu estudio.")
         st.camera_input("Muestra tu código QR frente a la cámara")
         
-    # --- VISTA ADMINISTRADOR (CON LOGIN REAL) ---
+    # --- VISTA ADMINISTRADOR ---
     elif rol_acceso == "💼 Administrador":
         if not st.session_state.logged_in:
-            st.title("🔐 Panel Administrativo")
+            st.title("🔐 Panel Administrativo Private")
             user_input = st.text_input("Usuario:")
             pass_input = st.text_input("Contraseña:", type="password")
             
             if st.button("Ingresar"):
                 clave_hash = encriptar_contrasena(pass_input)
-                # Consulta correcta a Supabase
                 resultado = supabase.table("usuarios_admin").select("*").eq("usuario", user_input).eq("contrasena_encriptada", clave_hash).execute()
                 
-                # Verificación correcta de la lista de datos en Python
                 if resultado.data and len(resultado.data) > 0:
                     st.session_state.logged_in = True
                     st.success("¡Bienvenido de vuelta!")
@@ -113,7 +105,7 @@ else:
                 else:
                     st.error("❌ Credenciales incorrectas.")
         else:
-            st.title("💼 Panel de Control Global")
+            st.title("💼 Panel de Control Global (Dueño)")
             if st.sidebar.button("Cerrar Sesión"):
                 st.session_state.logged_in = False
                 st.rerun()
@@ -128,3 +120,9 @@ else:
                     if nombre_local:
                         supabase.table("locales").insert({"nombre": nombre_local, "direccion": direccion_local}).execute()
                         st.success(f"¡Sede {nombre_local} registrada exitosamente!")
+                    else:
+                        st.error("❌ El nombre del local es obligatorio.")
+                        
+            with pestanas[1]:
+                st.subheader("Inscripción de Clientes Nuevos")
+                st.write("Aquí podrás registrar nuevos alumnos próximamente.")
