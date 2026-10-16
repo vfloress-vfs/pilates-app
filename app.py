@@ -80,11 +80,13 @@ else:
         if telefono_alumno:
             # Busca al alumno real en la base de datos
             alumno = supabase.table("alumnos").select("*").eq("telefono", telefono_alumno).execute()
-            if alumno.data:
-                st.success(f"¡Hola, {alumno.data[0]['nombre']}!")
-                # Aquí la IA renderizará sus pases y código QR
-            else:
-                st.error("❌ Teléfono no registrado. Por favor, inscríbete con el administrador.")
+    if alumno.data:
+        # Seleccionamos el primer alumno encontrado en la lista [0]
+        datos_alumno = alumno.data[0]
+        st.success(f"¡Hola, {datos_alumno['nombre']} {datos_alumno['apellido']}!")
+        st.info("Aquí podrás ver tus clases restantes, reservar según tu Plan y generar tu código QR.")
+    else:
+        st.error("❌ Teléfono no registrado. Por favor, inscríbete con el administrador.")
                 
     # --- VISTA TABLET ---
     elif rol_acceso == "📲 Tablet Check-in":
