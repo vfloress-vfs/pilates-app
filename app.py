@@ -204,7 +204,8 @@ else:
                                 }).execute()
                                 
                                 if nuevo_alumno and hasattr(nuevo_alumno, 'data') and nuevo_alumno.data and len(nuevo_alumno.data) > 0:
-                                    datos_nuevo_alumno = nuevo_alumno.data
+                                    # CORRECCIÓN DEFINITIVA: Se extrae la primera posición de la lista [0]
+                                    datos_nuevo_alumno = nuevo_alumno.data[0]
                                     id_alumno = datos_nuevo_alumno['id']
                                     total_c = opciones_planes[tipo_p]
                                     
