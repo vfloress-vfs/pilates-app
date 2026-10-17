@@ -206,7 +206,12 @@ else:
                                 st.success(f"🎉 ¡Alumno {a_nombre} {a_apellido} registrado con éxito! Se cargaron sus {total_c} clases.")
                                 st.rerun()
                         except Exception as e:
-                            st.error(f"❌ Error en la inscripción: {e}")
+                            # CONTROL DE ERRORES DE APLICACIÓN CON IA
+                            error_msg = str(e)
+                            if "23505" in error_msg or "already exists" in error_msg.lower():
+                                st.error(f"⚠️ El alumno con el teléfono **{a_telefono}** ya se encuentra registrado en el sistema.")
+                            else:
+                                st.error(f"❌ Error en la inscripción: {e}")
 
             with pestanas[2]:
                 st.subheader("Alumnos Registrados en el Sistema")
