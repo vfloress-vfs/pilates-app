@@ -125,7 +125,8 @@ else:
                 st.session_state.logged_in = False
                 st.rerun()
                 
-            pestanas = st.tabs(["🏢 Configurar Sucursales", "👥 Inscribir Alumno", "📋 Lista de Alumnos"])
+            # Definición de las 4 pestañas de gestión
+            pestanas = st.tabs(["🏢 Configurar Sucursales", "👥 Inscribir Alumno", "🔄 Renovaciones", "📋 Lista de Alumnos"])
             
             with pestanas[0]:
                 st.subheader("Alta de Locales")
@@ -136,6 +137,7 @@ else:
                         try:
                             supabase.table("locales").insert({"nombre": nombre_local, "direccion": direccion_local}).execute()
                             st.success(f"¡Sede {nombre_local} registrada exitosamente!")
+                            st.rerun()
                         except Exception as e:
                             st.error(f"❌ Error al guardar el local: {e}")
                     else:
@@ -162,7 +164,7 @@ else:
                     modalidad = st.selectbox("Modalidad de Acceso:", ["Fixed", "Flex"])
                     
                     if modalidad == "Fixed":
-                        sede_asignada = st.selectbox("Sede Base / Asignada:", list(opciones_locales.keys()) if opciones_locales else ["Primero registra un local"])
+                        sede_assigned = st.selectbox("Sede Base / Asignada:", list(opciones_locales.keys()) if opciones_locales else ["Primero registra un local"])
                     else:
                         st.write("✨ Plan Flex seleccionado: El alumno tendrá acceso a todas las sedes libres.")
                 
@@ -173,7 +175,6 @@ else:
                         st.error("❌ Debes registrar al menos un local en la pestaña anterior antes de inscribir alumnos Fixed.")
                     else:
                         try:
-                            # 1. Registrar al Alumno en la base de datos
                             nuevo_alumno = supabase.table("alumnos").insert({
                                 "nombre": a_nombre,
                                 "apellido": a_apellido,
@@ -184,15 +185,12 @@ else:
                                 datos_nuevo_alumno = nuevo_alumno.data[0]
                                 id_alumno = datos_nuevo_alumno['id']
                                 
-                                # Mapear créditos de clases
                                 mapeo_clases = {"4 clases": 4, "8 clases": 8, "12 clases": 12, "Mes completo": 999, "Privado": 8}
                                 total_c = mapeo_clases[tipo_p]
                                 
-                                # Fecha de vencimiento estándar (30 días)
                                 fecha_vence = (datetime.now() + timedelta(days=30)).date().isoformat()
-                                id_local_fijo = opciones_locales[sede_asignada] if modalidad == "Fixed" and opciones_locales else None
+                                id_local_fijo = opciones_locales[sede_assigned] if modalidad == "Fixed" and opciones_locales else None
                                 
-                                # 2. Cargar el paquete a favor del cliente
                                 supabase.table("paquetes").insert({
                                     "alumno_id": id_alumno,
                                     "tipo_paquete": tipo_p,
@@ -206,14 +204,64 @@ else:
                                 st.success(f"🎉 ¡Alumno {a_nombre} {a_apellido} registrado con éxito! Se cargaron sus {total_c} clases.")
                                 st.rerun()
                         except Exception as e:
-                            # CONTROL DE ERRORES DE APLICACIÓN CON IA
                             error_msg = str(e)
                             if "23505" in error_msg or "already exists" in error_msg.lower():
                                 st.error(f"⚠️ El alumno con el teléfono **{a_telefono}** ya se encuentra registrado en el sistema.")
                             else:
                                 st.error(f"❌ Error en la inscripción: {e}")
-
             with pestanas[2]:
+                st.subheader("🔄 Renovar Paquete de Alumno Existente")
+                st.write("Selecciona un alumno para renovar su membresía y cargarle nuevos créditos.")
+                
+                try:
+                    alumnos_res = supabase.table("alumnos").select("id", "nombre", "apellido").order("nombre").execute()
+                    lista_alumnos = alumnos_res.data if alumnos_res.data else []
+                    dicc_alumnos = {f"{al['nombre']} {al['apellido']}": al['id'] for al in lista_alumnos}
+                    
+                    if not dicc_alumnos:
+                        st.info("Aún no tienes alumnos registrados para poder renovar.")
+                    else:
+                        alumno_sel = st.selectbox("Selecciona el Alumno a renovar:", list(dicc_alumnos.keys()))
+                        id_alumno_sel = dicc_alumnos[alumno_sel]
+                        
+                        col_ren1, col_ren2 = st.columns(2)
+                        with col_ren1:
+                            tipo_p_nuevo = st.selectbox("Nuevo Paquete:", ["4 clases", "8 clases", "12 clases", "Mes completo", "Privado"], key="ren_paquete")
+                            modalidad_nueva = st.selectbox("Nueva Modalidad de Acceso:", ["Fixed", "Flex"], key="ren_mod")
+                        with col_ren2:
+                            if modalidad_nueva == "Fixed":
+                                sede_assigned_new = st.selectbox("Asignar Sede para este periodo:", list(opciones_locales.keys()) if opciones_locales else ["Primero registra un local"], key="ren_sede")
+                            else:
+                                st.write("✨ Plan Flex seleccionado: Acceso global habilitado para este periodo.")
+                        
+                        if st.button("Procesar Renovación / Cargar Nuevo Plan"):
+                            try:
+                                supabase.table("paquetes").update({"estado": "Agotado"}).eq("alumno_id", id_alumno_sel).eq("estado", "Activo").execute()
+                                
+                                mapeo_clases = {"4 clases": 4, "8 clases": 8, "12 clases": 12, "Mes completo": 999, "Privado": 8}
+                                total_c_nuevo = mapeo_clases[tipo_p_nuevo]
+                                fecha_vence_nueva = (datetime.now() + timedelta(days=30)).date().isoformat()
+                                id_local_fijo_nuevo = opciones_locales[sede_assigned_new] if modalidad_nueva == "Fixed" and opciones_locales else None
+                                
+                                supabase.table("paquetes").insert({
+                                    "alumno_id": id_alumno_sel,
+                                    "tipo_paquete": tipo_p_nuevo,
+                                    "modalidad_plan": modalidad_nueva,
+                                    "local_id_fijo": id_local_fijo_nuevo,
+                                    "clases_totales": total_c_nuevo,
+                                    "clases_restantes": total_c_nuevo,
+                                    "fecha_vencimiento": fecha_vence_nueva,
+                                    "estado": "Activo"
+                                }).execute()
+                                
+                                st.success(f"🔄 ¡Renovación exitosa para **{alumno_sel}**! Nuevo plan de {total_c_nuevo} clases activado correctamente.")
+                                st.rerun()
+                            except Exception as e:
+                                st.error(f"❌ Error al procesar la renovación: {e}")
+                except Exception as e:
+                    st.error(f"Error en el módulo de renovación: {e}")
+
+            with pestanas[3]:
                 st.subheader("Alumnos Registrados en el Sistema")
                 try:
                     alumnos_list = supabase.table("alumnos").select("*").execute()
