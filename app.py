@@ -476,7 +476,7 @@ else:
                             else: st.info("No hay feriados agendados.")
                         except Exception as e: st.error(f"Error: {e}")
 
-            with pestanas:
+            with pestanas[5]:
                 st.subheader("🔍 Kárdex e Historial de Clases de Alumno")
                 
                 # 1. Cargar directorio completo de alumnos desde Supabase
