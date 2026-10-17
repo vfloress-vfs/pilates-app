@@ -369,7 +369,7 @@ else:
                     st.caption("💡 Puedes marcar o desmarcar la casilla 'Disponible para Venta' para ocultar o mostrar planes en los formularios.")
                     try:
                         # CORREGIDO: Ahora ordena alfabéticamente por el nombre del paquete
-                        todos_planes_res = supabase.table("tipos_paquetes").select("*").order("nombre_paquete").execute()
+                        todos_planes_res = supabase.table("tipos_paquetes").select("*").order("costo").execute()
                         if todos_planes_res.data and len(todos_planes_res.data) > 0:
                             import pandas as pd
                             df_catalogo = pd.DataFrame(todos_planes_res.data)
