@@ -130,9 +130,10 @@ else:
             if "clear_ins" not in st.session_state: st.session_state.clear_ins = 0
             if "clear_ren" not in st.session_state: st.session_state.clear_ren = 0
             if "clear_search" not in st.session_state: st.session_state.clear_search = 0
+            if "clear_plan" not in st.session_state: st.session_state.clear_plan = 0
                 
-            # Definición indexada de las 4 pestañas de gestión
-            pestanas = st.tabs(["🏢 Configurar Sucursales", "👥 Inscribir Alumno", "🔄 Renovaciones", "🔍 Consulta de Alumno"])
+            # Definición indexada de las 5 pestañas de gestión
+            pestanas = st.tabs(["🏢 Configurar Sucursales", "👥 Inscribir Alumno", "🔄 Renovaciones", "💰 Tarifas y Planes", "🔍 Consulta de Alumno"])
             
             with pestanas[0]:
                 st.subheader("Alta de Locales")
@@ -161,9 +162,16 @@ else:
                     locales_res = supabase.table("locales").select("id", "nombre").execute()
                     lista_locales = locales_res.data if locales_res.data else []
                     opciones_locales = {l['nombre']: l['id'] for l in lista_locales}
+                    
+                    planes_res = supabase.table("tipos_paquetes").select("nombre_paquete", "clases_totales", "costo").eq("activo", True).execute()
+                    lista_p_db = planes_res.data if planes_res.data else []
+                    opciones_planes = {p['nombre_paquete']: p['clases_totales'] for p in lista_p_db}
+                    costos_planes = {p['nombre_paquete']: float(p['costo']) for p in lista_p_db}
                 except Exception as e:
                     opciones_locales = {}
-                    st.error(f"Error al cargar locales: {e}")
+                    opciones_planes = {}
+                    costos_planes = {}
+                    st.error(f"Error al cargar catálogos desde la nube: {e}")
                 
                 col1, col2 = st.columns(2)
                 with col1:
@@ -171,24 +179,28 @@ else:
                     a_apellido = st.text_input("Apellido del Alumno:", key=f"ins_ape_{st.session_state.clear_ins}")
                     a_telefono = st.text_input("Teléfono (único para acceso móvil):", key=f"ins_tel_{st.session_state.clear_ins}")
                 with col2:
-                    tipo_p = st.selectbox("Selecciona el Paquete:", ["4 clases", "8 clases", "12 clases", "Mes completo", "Privado"], key=f"ins_paq_{st.session_state.clear_ins}")
+                    tipo_p = st.selectbox("Selecciona el Paquete:", list(opciones_planes.keys()) if opciones_planes else ["Configura planes en la pestaña Tarifas"], key=f"ins_paq_{st.session_state.clear_ins}")
                     modalidad = st.selectbox("Modalidad de Acceso:", ["Fixed", "Flex"], key=f"ins_mod_{st.session_state.clear_ins}")
                     
                     if modalidad == "Fixed":
                         sede_assigned = st.selectbox("Sede Base / Asignada:", list(opciones_locales.keys()) if opciones_locales else ["Primero registra un local"], key=f"ins_sed_{st.session_state.clear_ins}")
                     else:
                         st.write("✨ Plan Flex seleccionado: El alumno tendrá acceso a todas las sedes libres.")
+                        
+                if tipo_p in costos_planes and costos_planes[tipo_p] > 0:
+                    st.info(f"💵 **Valor comercial del paquete seleccionado:** ${costos_planes[tipo_p]:.2f}")
                 
                 col_i1, col_i2 = st.columns(2)
                 with col_i1:
                     if st.button("Registrar Alumno"):
                         if not a_nombre or not a_telefono:
                             st.error("❌ Nombre y Teléfono son campos obligatorios.")
+                        elif not opciones_planes:
+                            st.error("❌ No puedes registrar alumnos sin configurar planes vigentes.")
                         elif modalidad == "Fixed" and not opciones_locales:
-                            st.error("❌ Debes registrar al menos un local en la pestaña anterior antes de inscribir alumnos Fixed.")
+                            st.error("❌ Debes registrar al menos un local antes de inscribir alumnos Fixed.")
                         else:
                             try:
-                                # 1. Registrar al Alumno en la base de datos
                                 nuevo_alumno = supabase.table("alumnos").insert({
                                     "nombre": a_nombre,
                                     "apellido": a_apellido,
@@ -198,15 +210,11 @@ else:
                                 if nuevo_alumno and hasattr(nuevo_alumno, 'data') and nuevo_alumno.data and len(nuevo_alumno.data) > 0:
                                     datos_nuevo_alumno = nuevo_alumno.data[0]
                                     id_alumno = datos_nuevo_alumno['id']
-                                    
-                                    # Mapeo: Mes completo equivale exactamente a 20 clases
-                                    mapeo_clases = {"4 clases": 4, "8 clases": 8, "12 clases": 12, "Mes completo": 20, "Privado": 8}
-                                    total_c = mapeo_clases[tipo_p]
+                                    total_c = opciones_planes[tipo_p]
                                     
                                     fecha_vence = (datetime.now() + timedelta(days=30)).date().isoformat()
                                     id_local_fijo = opciones_locales[sede_assigned] if modalidad == "Fixed" and opciones_locales else None
                                     
-                                    # 2. Insertar el Paquete comprado
                                     supabase.table("paquetes").insert({
                                         "alumno_id": id_alumno,
                                         "tipo_paquete": tipo_p,
@@ -218,7 +226,7 @@ else:
                                         "estado": "Activo"
                                     }).execute()
                                     
-                                    st.success(f"🎉 **¡Inscripción Exitosa!** Se ha dado de alta al alumno **{a_nombre} {a_apellido}**. Se activó un plan **{modalidad.upper()}** con un saldo inicial de **{total_c} clases disponibles**. El periodo caduca el **{fecha_vence}**.")
+                                    st.success(f"🎉 **¡Inscripción Exitosa!** Alumno **{a_nombre} {a_apellido}** dado de alta con plan **{modalidad.upper()}** y **{total_c} clases**.")
                                     st.balloons()
                             except Exception as e:
                                 error_msg = str(e)
@@ -237,7 +245,6 @@ else:
                     alumnos_res = supabase.table("alumnos").select("id", "nombre", "apellido").order("nombre").execute()
                     lista_alumnos = alumnos_res.data if alumnos_res.data else []
                     
-                    # Opción en blanco al inicio para mantener la pantalla limpia
                     opciones_alumnos = [""] + [f"{al['nombre']} {al['apellido']}" for al in lista_alumnos]
                     dicc_alumnos = {f"{al['nombre']} {al['apellido']}": al['id'] for al in lista_alumnos}
                     
@@ -262,13 +269,16 @@ else:
                         
                         col_ren1, col_ren2 = st.columns(2)
                         with col_ren1:
-                            tipo_p_nuevo = st.selectbox("Nuevo Paquete:", ["4 clases", "8 clases", "12 clases", "Mes completo", "Privado"], key=f"ren_p_{st.session_state.clear_ren}")
+                            tipo_p_nuevo = st.selectbox("Nuevo Paquete:", list(opciones_planes.keys()) if opciones_planes else ["Sin planes"], key=f"ren_p_{st.session_state.clear_ren}")
                             modalidad_nueva = st.selectbox("Nueva Modalidad de Acceso:", ["Fixed", "Flex"], key=f"ren_m_{st.session_state.clear_ren}")
                         with col_ren2:
                             if modalidad_nueva == "Fixed":
                                 sede_assigned_new = st.selectbox("Asignar Sede para este periodo:", list(opciones_locales.keys()) if opciones_locales else ["Primero registra un local"], key=f"ren_s_{st.session_state.clear_ren}")
                             else:
                                 st.write("✨ Plan Flex seleccionado: Acceso global habilitado.")
+                        
+                        if tipo_p_nuevo in costos_planes and costos_planes[tipo_p_nuevo] > 0:
+                            st.info(f"💵 **Valor comercial de esta renovación:** ${costos_planes[tipo_p_nuevo]:.2f}")
                         
                         col_r1, col_r2 = st.columns(2)
                         with col_r1:
@@ -277,9 +287,7 @@ else:
                                     if paquete_previo and hasattr(paquete_previo, 'data') and paquete_previo.data and len(paquete_previo.data) > 0:
                                         supabase.table("paquetes").update({"estado": "Agotado"}).eq("id", paquete_previo.data[0]['id']).execute()
                                     
-                                    # Mapeo: Mes completo equivale exactamente a 20 clases en Renovaciones
-                                    mapeo_clases = {"4 clases": 4, "8 clases": 8, "12 clases": 12, "Mes completo": 20, "Privado": 8}
-                                    base_nuevas = mapeo_clases[tipo_p_nuevo]
+                                    base_nuevas = opciones_planes[tipo_p_nuevo]
                                     total_unificado = base_nuevas + clases_flotantes
                                     
                                     fecha_vence_nueva = (datetime.now() + timedelta(days=30)).date().isoformat()
@@ -296,7 +304,7 @@ else:
                                         "estado": "Activo"
                                     }).execute()
                                     
-                                    st.success(f"🔄 **¡Renovación Exitosa!** **{alumno_sel}** cuenta con **{total_unificado} clases** hasta el **{fecha_vence_nueva}**.")
+                                    st.success(f"🔄 **¡Renovación Exitosa!** **{alumno_sel}** cuenta con **{total_unificado} clases**.")
                                     st.balloons()
                                 except Exception as e:
                                     st.error(f"❌ Error al procesar la renovación: {e}")
@@ -306,10 +314,53 @@ else:
                                 st.rerun()
                 except Exception as e:
                     st.error(f"Error en el módulo de renovación: {e}")
-
             with pestanas[3]:
-                st.subheader("🔍 Kárdex e Historial de Clases de Alumno")
+                st.subheader("💰 Catálogo de Planes, Clases y Costos")
+                sub_tab1, sub_tab2 = st.tabs(["➕ Crear Nuevo Plan", "📈 Modificar Costos Existentes"])
                 
+                with sub_tab1:
+                    st.markdown("#### Registro de Nuevas Ofertas Comerciales")
+                    p_nombre = st.text_input("Nombre del nuevo paquete (ej: Plan Black 30 clases):", key=f"p_n_{st.session_state.clear_plan}")
+                    p_clases = st.number_input("Cantidad exacta de clases asignadas:", min_value=1, max_value=200, value=10, key=f"p_c_{st.session_state.clear_plan}")
+                    p_costo = st.number_input("Precio / Costo comercial del plan ($):", min_value=0.0, max_value=5000.0, value=250.0, step=10.0, key=f"p_v_{st.session_state.clear_plan}")
+                    
+                    col_p1, col_p2 = st.columns(2)
+                    with col_p1:
+                        if st.button("Dar de Alta Plan"):
+                            if p_nombre:
+                                try:
+                                    supabase.table("tipos_paquetes").insert({
+                                        "nombre_paquete": p_nombre,
+                                        "clases_totales": p_clases,
+                                        "costo": p_costo
+                                    }).execute()
+                                    st.success(f"🎉 ¡Plan '{p_nombre}' añadido al catálogo con éxito!")
+                                except Exception as e:
+                                    st.error(f"❌ Error al guardar el plan: {e}")
+                            else:
+                                st.error("El nombre del paquete es obligatorio.")
+                    with col_p2:
+                        if st.button("Limpiar Pantalla", key="btn_clear_plan"):
+                            st.session_state.clear_plan += 1
+                            st.rerun()
+                            
+                with sub_tab2:
+                    st.markdown("#### Actualizar Precios de Planes Existentes")
+                    if opciones_planes:
+                        plan_a_modificar = st.selectbox("Selecciona el plan que deseas actualizar:", list(opciones_planes.keys()))
+                        nuevo_precio = st.number_input("Establecer nuevo precio ($):", min_value=0.0, max_value=5000.0, value=costos_planes.get(plan_a_modificar, 0.0), step=5.0)
+                        
+                        if st.button("Actualizar Tarifa Comercial"):
+                            try:
+                                supabase.table("tipos_paquetes").update({"costo": nuevo_precio}).eq("nombre_paquete", plan_a_modificar).execute()
+                                st.success(f"📈 ¡Precio del plan '{plan_a_modificar}' actualizado correctamente a ${nuevo_precio:.2f}!")
+                            except Exception as e:
+                                st.error(f"❌ Error al actualizar precio: {e}")
+                    else:
+                        st.info("No hay planes configurados para modificar.")
+
+            with pestanas[4]:
+                st.subheader("🔍 Kárdex e Historial de Clases de Alumno")
                 col_s1, col_s2 = st.columns(2)
                 with col_s1:
                     busqueda_tel = st.text_input("Busca al Alumno ingresando su Teléfono de Registro:", key=f"sch_tel_{st.session_state.clear_search}")
@@ -351,4 +402,3 @@ else:
                             st.error("❌ No se encontró ningún alumno con ese número de teléfono.")
                     except Exception as e:
                         st.error(f"Error al consultar el Kárdex del alumno: {e}")
-
