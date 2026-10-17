@@ -480,17 +480,34 @@ else:
                 st.subheader("🔍 Kárdex e Historial de Clases de Alumno")
                 col_s1, col_s2 = st.columns(2)
                 with col_s1:
-                    busqueda_tel = st.text_input("Busca al Alumno ingresando su Teléfono de Registro:", key=f"sch_tel_{st.session_state.clear_search}")
+                    busqueda_tel = st.text_input("Busca al Alumno ingresando su Teléfono de Registro (Deja en blanco para ver el Directorio Completo):", key=f"sch_tel_{st.session_state.clear_search}")
                 with col_s2:
                     st.write(" "); st.write(" ")
                     if st.button("Limpiar Consulta", key="btn_clear_search"):
                         st.session_state.clear_search += 1
                         st.rerun()
-                if busqueda_tel:
+                
+                # MEJORA DIRECTA: Si el campo está vacío, dibuja la lista de todos los alumnos
+                if not busqueda_tel:
+                    st.markdown("#### 👥 Directorio General de Alumnos Registrados")
+                    try:
+                        todos_al_res = supabase.table("alumnos").select("*").order("nombre").execute()
+                        if todos_al_res.data and len(todos_al_res.data) > 0:
+                            import pandas as pd
+                            df_completo_al = pd.DataFrame(todos_al_res.data)[["nombre", "apellido", "telefono", "fecha_registro"]].rename(columns={
+                                "nombre": "Nombre", "apellido": "Apellido", "telefono": "Teléfono de Contacto", "fecha_registro": "Fecha de Alta"
+                            })
+                            st.dataframe(df_completo_al, use_container_width=True, hide_index=True)
+                        else:
+                            st.info("Aún no tienes alumnos inscritos en el estudio.")
+                    except Exception as e:
+                        st.error(f"Error al cargar el directorio: {e}")
+                else:
+                    # FLUJO INDIVIDUAL: Si escribe un teléfono, abre su Kárdex 360° específico
                     try:
                         al_res = supabase.table("alumnos").select("*").eq("telefono", busqueda_tel).execute()
                         if al_res.data and len(al_res.data) > 0:
-                            data_al = al_res.data
+                            data_al = al_res.data[0]
                             st.markdown(f"### Alumno: **{data_al['nombre']} {data_al['apellido']}**")
                             paq_res = supabase.table("paquetes").select("*").eq("alumno_id", data_al['id']).order("fecha_compra", desc=True).execute()
                             if paq_res.data:
@@ -507,5 +524,5 @@ else:
                                 df_res = pd.DataFrame(res_res.data).rename(columns={"fecha_clase": "Fecha de Clase", "hora_clase": "Horario", "tipo_servicio": "Modalidad", "estado": "Asistencia"})
                                 st.dataframe(df_res, use_container_width=True, hide_index=True)
                             else: st.info("💡 Sin historial en la agenda.")
-                        else: st.error("❌ No se encontró ningún alumno.")
+                        else: st.error("❌ No se encontró ningún alumno con ese número de teléfono.")
                     except Exception as e: st.error(f"Error: {e}")
