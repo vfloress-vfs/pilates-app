@@ -3,7 +3,7 @@ import hashlib
 from datetime import datetime, timedelta
 from supabase import create_client, Client
 
-# 1. CONFIGURACIÓN DE LA PÁGINA
+# 1. CONFIGURACIÓN DE LA PÁGINA (Debe ser la primera línea de Streamlit)
 st.set_page_config(page_title="Pilates Studio Cloud", page_icon="🧘", layout="wide")
 
 # 2. CONEXIÓN SEGURA A SUPABASE
@@ -19,7 +19,7 @@ except Exception as e:
     st.error("❌ Error de conexión a la base de datos. Verifica tus Secrets.")
     st.stop()
 
-# 3. FUNCIONES DE SEGURIDAD Y LOGICA
+# 3. FUNCIONES DE SEGURIDAD Y LÓGICA DE NEGOCIO
 def encriptar_contrasena(password):
     return hashlib.sha256(password.encode()).hexdigest()
 
@@ -38,10 +38,11 @@ if "logged_in" not in st.session_state:
 # FLUJO PRINCIPAL DE ACCESO
 # ------------------------------------------------------------------
 
-# CASO 1: CONFIGURACIÓN INICIAL
+# CASO 1: CONFIGURACIÓN INICIAL (Si la tabla de administradores está vacía)
 if verificar_primer_inicio():
     st.title("🛡️ Configuración Inicial del Sistema")
     st.subheader("Configura tu cuenta de Dueño/Administrador por primera vez:")
+    st.info("Esta pantalla desaparecerá automáticamente una vez registres tu clave.")
     
     nuevo_usuario = st.text_input("Nombre de usuario o correo de administrador:")
     nueva_clave = st.text_input("Contraseña de acceso:", type="password")
@@ -66,7 +67,7 @@ if verificar_primer_inicio():
             except Exception as e:
                 st.error(f"❌ Error al guardar el administrador: {e}")
 
-# CASO 2: FLUJO NORMAL
+# CASO 2: EL SISTEMA YA TIENE ENLACE SEGURO (Flujo de Operación Normal)
 else:
     st.sidebar.title("🧘 Pilates Studio")
     rol_acceso = st.sidebar.radio("Menú de Perfiles:", ["👤 Alumnos", "📲 Tablet Check-in", "💼 Administrador"])
@@ -82,6 +83,7 @@ else:
                     datos_alumno = alumno.data[0]
                     st.success(f"¡Hola, {datos_alumno.get('nombre', '')} {datos_alumno.get('apellido', '')}!")
                     
+                    # Buscar paquetes contratados vigentes
                     paquetes_res = supabase.table("paquetes").select("*").eq("alumno_id", datos_alumno['id']).eq("estado", "Activo").execute()
                     if paquetes_res.data and len(paquetes_res.data) > 0:
                         for p in paquetes_res.data:
@@ -97,8 +99,8 @@ else:
     # --- VISTA TABLET ---
     elif rol_acceso == "📲 Tablet Check-in":
         st.title("📸 Estación de Check-in (Tablet del Local)")
+        st.write("Coloca esta pantalla fija en la entrada de tu estudio.")
         st.camera_input("Muestra tu código QR frente a la cámara")
-        
     # --- VISTA ADMINISTRADOR ---
     elif rol_acceso == "💼 Administrador":
         if not st.session_state.logged_in:
@@ -125,7 +127,7 @@ else:
                 
             pestanas = st.tabs(["🏢 Configurar Sucursales", "👥 Inscribir Alumno", "📋 Lista de Alumnos"])
             
-            with pestanas:
+            with pestanas[0]:
                 st.subheader("Alta de Locales")
                 nombre_local = st.text_input("Nombre de la sede (ej: Barranco):", key="new_local_name")
                 direccion_local = st.text_input("Dirección:", key="new_local_dir")
@@ -139,7 +141,7 @@ else:
                     else:
                         st.error("❌ El nombre del local es obligatorio.")
                         
-            with pestanas:
+            with pestanas[1]:
                 st.subheader("Formulario de Inscripción y Venta de Paquete")
                 
                 try:
@@ -171,25 +173,49 @@ else:
                         st.error("❌ Debes registrar al menos un local en la pestaña anterior antes de inscribir alumnos Fixed.")
                     else:
                         try:
-                            # 1. Registrar al Alumno en la tabla 'alumnos'
+                            # 1. Registrar al Alumno en la base de datos
                             nuevo_alumno = supabase.table("alumnos").insert({
                                 "nombre": a_nombre,
                                 "apellido": a_apellido,
                                 "telefono": a_telefono
                             }).execute()
                             
-                            if nuevo_alumno.data and len(nuevo_alumno.data) > 0:
-                                id_alumno = nuevo_alumno.data[0]['id']
+                            if nuevo_alumno and hasattr(nuevo_alumno, 'data') and nuevo_alumno.data and len(nuevo_alumno.data) > 0:
+                                datos_nuevo_alumno = nuevo_alumno.data[0]
+                                id_alumno = datos_nuevo_alumno['id']
                                 
-                                # Calcular cantidad de clases
+                                # Mapear créditos de clases
                                 mapeo_clases = {"4 clases": 4, "8 clases": 8, "12 clases": 12, "Mes completo": 999, "Privado": 8}
                                 total_c = mapeo_clases[tipo_p]
                                 
-                                # Fecha vencimiento base: 30 días
+                                # Fecha de vencimiento estándar (30 días)
                                 fecha_vence = (datetime.now() + timedelta(days=30)).date().isoformat()
                                 id_local_fijo = opciones_locales[sede_asignada] if modalidad == "Fixed" and opciones_locales else None
                                 
-                                # 2. Cargar su paquete comprado en la tabla 'paquetes'
+                                # 2. Cargar el paquete a favor del cliente
                                 supabase.table("paquetes").insert({
                                     "alumno_id": id_alumno,
                                     "tipo_paquete": tipo_p,
+                                    "modalidad_plan": modalidad,
+                                    "local_id_fijo": id_local_fijo,
+                                    "clases_totales": total_c,
+                                    "clases_restantes": total_c,
+                                    "fecha_vencimiento": fecha_vence
+                                }).execute()
+                                
+                                st.success(f"🎉 ¡Alumno {a_nombre} {a_apellido} registrado con éxito! Se cargaron sus {total_c} clases.")
+                                st.rerun()
+                        except Exception as e:
+                            st.error(f"❌ Error en la inscripción: {e}")
+
+            with pestanas[2]:
+                st.subheader("Alumnos Registrados en el Sistema")
+                try:
+                    alumnos_list = supabase.table("alumnos").select("*").execute()
+                    if alumnos_list.data and len(alumnos_list.data) > 0:
+                        import pandas as pd
+                        st.dataframe(pd.DataFrame(alumnos_list.data), use_container_width=True)
+                    else:
+                        st.info("No hay alumnos inscritos en este momento.")
+                except Exception as e:
+                    st.error(f"Error al cargar la lista: {e}")
