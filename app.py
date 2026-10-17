@@ -476,10 +476,10 @@ else:
                             else: st.info("No hay feriados agendados.")
                         except Exception as e: st.error(f"Error: {e}")
 
-            with pestanas[5]:
+            with pestanas:
                 st.subheader("🔍 Kárdex e Historial de Clases de Alumno")
                 
-                # Cargar directorio completo de alumnos desde Supabase
+                # 1. Cargar directorio completo de alumnos desde Supabase
                 try:
                     todos_al_res = supabase.table("alumnos").select("*").order("nombre").execute()
                     lista_alumnos_all = todos_al_res.data if todos_al_res.data else []
@@ -489,48 +489,58 @@ else:
                 
                 telefono_seleccionado = None
                 
-                # FLUJO PRINCIPAL: Si hay alumnos, muestra el selector interactivo
                 if lista_alumnos_all:
                     import pandas as pd
                     df_dir = pd.DataFrame(lista_alumnos_all)
-                    df_dir["Ver Kárdex"] = False
                     
-                    df_dir_visual = df_dir[["nombre", "apellido", "telefono", "fecha_registro", "Ver Kárdex"]].rename(columns={
-                        "nombre": "Nombre", "apellido": "Apellido", "telefono": "Teléfono", "fecha_registro": "Fecha Registro"
-                    })
+                    # MEJORA CRÍTICA: Buscador predictivo por texto
+                    busqueda_nombre = st.text_input("🔍 Escribe el nombre o apellido del alumno para filtrar la lista:", key="input_predictivo_nombre")
                     
-                    st.markdown("#### 👥 Directorio General de Alumnos")
-                    st.caption("👇 Marca la casilla **'Ver Kárdex'** de cualquier alumno de la lista para inspeccionar su historial en tiempo real:")
+                    # Filtrado dinámico en tiempo real según lo que escriba el usuario
+                    if busqueda_nombre:
+                        df_dir = df_dir[
+                            df_dir['nombre'].str.contains(busqueda_nombre, case=False, na=False) | 
+                            df_dir['apellido'].str.contains(busqueda_nombre, case=False, na=False)
+                        ]
                     
-                    # Desplegamos el directorio interactivo editable solo en la columna de selección
-                    editor_directorio = st.data_editor(
-                        df_dir_visual,
-                        hide_index=True,
-                        disabled=["Nombre", "Apellido", "Teléfono", "Fecha Registro"],
-                        use_container_width=True,
-                        key="directorio_general_alumnos"
-                    )
-                    
-                    # Detectar a quién marcó el administrador
-                    if st.session_state.get("directorio_general_alumnos") and "edited_rows" in st.session_state.directorio_general_alumnos:
-                        filas_tocadas = st.session_state.directorio_general_alumnos["edited_rows"]
-                        for fila_idx, estado_casilla in filas_tocadas.items():
-                            if estado_casilla.get("Ver Kárdex") == True:
-                                telefono_seleccionado = df_dir_visual.iloc[fila_idx]["Teléfono"]
+                    # Añadir la columna interactiva de selección
+                    if not df_dir.empty:
+                        df_dir["Ver Kárdex"] = False
+                        df_dir_visual = df_dir[["nombre", "apellido", "telefono", "fecha_registro", "Ver Kárdex"]].rename(columns={
+                            "nombre": "Nombre", "apellido": "Apellido", "telefono": "Teléfono", "fecha_registro": "Fecha Registro"
+                        })
+                        
+                        # Desplegamos la tabla filtrada y optimizada
+                        editor_directorio = st.data_editor(
+                            df_dir_visual,
+                            hide_index=True,
+                            disabled=["Nombre", "Apellido", "Teléfono", "Fecha Registro"],
+                            use_container_width=True,
+                            key="directorio_general_alumnos"
+                        )
+                        
+                        # Capturar el teléfono del alumno seleccionado
+                        if st.session_state.get("directorio_general_alumnos") and "edited_rows" in st.session_state.directorio_general_alumnos:
+                            filas_tocadas = st.session_state.directorio_general_alumnos["edited_rows"]
+                            for fila_idx, estado_casilla in filas_tocadas.items():
+                                if estado_casilla.get("Ver Kárdex") == True:
+                                    telefono_seleccionado = df_dir_visual.iloc[fila_idx]["Teléfono"]
+                    else:
+                        st.warning("⚠️ No se encontraron alumnos que coincidan con la búsqueda.")
                 else:
                     st.info("💡 Aún no registras ningún alumno en el sistema.")
                 
-                # SECCIÓN DE DESPLIEGUE: Si se seleccionó un alumno en la tabla, se abre su ficha médica/asistencial 360°
+                # 2. SECCIÓN DE DESPLIEGUE AUTOMÁTICO DEL KÁRDEX 360°
                 if telefono_seleccionado:
                     st.markdown("---")
                     try:
                         al_res = supabase.table("alumnos").select("*").eq("telefono", telefono_seleccionado).execute()
                         if al_res.data and len(al_res.data) > 0:
-                            data_al = al_res.data[0]
+                            data_al = al_res.data
                             st.markdown(f"### 📊 Ficha de Control: **{data_al['nombre']} {data_al['apellido']}**")
                             st.markdown(f"📱 **Contacto:** {data_al['telefono']}")
                             
-                            # 1. Desplegar sus paquetes
+                            # Cargar historial de paquetes
                             paq_res = supabase.table("paquetes").select("*").eq("alumno_id", data_al['id']).order("fecha_compra", desc=True).execute()
                             if paq_res.data and len(paq_res.data) > 0:
                                 st.markdown("#### 📋 Historial de Paquetes y Membresías")
@@ -541,7 +551,7 @@ else:
                                 })
                                 st.dataframe(df_reporte_paq, use_container_width=True, hide_index=True)
                                 
-                            # 2. Desplegar sus asistencias
+                            # Cargar bitácora de asistencias
                             res_res = supabase.table("reservas").select("fecha_clase", "hora_clase", "tipo_servicio", "estado").eq("alumno_id", data_al['id']).order("fecha_clase", desc=True).execute()
                             st.markdown("#### 🗓️ Bitácora de Clases y Asistencia Diaria")
                             if res_res.data and len(res_res.data) > 0:
