@@ -128,7 +128,7 @@ else:
             # Definición de las 4 pestañas de gestión
             pestanas = st.tabs(["🏢 Configurar Sucursales", "👥 Inscribir Alumno", "🔄 Renovaciones", "🔍 Consulta de Alumno"])
             
-            with pestanas:
+            with pestanas[0]:
                 st.subheader("Alta de Locales")
                 nombre_local = st.text_input("Nombre de la sede (ej: Barranco):", key="new_local_name")
                 direccion_local = st.text_input("Dirección:", key="new_local_dir")
@@ -143,7 +143,7 @@ else:
                     else:
                         st.error("❌ El nombre del local es obligatorio.")
                         
-            with pestanas:
+            with pestanas[1]:
                 st.subheader("Formulario de Inscripción y Venta de Paquete")
                 
                 try:
