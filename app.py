@@ -362,72 +362,47 @@ else:
                         st.info("No hay planes configurados para modificar.")
 
                 # ========================================================
-                # SUB-PESTAÑA 3 NUEVA: LISTA VISUAL DE PLANES Y COSTOS Real-Time
+                # SUB-PESTAÑA 3 CORREGIDA: ORDENADA POR NOMBRE DE PLAN
                 # ========================================================
                 with sub_tab3:
                     st.markdown("#### Lista Completa de Planes y Precios Vigentes")
+                    st.caption("💡 Puedes marcar o desmarcar la casilla 'Disponible para Venta' para ocultar o mostrar planes en los formularios.")
                     try:
-                        # Consultamos la tabla completa de planes directamente de la base de datos
-                        todos_planes_res = supabase.table("tipos_paquetes").select("*").order("clases_totales").execute()
+                        # CORREGIDO: Ahora ordena alfabéticamente por el nombre del paquete
+                        todos_planes_res = supabase.table("tipos_paquetes").select("*").order("nombre_paquete").execute()
                         if todos_planes_res.data and len(todos_planes_res.data) > 0:
                             import pandas as pd
                             df_catalogo = pd.DataFrame(todos_planes_res.data)
                             
-                            # Formateamos y renombramos el cuadro para que se vea estético
-                            df_catalogo_amigable = df_catalogo[["nombre_paquete", "clases_totales", "costo", "activo"]].rename(columns={
+                            # Preparamos las columnas amigables
+                            df_catalogo_amigable = df_catalogo[["id", "nombre_paquete", "clases_totales", "costo", "activo"]].rename(columns={
                                 "nombre_paquete": "Nombre del Paquete",
                                 "clases_totales": "Clases que Incluye",
                                 "costo": "Precio Comercial ($)",
                                 "activo": "Disponible para Venta"
                             })
                             
-                            # Mostramos la lista en formato de tabla interactiva
-                            st.dataframe(df_catalogo_amigable, use_container_width=True)
+                            # Convertimos la tabla en un Editor Interactivo
+                            cambios_tabla = st.data_editor(
+                                df_catalogo_amigable,
+                                hide_index=True,
+                                disabled=["id", "Nombre del Paquete", "Clases que Incluye", "Precio Comercial ($)"],
+                                use_container_width=True,
+                                key="editor_catalogo_planes"
+                            )
+                            
+                            # Guardar cambios automáticamente en Supabase
+                            if st.session_state.get("editor_catalogo_planes") and "edited_rows" in st.session_state.editor_catalogo_planes:
+                                filas_editadas = st.session_state.editor_catalogo_planes["edited_rows"]
+                                for indice_fila, cambios in filas_editadas.items():
+                                    if "Disponible para Venta" in cambios:
+                                        nuevo_estado = cambios["Disponible para Venta"]
+                                        id_registro = int(df_catalogo_amigable.iloc[indice_fila]["id"])
+                                        
+                                        supabase.table("tipos_paquetes").update({"activo": nuevo_estado}).eq("id", id_registro).execute()
+                                        st.success("🔄 ¡Catálogo de ventas actualizado en la nube!")
+                                        st.rerun()
                         else:
                             st.info("💡 No se encontraron planes registrados en el catálogo.")
                     except Exception as e:
                         st.error(f"Error al cargar la lista de tarifas: {e}")
-
-            with pestanas[4]:
-                st.subheader("🔍 Kárdex e Historial de Clases de Alumno")
-                col_s1, col_s2 = st.columns(2)
-                with col_s1:
-                    busqueda_tel = st.text_input("Busca al Alumno ingresando su Teléfono de Registro:", key=f"sch_tel_{st.session_state.clear_search}")
-                with col_s2:
-                    st.write(" ")
-                    st.write(" ")
-                    if st.button("Limpiar Consulta", key="btn_clear_search"):
-                        st.session_state.clear_search += 1
-                        st.rerun()
-                
-                if busqueda_tel:
-                    try:
-                        al_res = supabase.table("alumnos").select("*").eq("telefono", busqueda_tel).execute()
-                        if al_res.data and len(al_res.data) > 0:
-                            data_al = al_res.data
-                            st.markdown(f"### Alumno: **{data_al['nombre']} {data_al['apellido']}**")
-                            
-                            paq_res = supabase.table("paquetes").select("*").eq("alumno_id", data_al['id']).order("fecha_compra", desc=True).execute()
-                            if paq_res.data:
-                                st.markdown("#### 📋 Historial de Paquetes y Membresías")
-                                import pandas as pd
-                                df_paq = pd.DataFrame(paq_res.data)
-                                df_paq["Clases Consumidas"] = df_paq["clases_totales"] - df_paq["clases_restantes"]
-                                df_reporte_paq = df_paq[["tipo_paquete", "modalidad_plan", "clases_totales", "Clases Consumidas", "clases_restantes", "fecha_vencimiento", "estado"]].rename(columns={
-                                    "tipo_paquete": "Paquete Contratado", "modalidad_plan": "Tipo Plan", "clases_totales": "Clases Totales", "clases_restantes": "Clases Pendientes (Saldo)", "fecha_vencimiento": "Caduca El", "estado": "Estado Plan"
-                                })
-                                st.dataframe(df_reporte_paq, use_container_width=True)
-                                
-                            res_res = supabase.table("reservas").select("fecha_clase", "hora_clase", "tipo_servicio", "estado").eq("alumno_id", data_al['id']).order("fecha_clase", desc=True).execute()
-                            st.markdown("#### 🗓️ Bitácora de Clases y Asistencia Diaria")
-                            if res_res.data and len(res_res.data) > 0:
-                                df_res = pd.DataFrame(res_res.data).rename(columns={
-                                    "fecha_clase": "Fecha de Clase", "hora_clase": "Horario", "tipo_servicio": "Modalidad", "estado": "Asistencia"
-                                })
-                                st.dataframe(df_res, use_container_width=True)
-                            else:
-                                st.info("💡 El alumno aún no tiene un historial de clases en la agenda.")
-                        else:
-                            st.error("❌ No se encontró ningún alumno con ese número de teléfono.")
-                    except Exception as e:
-                        st.error(f"Error al consultar el Kárdex del alumno: {e}")
