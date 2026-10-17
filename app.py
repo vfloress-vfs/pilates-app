@@ -209,9 +209,9 @@ else:
                                 st.error(f"⚠️ El alumno con el teléfono **{a_telefono}** ya se encuentra registrado en el sistema.")
                             else:
                                 st.error(f"❌ Error en la inscripción: {e}")
-            with pestanas[2]:
+            with pestanas[2]:  # Pestaña de Renovaciones
                 st.subheader("🔄 Renovar Paquete de Alumno Existente")
-                st.write("Selecciona un alumno para renovar su membresía y cargarle nuevos créditos.")
+                st.write("Selecciona un alumno para renovar su membresía. Si le quedan clases pendientes, se sumarán al nuevo plan.")
                 
                 try:
                     alumnos_res = supabase.table("alumnos").select("id", "nombre", "apellido").order("nombre").execute()
@@ -236,13 +236,33 @@ else:
                         
                         if st.button("Procesar Renovación / Cargar Nuevo Plan"):
                             try:
-                                supabase.table("paquetes").update({"estado": "Agotado"}).eq("alumno_id", id_alumno_sel).eq("estado", "Activo").execute()
+                                # 1. BUSCAR CLASES PENDIENTES DEL PAQUETE ANTERIOR
+                                paquete_anterior = supabase.table("paquetes").select("id", "clases_restantes").eq("alumno_id", id_alumno_sel).eq("estado", "Activo").execute()
                                 
+                                clases_pendientes = 0
+                                if paquete_anterior.data and len(paquete_anterior.data) > 0:
+                                    # Si el plan anterior era 'Mes completo' (999), no acumulamos clases
+                                    if paquete_anterior.data[0]["clases_restantes"] < 900:
+                                        clases_pendientes = paquete_anterior.data[0]["clases_restantes"]
+                                
+                                # 2. CERRAR EL PAQUETE ANTERIOR CON NOTA HISTÓRICA
+                                if paquete_anterior.data:
+                                    supabase.table("paquetes").update({
+                                        "estado": "Agotado",
+                                        "tipo_paquete": f"Cerrado con {clases_pendientes} pend." if clases_pendientes > 0 else paquete_anterior.data[0]["tipo_paquete"]
+                                    }).eq("id", paquete_anterior.data[0]["id"]).execute()
+                                
+                                # 3. CALCULAR LOS NUEVOS CRÉDITOS ACUMULADOS
                                 mapeo_clases = {"4 clases": 4, "8 clases": 8, "12 clases": 12, "Mes completo": 999, "Privado": 8}
-                                total_c_nuevo = mapeo_clases[tipo_p_nuevo]
+                                base_clases_nuevas = mapeo_clases[tipo_p_nuevo]
+                                
+                                # Sumamos las clases viejas si no es plan mensual ilimitado
+                                total_c_nuevo = base_clases_nuevas + clases_pendientes if base_clases_nuevas < 900 else base_clases_nuevas
+                                
                                 fecha_vence_nueva = (datetime.now() + timedelta(days=30)).date().isoformat()
                                 id_local_fijo_nuevo = opciones_locales[sede_assigned_new] if modalidad_nueva == "Fixed" and opciones_locales else None
                                 
+                                # 4. INSERTAR EL NUEVO REGISTRO EN LA NUBE
                                 supabase.table("paquetes").insert({
                                     "alumno_id": id_alumno_sel,
                                     "tipo_paquete": tipo_p_nuevo,
@@ -254,14 +274,18 @@ else:
                                     "estado": "Activo"
                                 }).execute()
                                 
-                                st.success(f"🔄 ¡Renovación exitosa para **{alumno_sel}**! Nuevo plan de {total_c_nuevo} clases activado correctamente.")
+                                if clases_pendientes > 0:
+                                    st.success(f"🔄 ¡Membresía renovada! Se acumularon **{clases_pendientes} clases pendientes** de su mes anterior. Total cargado: **{total_c_nuevo} clases**.")
+                                else:
+                                    st.success(f"🔄 ¡Renovación exitosa para **{alumno_sel}** con {total_c_nuevo} clases!")
                                 st.rerun()
+                                
                             except Exception as e:
                                 st.error(f"❌ Error al procesar la renovación: {e}")
                 except Exception as e:
                     st.error(f"Error en el módulo de renovación: {e}")
 
-            with pestanas[3]:
+            with pestanas[3]:  # Lista de Alumnos
                 st.subheader("Alumnos Registrados en el Sistema")
                 try:
                     alumnos_list = supabase.table("alumnos").select("*").execute()
