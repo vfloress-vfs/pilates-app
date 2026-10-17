@@ -287,7 +287,7 @@ else:
                             data_al = al_res.data[0]
                             st.markdown(f"### Alumno: **{data_al['nombre']} {data_al['apellido']}**")
                             
-                            paq_res = supabase.table("paquetes").select("*").eq("alumno_id", data_al['id']).order("fecha_compra", descending=True).execute()
+                            paq_res = supabase.table("paquetes").select("*").eq("alumno_id", data_al['id']).order("fecha_compra", desc=True).execute()
                             if paq_res.data:
                                 st.markdown("#### 📋 Historial de Paquetes y Membresías")
                                 import pandas as pd
@@ -300,7 +300,7 @@ else:
                             else:
                                 st.info("El alumno no registra compras de paquetes históricas.")
                                 
-                            res_res = supabase.table("reservas").select("fecha_clase", "hora_clase", "tipo_servicio", "estado").eq("alumno_id", data_al['id']).order("fecha_clase", descending=True).execute()
+                            res_res = supabase.table("reservas").select("fecha_clase", "hora_clase", "tipo_servicio", "estado").eq("alumno_id", data_al['id']).order("fecha_clase", desc=True).execute()
                             st.markdown("#### 🗓️ Bitácora de Clases y Asistencia Diaria")
                             if res_res.data and len(res_res.data) > 0:
                                 df_res = pd.DataFrame(res_res.data).rename(columns={
