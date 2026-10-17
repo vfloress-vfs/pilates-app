@@ -137,7 +137,7 @@ else:
                         try:
                             supabase.table("locales").insert({"nombre": nombre_local, "direccion": direccion_local}).execute()
                             st.success(f"¡Sede {nombre_local} registrada exitosamente!")
-                            st.rerun()
+                            # Removido st.rerun() destructivo para permitir libre navegación
                         except Exception as e:
                             st.error(f"❌ Error al guardar el local: {e}")
                     else:
@@ -174,6 +174,7 @@ else:
                         st.error("❌ Debes registrar al menos un local en la pestaña anterior antes de inscribir alumnos Fixed.")
                     else:
                         try:
+                            # 1. Registrar al Alumno en la base de datos
                             nuevo_alumno = supabase.table("alumnos").insert({
                                 "nombre": a_nombre,
                                 "apellido": a_apellido,
@@ -184,12 +185,15 @@ else:
                                 datos_nuevo_alumno = nuevo_alumno.data[0]
                                 id_alumno = datos_nuevo_alumno['id']
                                 
+                                # Calcular clases según paquete
                                 mapeo_clases = {"4 clases": 4, "8 clases": 8, "12 clases": 12, "Mes completo": 999, "Privado": 8}
                                 total_c = mapeo_clases[tipo_p]
                                 
+                                # Calcular vencimiento (30 días a partir de hoy)
                                 fecha_vence = (datetime.now() + timedelta(days=30)).date().isoformat()
                                 id_local_fijo = opciones_locales[sede_assigned] if modalidad == "Fixed" and opciones_locales else None
                                 
+                                # 2. Insertar el Paquete comprado
                                 supabase.table("paquetes").insert({
                                     "alumno_id": id_alumno,
                                     "tipo_paquete": tipo_p,
@@ -197,12 +201,13 @@ else:
                                     "local_id_fijo": id_local_fijo,
                                     "clases_totales": total_c,
                                     "clases_restantes": total_c,
-                                    "fecha_vencimiento": fecha_vence
+                                    "fecha_vencimiento": fecha_vence,
+                                    "estado": "Activo"
                                 }).execute()
                                 
                                 st.success(f"🎉 **¡Inscripción Exitosa!** Se ha dado de alta al alumno **{a_nombre} {a_apellido}**. Se activó un plan **{modalidad.upper()}** con un saldo inicial de **{total_c} clases disponibles** correspondientes al paquete '{tipo_p}'. El periodo de membresía caduca el **{fecha_vence}**.")
                                 st.balloons()
-                                st.rerun()
+                                # Removido st.rerun() perjudicial para mantener activa la visualización libre
                         except Exception as e:
                             error_msg = str(e)
                             if "23505" in error_msg or "already exists" in error_msg.lower():
@@ -215,20 +220,22 @@ else:
                 try:
                     alumnos_res = supabase.table("alumnos").select("id", "nombre", "apellido").order("nombre").execute()
                     lista_alumnos = alumnos_res.data if alumnos_res.data else []
+                    
+                    opciones_alumnos = [""] + [f"{al['nombre']} {al['apellido']}" for al in lista_alumnos]
                     dicc_alumnos = {f"{al['nombre']} {al['apellido']}": al['id'] for al in lista_alumnos}
                     
-                    if not dicc_alumnos:
-                        st.info("Aún no tienes alumnos registrados para poder renovar.")
+                    alumno_sel = st.selectbox("Selecciona el Alumno a renovar:", opciones_alumnos, index=0)
+                    
+                    if alumno_sel == "":
+                        st.info("💡 Por favor, busca y selecciona un alumno en el menú superior para ver su estado y procesar su renovación.")
                     else:
-                        alumno_sel = st.selectbox("Selecciona el Alumno a renovar:", list(dicc_alumnos.keys()))
                         id_alumno_sel = dicc_alumnos[alumno_sel]
                         
-                                                paquete_previo = supabase.table("paquetes").select("id", "clases_restantes", "tipo_paquete", "fecha_vencimiento").eq("alumno_id", id_alumno_sel).eq("estado", "Activo").execute()
+                        # AVISO DE CLASES PENDIENTES ANTES DE RENOVAR
+                        paquete_previo = supabase.table("paquetes").select("id", "clases_restantes", "tipo_paquete", "fecha_vencimiento").eq("alumno_id", id_alumno_sel).eq("estado", "Activo").execute()
                         
                         clases_flotantes = 0
-                        # Validación segura: comprobamos si realmente hay un plan activo en la lista
                         if paquete_previo and hasattr(paquete_previo, 'data') and paquete_previo.data and len(paquete_previo.data) > 0:
-                            # Extraemos el primer paquete activo de la lista
                             info_p = paquete_previo.data[0]
                             if info_p.get('clases_restantes', 0) < 900:  
                                 clases_flotantes = info_p.get('clases_restantes', 0)
@@ -237,7 +244,6 @@ else:
                                 else:
                                     st.info(f"✅ El alumno no tiene clases pendientes de su plan anterior.")
                         else:
-                            # SI NO HAY PAQUETES ACTIVOS (Caso del alumno vacío o nuevo)
                             st.info(f"✅ El alumno **{alumno_sel}** no tiene ningún paquete activo ni clases pendientes de su plan anterior.")
                         
                         col_ren1, col_ren2 = st.columns(2)
@@ -252,9 +258,11 @@ else:
                         
                         if st.button("Procesar Renovación / Cargar Nuevo Plan"):
                             try:
-                                if paquete_previo.data and len(paquete_previo.data) > 0:
+                                # 1. Cerrar paquete anterior si existe
+                                if paquete_previo and hasattr(paquete_previo, 'data') and paquete_previo.data and len(paquete_previo.data) > 0:
                                     supabase.table("paquetes").update({"estado": "Agotado"}).eq("id", paquete_previo.data[0]['id']).execute()
                                 
+                                # 2. Calcular créditos unificados
                                 mapeo_clases = {"4 clases": 4, "8 clases": 8, "12 clases": 12, "Mes completo": 999, "Privado": 8}
                                 base_nuevas = mapeo_clases[tipo_p_nuevo]
                                 total_unificado = base_nuevas + clases_flotantes if base_nuevas < 900 else base_nuevas
@@ -262,6 +270,7 @@ else:
                                 fecha_vence_nueva = (datetime.now() + timedelta(days=30)).date().isoformat()
                                 id_local_fijo_nuevo = opciones_locales[sede_assigned_new] if modalidad_nueva == "Fixed" and opciones_locales else None
                                 
+                                # 3. Guardar en Supabase
                                 supabase.table("paquetes").insert({
                                     "alumno_id": id_alumno_sel,
                                     "tipo_paquete": tipo_p_nuevo,
@@ -270,12 +279,11 @@ else:
                                     "clases_totales": total_unificado,
                                     "clases_restantes": total_unificado,
                                     "fecha_vencimiento": fecha_vence_nueva,
-                                    "estado": "Activo" if total_unificado > 0 else "Agotado"
+                                    "estado": "Activo"
                                 }).execute()
                                 
                                 st.success(f"🔄 **¡Renovación Exitosa!** Se activó el plan para **{alumno_sel}**. Ahora cuenta con un total de **{total_unificado} clases disponibles** (incluyendo {clases_flotantes} acumuladas). El nuevo periodo vence el **{fecha_vence_nueva}**.")
                                 st.balloons()
-                                st.rerun()
                             except Exception as e:
                                 st.error(f"❌ Error al procesar la renovación: {e}")
                 except Exception as e:
