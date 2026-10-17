@@ -45,7 +45,7 @@ if verificar_primer_inicio():
     st.info("Esta pantalla desaparecerá automáticamente una vez registres tu clave.")
     
     nuevo_usuario = st.text_input("Nombre de usuario o correo de administrador:")
-    nueva_clave = st.text_input("Crea tu contraseña de acceso:", type="password")
+    nueva_clave = st.text_input("Contraseña de acceso:", type="password")
     confirmar_clave = st.text_input("Confirma tu contraseña:", type="password")
     
     if st.button("Activar e Iniciar Sistema"):
@@ -80,7 +80,7 @@ else:
             try:
                 alumno = supabase.table("alumnos").select("*").eq("telefono", telefono_alumno).execute()
                 if alumno and hasattr(alumno, 'data') and alumno.data and len(alumno.data) > 0:
-                    datos_alumno = alumno.data
+                    datos_alumno = alumno.data[0]
                     st.success(f"¡Hola, {datos_alumno.get('nombre', '')} {datos_alumno.get('apellido', '')}!")
                     
                     # Buscar paquetes contratados vigentes
@@ -134,12 +134,12 @@ else:
             # Definición indexada de las 4 pestañas de gestión
             pestanas = st.tabs(["🏢 Configurar Sucursales", "👥 Inscribir Alumno", "🔄 Renovaciones", "🔍 Consulta de Alumno"])
             
-            with pestanas:
+            with pestanas[0]:
                 st.subheader("Alta de Locales")
                 nombre_local = st.text_input("Nombre de la sede (ej: Barranco):", key=f"loc_name_{st.session_state.clear_local}")
                 direccion_local = st.text_input("Dirección:", key=f"loc_dir_{st.session_state.clear_local}")
                 
-                col_btn1, col_btn2 = st.columns()
+                col_btn1, col_btn2 = st.columns(2)
                 with col_btn1:
                     if st.button("Guardar Local"):
                         if nombre_local:
@@ -154,7 +154,7 @@ else:
                     if st.button("Limpiar Pantalla", key="btn_clear_loc"):
                         st.session_state.clear_local += 1
                         st.rerun()
-            with pestanas:
+            with pestanas[1]:
                 st.subheader("Formulario de Inscripción y Venta de Paquete")
                 
                 try:
@@ -179,7 +179,7 @@ else:
                     else:
                         st.write("✨ Plan Flex seleccionado: El alumno tendrá acceso a todas las sedes libres.")
                 
-                col_i1, col_i2 = st.columns()
+                col_i1, col_i2 = st.columns(2)
                 with col_i1:
                     if st.button("Registrar Alumno"):
                         if not a_nombre or not a_telefono:
@@ -188,6 +188,7 @@ else:
                             st.error("❌ Debes registrar al menos un local en la pestaña anterior antes de inscribir alumnos Fixed.")
                         else:
                             try:
+                                # 1. Registrar al Alumno en la base de datos
                                 nuevo_alumno = supabase.table("alumnos").insert({
                                     "nombre": a_nombre,
                                     "apellido": a_apellido,
@@ -195,16 +196,17 @@ else:
                                 }).execute()
                                 
                                 if nuevo_alumno and hasattr(nuevo_alumno, 'data') and nuevo_alumno.data and len(nuevo_alumno.data) > 0:
-                                    datos_nuevo_alumno = nuevo_alumno.data
+                                    datos_nuevo_alumno = nuevo_alumno.data[0]
                                     id_alumno = datos_nuevo_alumno['id']
                                     
-                                    # AJUSTE: Mapeo asigna exactamente 20 clases al Mes Completo
+                                    # Mapeo: Mes completo equivale exactamente a 20 clases
                                     mapeo_clases = {"4 clases": 4, "8 clases": 8, "12 clases": 12, "Mes completo": 20, "Privado": 8}
                                     total_c = mapeo_clases[tipo_p]
                                     
                                     fecha_vence = (datetime.now() + timedelta(days=30)).date().isoformat()
                                     id_local_fijo = opciones_locales[sede_assigned] if modalidad == "Fixed" and opciones_locales else None
                                     
+                                    # 2. Insertar el Paquete comprado
                                     supabase.table("paquetes").insert({
                                         "alumno_id": id_alumno,
                                         "tipo_paquete": tipo_p,
@@ -216,7 +218,7 @@ else:
                                         "estado": "Activo"
                                     }).execute()
                                     
-                                    st.success(f"🎉 **¡Inscripción Exitosa!** Alumno **{a_nombre} {a_apellido}** dado de alta con plan **{modalidad.upper()}** y **{total_c} clases**.")
+                                    st.success(f"🎉 **¡Inscripción Exitosa!** Se ha dado de alta al alumno **{a_nombre} {a_apellido}**. Se activó un plan **{modalidad.upper()}** con un saldo inicial de **{total_c} clases disponibles**. El periodo caduca el **{fecha_vence}**.")
                                     st.balloons()
                             except Exception as e:
                                 error_msg = str(e)
@@ -228,17 +230,18 @@ else:
                     if st.button("Limpiar Pantalla", key="btn_clear_ins"):
                         st.session_state.clear_ins += 1
                         st.rerun()
-            with pestanas:
+            with pestanas[2]:
                 st.subheader("🔄 Renovar Paquete de Alumno Existente")
                 
                 try:
                     alumnos_res = supabase.table("alumnos").select("id", "nombre", "apellido").order("nombre").execute()
                     lista_alumnos = alumnos_res.data if alumnos_res.data else []
                     
+                    # Opción en blanco al inicio para mantener la pantalla limpia
                     opciones_alumnos = [""] + [f"{al['nombre']} {al['apellido']}" for al in lista_alumnos]
                     dicc_alumnos = {f"{al['nombre']} {al['apellido']}": al['id'] for al in lista_alumnos}
                     
-                    alumno_sel = st.selectbox("Selecciona el Alumno a renovar:", opciones_alumnos, key=f"ren_sel_{st.session_state.clear_ren}")
+                    alumno_sel = st.selectbox("Selecciona el Alumno a renovar:", opciones_alumnos, key=f"ren_sel_{st.session_state.clear_ren}", index=0)
                     
                     if alumno_sel == "":
                         st.info("💡 Por favor, busca y selecciona un alumno en el menú superior para procesar su renovación.")
@@ -248,8 +251,7 @@ else:
                         
                         clases_flotantes = 0
                         if paquete_previo and hasattr(paquete_previo, 'data') and paquete_previo.data and len(paquete_previo.data) > 0:
-                            info_p = paquete_previo.data
-                            # AJUSTE: Todos los paquetes acumulan de forma directa (se quitó el candado de 900)
+                            info_p = paquete_previo.data[0]
                             clases_flotantes = info_p.get('clases_restantes', 0)
                             if clases_flotantes > 0:
                                 st.warning(f"📢 **Aviso Operativo:** Al alumno **{alumno_sel}** aún le quedan **{clases_flotantes} clases pendientes** de su periodo anterior.")
@@ -268,14 +270,14 @@ else:
                             else:
                                 st.write("✨ Plan Flex seleccionado: Acceso global habilitado.")
                         
-                        col_r1, col_r2 = st.columns()
+                        col_r1, col_r2 = st.columns(2)
                         with col_r1:
                             if st.button("Procesar Renovación"):
                                 try:
                                     if paquete_previo and hasattr(paquete_previo, 'data') and paquete_previo.data and len(paquete_previo.data) > 0:
-                                        supabase.table("paquetes").update({"estado": "Agotado"}).eq("id", paquete_previo.data['id']).execute()
+                                        supabase.table("paquetes").update({"estado": "Agotado"}).eq("id", paquete_previo.data[0]['id']).execute()
                                     
-                                    # AJUSTE: Mapeo asigna exactamente 20 clases al Mes Completo en Renovaciones
+                                    # Mapeo: Mes completo equivale exactamente a 20 clases en Renovaciones
                                     mapeo_clases = {"4 clases": 4, "8 clases": 8, "12 clases": 12, "Mes completo": 20, "Privado": 8}
                                     base_nuevas = mapeo_clases[tipo_p_nuevo]
                                     total_unificado = base_nuevas + clases_flotantes
@@ -305,10 +307,10 @@ else:
                 except Exception as e:
                     st.error(f"Error en el módulo de renovación: {e}")
 
-            with pestanas:
+            with pestanas[3]:
                 st.subheader("🔍 Kárdex e Historial de Clases de Alumno")
                 
-                col_s1, col_s2 = st.columns()
+                col_s1, col_s2 = st.columns(2)
                 with col_s1:
                     busqueda_tel = st.text_input("Busca al Alumno ingresando su Teléfono de Registro:", key=f"sch_tel_{st.session_state.clear_search}")
                 with col_s2:
@@ -322,7 +324,7 @@ else:
                     try:
                         al_res = supabase.table("alumnos").select("*").eq("telefono", busqueda_tel).execute()
                         if al_res.data and len(al_res.data) > 0:
-                            data_al = al_res.data
+                            data_al = al_res.data[0]
                             st.markdown(f"### Alumno: **{data_al['nombre']} {data_al['apellido']}**")
                             
                             paq_res = supabase.table("paquetes").select("*").eq("alumno_id", data_al['id']).order("fecha_compra", desc=True).execute()
@@ -349,3 +351,4 @@ else:
                             st.error("❌ No se encontró ningún alumno con ese número de teléfono.")
                     except Exception as e:
                         st.error(f"Error al consultar el Kárdex del alumno: {e}")
+
