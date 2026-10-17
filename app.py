@@ -223,17 +223,22 @@ else:
                         alumno_sel = st.selectbox("Selecciona el Alumno a renovar:", list(dicc_alumnos.keys()))
                         id_alumno_sel = dicc_alumnos[alumno_sel]
                         
-                        paquete_previo = supabase.table("paquetes").select("id", "clases_restantes", "tipo_paquete", "fecha_vencimiento").eq("alumno_id", id_alumno_sel).eq("estado", "Activo").execute()
+                                                paquete_previo = supabase.table("paquetes").select("id", "clases_restantes", "tipo_paquete", "fecha_vencimiento").eq("alumno_id", id_alumno_sel).eq("estado", "Activo").execute()
                         
                         clases_flotantes = 0
-                        if paquete_previo.data and len(paquete_previo.data) > 0:
+                        # Validación segura: comprobamos si realmente hay un plan activo en la lista
+                        if paquete_previo and hasattr(paquete_previo, 'data') and paquete_previo.data and len(paquete_previo.data) > 0:
+                            # Extraemos el primer paquete activo de la lista
                             info_p = paquete_previo.data[0]
-                            if info_p['clases_restantes'] < 900:  
-                                clases_flotantes = info_p['clases_restantes']
+                            if info_p.get('clases_restantes', 0) < 900:  
+                                clases_flotantes = info_p.get('clases_restantes', 0)
                                 if clases_flotantes > 0:
-                                    st.warning(f"📢 **Aviso Operativo:** Al alumno **{alumno_sel}** aún le quedan **{clases_flotantes} clases pendientes** de su paquete '{info_p['tipo_paquete']}' (Vence el {info_p['fecha_vencimiento']}).")
+                                    st.warning(f"📢 **Aviso Operativo:** Al alumno **{alumno_sel}** aún le quedan **{clases_flotantes} clases pendientes** de su paquete '{info_p.get('tipo_paquete', '')}' (Vence el {info_p.get('fecha_vencimiento', '')}).")
                                 else:
                                     st.info(f"✅ El alumno no tiene clases pendientes de su plan anterior.")
+                        else:
+                            # SI NO HAY PAQUETES ACTIVOS (Caso del alumno vacío o nuevo)
+                            st.info(f"✅ El alumno **{alumno_sel}** no tiene ningún paquete activo ni clases pendientes de su plan anterior.")
                         
                         col_ren1, col_ren2 = st.columns(2)
                         with col_ren1:
