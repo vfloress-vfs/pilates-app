@@ -316,7 +316,9 @@ else:
                     st.error(f"Error en el módulo de renovación: {e}")
             with pestanas[3]:
                 st.subheader("💰 Catálogo de Planes, Clases y Costos")
-                sub_tab1, sub_tab2 = st.tabs(["➕ Crear Nuevo Plan", "📈 Modificar Costos Existentes"])
+                
+                # ACTUALIZADO: Añadida la tercera sub-pestaña para ver la lista de planes
+                sub_tab1, sub_tab2, sub_tab3 = st.tabs(["➕ Crear Nuevo Plan", "📈 Modificar Costos Existentes", "📋 Lista de Planes Vigentes"])
                 
                 with sub_tab1:
                     st.markdown("#### Registro de Nuevas Ofertas Comerciales")
@@ -359,6 +361,33 @@ else:
                     else:
                         st.info("No hay planes configurados para modificar.")
 
+                # ========================================================
+                # SUB-PESTAÑA 3 NUEVA: LISTA VISUAL DE PLANES Y COSTOS Real-Time
+                # ========================================================
+                with sub_tab3:
+                    st.markdown("#### Lista Completa de Planes y Precios Vigentes")
+                    try:
+                        # Consultamos la tabla completa de planes directamente de la base de datos
+                        todos_planes_res = supabase.table("tipos_paquetes").select("*").order("clases_totales").execute()
+                        if todos_planes_res.data and len(todos_planes_res.data) > 0:
+                            import pandas as pd
+                            df_catalogo = pd.DataFrame(todos_planes_res.data)
+                            
+                            # Formateamos y renombramos el cuadro para que se vea estético
+                            df_catalogo_amigable = df_catalogo[["nombre_paquete", "clases_totales", "costo", "activo"]].rename(columns={
+                                "nombre_paquete": "Nombre del Paquete",
+                                "clases_totales": "Clases que Incluye",
+                                "costo": "Precio Comercial ($)",
+                                "activo": "Disponible para Venta"
+                            })
+                            
+                            # Mostramos la lista en formato de tabla interactiva
+                            st.dataframe(df_catalogo_amigable, use_container_width=True)
+                        else:
+                            st.info("💡 No se encontraron planes registrados en el catálogo.")
+                    except Exception as e:
+                        st.error(f"Error al cargar la lista de tarifas: {e}")
+
             with pestanas[4]:
                 st.subheader("🔍 Kárdex e Historial de Clases de Alumno")
                 col_s1, col_s2 = st.columns(2)
@@ -375,7 +404,7 @@ else:
                     try:
                         al_res = supabase.table("alumnos").select("*").eq("telefono", busqueda_tel).execute()
                         if al_res.data and len(al_res.data) > 0:
-                            data_al = al_res.data[0]
+                            data_al = al_res.data
                             st.markdown(f"### Alumno: **{data_al['nombre']} {data_al['apellido']}**")
                             
                             paq_res = supabase.table("paquetes").select("*").eq("alumno_id", data_al['id']).order("fecha_compra", desc=True).execute()
