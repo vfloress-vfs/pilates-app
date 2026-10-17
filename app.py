@@ -61,7 +61,7 @@ if verificar_primer_inicio():
                     "usuario": nuevo_usuario,
                     "contrasena_encriptada": clave_segura
                 }).execute()
-                st.success("¡¡Sistema activado con éxito! Recargando...")
+                st.success("¡Sistema activado con éxito! Recargando...")
                 st.rerun()
             except Exception as e:
                 st.error(f"❌ Error al guardar el administrador: {e}")
@@ -79,7 +79,7 @@ else:
             try:
                 alumno = supabase.table("alumnos").select("*").eq("telefono", telefono_alumno).execute()
                 if alumno and hasattr(alumno, 'data') and alumno.data and len(alumno.data) > 0:
-                    datos_alumno = alumno.data[0]
+                    datos_alumno = alumno.data
                     st.success(f"¡Hola, {datos_alumno.get('nombre', '')} {datos_alumno.get('apellido', '')}!")
                     
                     # Buscar paquetes contratados vigentes
@@ -134,7 +134,7 @@ else:
             # Definición indexada de las 6 pestañas unificadas de gestión
             pestanas = st.tabs(["🏢 Configurar Sucursales", "👥 Inscribir Alumno", "🔄 Renovaciones", "💰 Tarifas y Planes", "🗓️ Agenda y Horarios", "🔍 Consulta de Alumno"])
             
-            with pestanas[0]:
+            with pestanas:
                 st.subheader("Alta de Locales")
                 nombre_local = st.text_input("Nombre de la sede (ej: Barranco):", key=f"loc_name_{st.session_state.clear_local}")
                 direccion_local = st.text_input("Dirección:", key=f"loc_dir_{st.session_state.clear_local}")
@@ -154,7 +154,7 @@ else:
                     if st.button("Limpiar Pantalla", key="btn_clear_loc"):
                         st.session_state.clear_local += 1
                         st.rerun()
-            with pestanas[1]:
+            with pestanas:
                 st.subheader("Formulario de Inscripción y Venta de Paquete")
                 
                 try:
@@ -207,7 +207,7 @@ else:
                                 }).execute()
                                 
                                 if nuevo_alumno and hasattr(nuevo_alumno, 'data') and nuevo_alumno.data and len(nuevo_alumno.data) > 0:
-                                    datos_nuevo_alumno = nuevo_alumno.data[0]
+                                    datos_nuevo_alumno = nuevo_alumno.data
                                     id_alumno = datos_nuevo_alumno['id']
                                     total_c = opciones_planes[tipo_p]
                                     
@@ -237,7 +237,7 @@ else:
                     if st.button("Limpiar Pantalla", key="btn_clear_ins"):
                         st.session_state.clear_ins += 1
                         st.rerun()
-            with pestanas[2]:
+            with pestanas:
                 st.subheader("🔄 Renovar Paquete de Alumno Existente")
                 
                 try:
@@ -257,7 +257,7 @@ else:
                         
                         clases_flotantes = 0
                         if paquete_previo and hasattr(paquete_previo, 'data') and paquete_previo.data and len(paquete_previo.data) > 0:
-                            info_p = paquete_previo.data[0]
+                            info_p = paquete_previo.data
                             clases_flotantes = info_p.get('clases_restantes', 0)
                             if clases_flotantes > 0:
                                 st.warning(f"📢 **Aviso Operativo:** Al alumno **{alumno_sel}** aún le quedan **{clases_flotantes} clases pendientes** de su periodo anterior.")
@@ -284,7 +284,7 @@ else:
                             if st.button("Procesar Renovación"):
                                 try:
                                     if paquete_previo and hasattr(paquete_previo, 'data') and paquete_previo.data and len(paquete_previo.data) > 0:
-                                        supabase.table("paquetes").update({"estado": "Agotado"}).eq("id", paquete_previo.data[0]['id']).execute()
+                                        supabase.table("paquetes").update({"estado": "Agotado"}).eq("id", paquete_previo.data['id']).execute()
                                     
                                     base_nuevas = opciones_planes[tipo_p_nuevo]
                                     total_unificado = base_nuevas + clases_flotantes
@@ -311,7 +311,9 @@ else:
                             if st.button("Limpiar Pantalla", key="btn_clear_ren"):
                                 st.session_state.clear_ren += 1
                                 st.rerun()
-            with pestanas[3]:
+                except Exception as e:
+                    st.error(f"Error en el módulo de renovación: {e}")
+            with pestanas:
                 st.subheader("💰 Catálogo de Planes, Clases y Costos")
                 sub_tab1, sub_tab2, sub_tab3 = st.tabs(["➕ Crear Nuevo Plan", "📈 Modificar Costos Existentes", "📋 Lista de Planes Vigentes"])
                 
@@ -384,7 +386,7 @@ else:
                             st.info("💡 No se encontraron planes registrados en el catálogo.")
                     except Exception as e:
                         st.error(f"Error al cargar la lista de tarifas: {e}")
-            with pestanas[4]:
+            with pestanas:
                 st.subheader("🗓️ Control de Agenda, Clases e Inactividades")
                 sub_agenda1, sub_agenda2, sub_agenda3, sub_agenda4 = st.tabs([
                     "👩 Registrar Instructoras", "📅 Programar Horario de Clase", "📅 Días Laborales", "🌴 Feriados / Festivos"
@@ -435,12 +437,12 @@ else:
                             if not opciones_locales or not opciones_inst:
                                 st.error("❌ Debes tener locales e instructoras creadas.")
                             elif feriado_check.data and len(feriado_check.data) > 0:
-                                st.error(f"❌ Fecha bloqueada por feriado o festivo: **{feriado_check.data[0]['descripcion']}**.")
+                                st.error(f"❌ Fecha bloqueada por feriado o festivo: **{feriado_check.data['descripcion']}**.")
                             elif not es_dia_valido:
                                 st.error(f"❌ El estudio permanece cerrado los días **{nombres_dias_mapeo.get(num_dia_elegido, 'Desconocido')}**.")
                             else:
                                 st.success(f"🎉 ¡Turno publicado exitosamente para el {fecha_agenda}!")
-                    except Exception as e: st.error(f"Error: {e}")
+                    except Exception as e: st.error(f"Error al procesar la agenda: {e}")
 
                 with sub_agenda3:
                     st.markdown("#### Configuración de Días Laborales del Estudio")
@@ -496,7 +498,7 @@ else:
                     try:
                         al_res = supabase.table("alumnos").select("*").eq("telefono", busqueda_tel).execute()
                         if al_res.data and len(al_res.data) > 0:
-                            data_al = al_res.data[0] # Extrae el primer registro de la lista de forma segura
+                            data_al = al_res.data
                             st.markdown(f"### Alumno: **{data_al['nombre']} {data_al['apellido']}**")
                             paq_res = supabase.table("paquetes").select("*").eq("alumno_id", data_al['id']).order("fecha_compra", desc=True).execute()
                             if paq_res.data:
