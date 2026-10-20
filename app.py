@@ -2,11 +2,14 @@ import streamlit as st
 import hashlib
 import hmac
 import secrets
+import base64
+import html
+import re
 from datetime import datetime, timedelta
 from supabase import create_client, Client
 
 # 1. CONFIGURACIÓN DE LA PÁGINA (Debe ser la primera línea de Streamlit)
-st.set_page_config(page_title="Pilates Studio | Gestión", page_icon="🧘", layout="wide")
+st.set_page_config(page_title="Panel de Control", page_icon="🧘", layout="wide")
 
 # Identidad visual: calma, movimiento y claridad para una escuela profesional de Pilates.
 st.markdown("""
@@ -183,6 +186,88 @@ except Exception as e:
     st.error("❌ Error de conexión a la base de datos. Verifica tus Secrets.")
     st.stop()
 
+CONFIG_ESTUDIO_DEFAULT = {
+    "nombre_estudio": "Pilates Studio",
+    "color_fondo": "#0e1714",
+    "color_acento": "#a9c5b2",
+    "color_boton": "#a9c5b2",
+    "logo_base64": None,
+    "logo_mime": None,
+}
+
+def color_hex_seguro(valor, alternativo):
+    return valor if isinstance(valor, str) and re.fullmatch(r"#[0-9a-fA-F]{6}", valor) else alternativo
+
+def color_texto_contraste(color):
+    canales = [int(color[i:i + 2], 16) / 255 for i in (1, 3, 5)]
+    lineales = [c / 12.92 if c <= 0.04045 else ((c + 0.055) / 1.055) ** 2.4 for c in canales]
+    return "#102019" if sum(lineales[i] * peso for i, peso in enumerate((0.2126, 0.7152, 0.0722))) > 0.42 else "#edf2ed"
+
+try:
+    configuracion_res = supabase.table("configuracion_estudio").select("*").eq("id", 1).limit(1).execute()
+    configuracion_estudio = {**CONFIG_ESTUDIO_DEFAULT, **(configuracion_res.data[0] if configuracion_res.data else {})}
+    config_estudio_disponible = True
+except Exception:
+    configuracion_estudio = dict(CONFIG_ESTUDIO_DEFAULT)
+    config_estudio_disponible = False
+
+nombre_estudio = str(configuracion_estudio.get("nombre_estudio") or CONFIG_ESTUDIO_DEFAULT["nombre_estudio"]).strip()
+color_fondo_app = color_hex_seguro(configuracion_estudio.get("color_fondo"), CONFIG_ESTUDIO_DEFAULT["color_fondo"])
+color_acento_app = color_hex_seguro(configuracion_estudio.get("color_acento"), CONFIG_ESTUDIO_DEFAULT["color_acento"])
+color_boton_app = color_hex_seguro(configuracion_estudio.get("color_boton"), CONFIG_ESTUDIO_DEFAULT["color_boton"])
+color_texto_boton = color_texto_contraste(color_boton_app)
+color_texto_fondo = color_texto_contraste(color_fondo_app)
+fondo_claro = color_texto_fondo == "#102019"
+color_panel_app = "#ffffff" if fondo_claro else "#17231e"
+color_papel_app = "#f1f4f2" if fondo_claro else "#1b2923"
+color_borde_app = "#c7d0ca" if fondo_claro else "#35463d"
+color_muted_app = "#52605a" if fondo_claro else "#a9b8ae"
+color_barra_pestanas = "#e5ebe7" if fondo_claro else "#111b17"
+st.markdown(f"""
+<style>
+:root {{
+  --pilates-cream: {color_fondo_app};
+  --pilates-forest: {color_acento_app};
+  --pilates-sage: {color_acento_app};
+  --pilates-button: {color_boton_app};
+  --pilates-button-ink: {color_texto_boton};
+  --pilates-ink: {color_texto_fondo};
+  --pilates-panel: {color_panel_app};
+  --pilates-paper: {color_papel_app};
+  --pilates-border: {color_borde_app};
+  --pilates-muted: {color_muted_app};
+}}
+.stButton > button, .stFormSubmitButton > button {{
+  background: var(--pilates-button) !important;
+  border-color: var(--pilates-button) !important;
+  color: var(--pilates-button-ink) !important;
+  -webkit-text-fill-color: var(--pilates-button-ink) !important;
+}}
+.stButton > button:hover, .stFormSubmitButton > button:hover {{
+  filter: brightness(1.12);
+}}
+[data-testid="stSidebar"] [data-testid="stButton"] button {{
+  background: var(--pilates-button) !important;
+  border-color: var(--pilates-button) !important;
+  color: var(--pilates-button-ink) !important;
+  -webkit-text-fill-color: var(--pilates-button-ink) !important;
+}}
+[data-testid="stSidebar"] [data-testid="stButton"] button:hover {{
+  background: var(--pilates-button) !important;
+  color: var(--pilates-button-ink) !important;
+  -webkit-text-fill-color: var(--pilates-button-ink) !important;
+  filter: brightness(1.12);
+}}
+[data-testid="stTabs"] button[role="tab"][aria-selected="true"] {{
+  color: var(--pilates-button-ink) !important;
+  background: var(--pilates-button) !important;
+  border-color: var(--pilates-button) !important;
+}}
+[data-testid="stTabs"] [role="tablist"] {{ background: {color_barra_pestanas} !important; }}
+[data-testid="stTabs"] button[role="tab"] {{ background: var(--pilates-paper) !important; }}
+</style>
+""", unsafe_allow_html=True)
+
 # 3. FUNCIONES DE SEGURIDAD Y LÓGICA DE NEGOCIO
 # PBKDF2 con sal aleatoria se almacena en la columna text existente.
 ITERACIONES_HASH = 600_000
@@ -194,6 +279,7 @@ VENTANAS_ADMIN = {
     "planes": "Planes y tarifas",
     "agenda": "Agenda",
     "alumnos": "Consulta de alumnos",
+    "configuracion": "Configuración",
 }
 
 def encriptar_contrasena(password):
@@ -298,9 +384,15 @@ if primer_inicio:
 
 # CASO 2: EL SISTEMA YA TIENE ENLACE SEGURO (Flujo de Operación Normal)
 else:
-    st.sidebar.markdown("""
+    logo_base64 = configuracion_estudio.get("logo_base64")
+    if logo_base64:
+        try:
+            st.sidebar.image(base64.b64decode(logo_base64), width=145)
+        except Exception:
+            pass
+    st.sidebar.markdown(f"""
     <div class="pilates-sidebar-brand">
-        <strong>Pilates Studio</strong>
+        <strong>{html.escape(nombre_estudio)}</strong>
         <span>Gestión del estudio</span>
     </div>
     """, unsafe_allow_html=True)
@@ -411,7 +503,7 @@ else:
                 st.session_state.clear_login += 1
                 st.rerun()
         else:
-            st.title(":material/dashboard: Panel de Control Global (Dueño)")
+            st.title(":material/dashboard: Panel de Control")
             if st.sidebar.button("Cerrar sesión", icon=":material/logout:", type="primary"):
                 st.session_state.logged_in = False
                 st.session_state.admin_id = None
@@ -427,7 +519,7 @@ else:
             if "clear_ren" not in st.session_state: st.session_state.clear_ren = 0
             if "clear_search" not in st.session_state: st.session_state.clear_search = 0
             if "clear_plan" not in st.session_state: st.session_state.clear_plan = 0
-            for llave_limpieza in ("clear_instructora", "clear_agenda", "clear_feriado", "clear_usuario", "clear_tarifa", "clear_cuenta", "clear_reset_clave"):
+            for llave_limpieza in ("clear_instructora", "clear_agenda", "clear_feriado", "clear_usuario", "clear_tarifa", "clear_cuenta", "clear_reset_clave", "clear_configuracion"):
                 if llave_limpieza not in st.session_state:
                     st.session_state[llave_limpieza] = 0
 
@@ -1107,3 +1199,133 @@ else:
                             st.info("Aún no hay otros usuarios administradores para editar.")
                     except Exception:
                         st.error("No se pudieron cargar los usuarios. Ejecuta la migración SQL y revisa los permisos de Supabase.")
+
+                    st.divider()
+                    st.markdown("#### Eliminar usuario")
+                    st.caption("La eliminación es permanente. No puedes eliminar la cuenta con la que tienes la sesión abierta ni el último superusuario.")
+                    try:
+                        usuarios_borrar_res = supabase.table("usuarios_admin").select(
+                            "id,usuario,es_superadmin"
+                        ).order("usuario").execute()
+                        usuarios_borrar = usuarios_borrar_res.data or []
+                        usuarios_eliminables = [
+                            usuario for usuario in usuarios_borrar
+                            if str(usuario["id"]) != str(st.session_state.admin_id)
+                        ]
+                        if usuarios_eliminables:
+                            etiquetas_borrar = {
+                                f"{usuario['usuario']} — {'Superusuario' if usuario.get('es_superadmin') else 'Administrador'}": usuario
+                                for usuario in usuarios_eliminables
+                            }
+                            usuario_borrar_etiqueta = st.selectbox(
+                                "Selecciona la cuenta que deseas eliminar",
+                                list(etiquetas_borrar.keys()),
+                                key="usuario_admin_seleccionar_eliminar"
+                            )
+                            usuario_borrar = etiquetas_borrar[usuario_borrar_etiqueta]
+                            confirmar_borrado = st.checkbox(
+                                f"Confirmo que deseo eliminar permanentemente a {usuario_borrar['usuario']}",
+                                key=f"confirmar_eliminar_usuario_{usuario_borrar['id']}"
+                            )
+                            if st.button(
+                                "Eliminar usuario",
+                                key="eliminar_usuario_admin",
+                                type="secondary",
+                                disabled=not confirmar_borrado
+                            ):
+                                superusuarios = [u for u in usuarios_borrar if u.get("es_superadmin")]
+                                if usuario_borrar.get("es_superadmin") and len(superusuarios) <= 1:
+                                    st.error("No se puede eliminar el último superusuario.")
+                                else:
+                                    supabase.table("usuarios_admin").delete().eq("id", usuario_borrar["id"]).execute()
+                                    st.success(f"La cuenta {usuario_borrar['usuario']} fue eliminada.")
+                                    st.rerun()
+                        else:
+                            st.info("No hay otras cuentas que puedas eliminar.")
+                    except Exception:
+                        st.error("No se pudo cargar o eliminar la cuenta. Verifica la migración SQL y los permisos de Supabase.")
+
+            if "configuracion" in paneles_admin:
+                with paneles_admin["configuracion"]:
+                    st.subheader(":material/palette: Identidad visual del estudio")
+                    st.caption("El nombre y la apariencia se aplican a todos los perfiles de la aplicación.")
+                    if not config_estudio_disponible:
+                        st.error("Falta crear la tabla de configuración. Ejecuta supabase_app_config_migration.sql en Supabase y vuelve a cargar la app.")
+                    else:
+                        if st.session_state.pop("configuracion_guardada", False):
+                            st.success("Configuración del estudio guardada.")
+                        logo_actual = configuracion_estudio.get("logo_base64")
+                        logo_mime_actual = configuracion_estudio.get("logo_mime") or "image/png"
+                        logo_subido = st.file_uploader(
+                            "Cambiar logo (PNG, JPG o WEBP; máximo 1 MB)",
+                            type=["png", "jpg", "jpeg", "webp"],
+                            key=f"config_logo_{st.session_state.clear_configuracion}"
+                        )
+                        if logo_subido is not None:
+                            st.image(logo_subido.getvalue(), caption="Vista previa del nuevo logo", width=180)
+                        elif logo_actual:
+                            try:
+                                st.image(base64.b64decode(logo_actual), caption="Logo actual", width=180)
+                            except Exception:
+                                st.warning("No se pudo mostrar el logo guardado.")
+
+                        nombre_nuevo_estudio = st.text_input(
+                            "Nombre del estudio",
+                            value=nombre_estudio,
+                            key=f"config_nombre_{st.session_state.clear_configuracion}"
+                        )
+                        col_color_1, col_color_2, col_color_3 = st.columns(3)
+                        with col_color_1:
+                            fondo_nuevo = st.color_picker(
+                                "Fondo principal",
+                                value=color_fondo_app,
+                                key=f"config_fondo_{st.session_state.clear_configuracion}"
+                            )
+                        with col_color_2:
+                            acento_nuevo = st.color_picker(
+                                "Color de acento",
+                                value=color_acento_app,
+                                key=f"config_acento_{st.session_state.clear_configuracion}"
+                            )
+                        with col_color_3:
+                            boton_nuevo = st.color_picker(
+                                "Color de botones",
+                                value=color_boton_app,
+                                key=f"config_boton_{st.session_state.clear_configuracion}"
+                            )
+                        quitar_logo = st.checkbox(
+                            "Quitar el logo actual",
+                            key=f"config_quitar_logo_{st.session_state.clear_configuracion}"
+                        )
+                        guardar_configuracion = st.button(
+                            "Guardar configuración",
+                            key=f"guardar_configuracion_{st.session_state.clear_configuracion}",
+                            type="primary"
+                        )
+
+                        if guardar_configuracion:
+                            if not nombre_nuevo_estudio.strip():
+                                st.error("Escribe el nombre del estudio.")
+                            elif logo_subido is not None and logo_subido.size > 1_048_576:
+                                st.error("El logo supera el límite de 1 MB.")
+                            else:
+                                logo_base64_nuevo = None if quitar_logo else logo_actual
+                                logo_mime_nuevo = None if quitar_logo else logo_mime_actual
+                                if logo_subido is not None:
+                                    logo_base64_nuevo = base64.b64encode(logo_subido.getvalue()).decode("ascii")
+                                    logo_mime_nuevo = logo_subido.type or "image/png"
+                                try:
+                                    supabase.table("configuracion_estudio").upsert({
+                                        "id": 1,
+                                        "nombre_estudio": nombre_nuevo_estudio.strip(),
+                                        "color_fondo": fondo_nuevo,
+                                        "color_acento": acento_nuevo,
+                                        "color_boton": boton_nuevo,
+                                        "logo_base64": logo_base64_nuevo,
+                                        "logo_mime": logo_mime_nuevo,
+                                    }, on_conflict="id").execute()
+                                    st.session_state.configuracion_guardada = True
+                                    st.session_state.clear_configuracion += 1
+                                    st.rerun()
+                                except Exception as e:
+                                    st.error(f"No se pudo guardar la configuración. Revisa la migración y los permisos de Supabase: {e}")
