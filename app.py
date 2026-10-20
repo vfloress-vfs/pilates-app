@@ -98,6 +98,16 @@ h2, h3 { color: var(--pilates-forest); font-weight: 650; letter-spacing: -.02em;
     border-color: #c4d9ca; background: #c4d9ca;
     color: #102019; transform: translateY(-1px); box-shadow: 0 7px 18px rgba(0,0,0,.28);
 }
+[data-testid="stSidebar"] [data-testid="stButton"] button {
+    width: 100%; min-height: 2.8rem !important; padding: .55rem .8rem !important;
+    border: 1px solid #b7d0bf !important; border-radius: 11px !important;
+    background: #c6d9cb !important; color: #102019 !important;
+    -webkit-text-fill-color: #102019 !important; font-weight: 750 !important;
+}
+[data-testid="stSidebar"] [data-testid="stButton"] button:hover {
+    background: #e0ebe2 !important; color: #0b1512 !important;
+    -webkit-text-fill-color: #0b1512 !important; border-color: #e0ebe2 !important;
+}
 [data-testid="stTextInput"] input, [data-testid="stNumberInput"] input,
 [data-testid="stDateInput"] input, [data-testid="stTimeInput"] input,
 [data-testid="stSelectbox"] [data-baseweb="select"] > div,
@@ -117,9 +127,29 @@ h2, h3 { color: var(--pilates-forest); font-weight: 650; letter-spacing: -.02em;
 [data-testid="stTextArea"] textarea:focus {
     border-color: var(--pilates-sage); box-shadow: 0 0 0 1px var(--pilates-sage);
 }
-[data-testid="stTabs"] [role="tablist"] { gap: .35rem; border-bottom: 1px solid var(--pilates-border); }
-[data-testid="stTabs"] button[role="tab"] { color: var(--pilates-muted); font-weight: 600; padding: .7rem .85rem; }
-[data-testid="stTabs"] button[role="tab"][aria-selected="true"] { color: var(--pilates-forest); border-bottom: 3px solid var(--pilates-sage); }
+[data-testid="stTabs"] [role="tablist"] {
+    display: flex; flex-wrap: wrap; gap: .55rem; padding: .45rem;
+    border: 1px solid var(--pilates-border); border-radius: 15px;
+    background: #111b17; margin-bottom: .8rem;
+}
+[data-testid="stTabs"] button[role="tab"] {
+    min-height: 2.8rem; margin: 0; padding: .65rem 1rem;
+    color: var(--pilates-muted); background: #1b2923;
+    border: 1px solid #35463d; border-radius: 10px 10px 6px 6px;
+    font-weight: 700; transition: all .18s ease;
+}
+[data-testid="stTabs"] button[role="tab"]:hover {
+    color: #edf2ed; background: #24352c; border-color: #789783;
+}
+[data-testid="stTabs"] button[role="tab"][aria-selected="true"] {
+    color: #102019; background: #a9c5b2; border-color: #a9c5b2;
+    box-shadow: 0 4px 14px rgba(0,0,0,.25); font-weight: 800;
+}
+[data-testid="stTabs"] [role="tabpanel"] {
+    padding: 1.25rem 1.35rem; background: var(--pilates-panel);
+    border: 1px solid var(--pilates-border); border-radius: 5px 15px 15px 15px;
+    box-shadow: 0 8px 24px rgba(0,0,0,.14);
+}
 [data-testid="stAlert"] { border-radius: 12px; border: 1px solid var(--pilates-border); background: var(--pilates-panel); color: var(--pilates-ink); }
 [data-testid="stAlert"] p { color: var(--pilates-ink); }
 [data-testid="stDataFrame"], [data-testid="stTable"] { background: var(--pilates-panel); }
@@ -157,6 +187,15 @@ except Exception as e:
 # PBKDF2 con sal aleatoria se almacena en la columna text existente.
 ITERACIONES_HASH = 600_000
 
+VENTANAS_ADMIN = {
+    "sucursales": "Sucursales",
+    "inscripciones": "Inscripciones",
+    "renovaciones": "Renovaciones",
+    "planes": "Planes y tarifas",
+    "agenda": "Agenda",
+    "alumnos": "Consulta de alumnos",
+}
+
 def encriptar_contrasena(password):
     sal = secrets.token_hex(16)
     derivado = hashlib.pbkdf2_hmac(
@@ -191,6 +230,14 @@ def verificar_primer_inicio():
 # --- ESTADOS DE LA SESIÓN ---
 if "logged_in" not in st.session_state:
     st.session_state.logged_in = False
+if "admin_id" not in st.session_state:
+    st.session_state.admin_id = None
+if "admin_usuario" not in st.session_state:
+    st.session_state.admin_usuario = ""
+if "admin_es_superadmin" not in st.session_state:
+    st.session_state.admin_es_superadmin = False
+if "admin_permisos" not in st.session_state:
+    st.session_state.admin_permisos = []
 
 # ------------------------------------------------------------------
 # FLUJO PRINCIPAL DE ACCESO
@@ -222,10 +269,19 @@ if primer_inicio:
         else:
             try:
                 clave_segura = encriptar_contrasena(nueva_clave)
-                supabase.table("usuarios_admin").insert({
+                nuevo_admin = supabase.table("usuarios_admin").insert({
                     "usuario": nuevo_usuario.strip(),
-                    "contrasena_encriptada": clave_segura
-                }).execute()
+                    "contrasena_encriptada": clave_segura,
+                    "es_superadmin": True,
+                    "permisos": list(VENTANAS_ADMIN.keys())
+                }).select("id,usuario,es_superadmin,permisos").execute()
+                if not nuevo_admin.data:
+                    raise RuntimeError("No se recibió el nuevo usuario administrador.")
+                datos_admin = nuevo_admin.data[0]
+                st.session_state.admin_id = datos_admin["id"]
+                st.session_state.admin_usuario = datos_admin["usuario"]
+                st.session_state.admin_es_superadmin = True
+                st.session_state.admin_permisos = list(VENTANAS_ADMIN.keys())
                 st.session_state.logged_in = True
                 st.success("¡Sistema activado con éxito! Abriendo el panel...")
                 st.rerun()
@@ -290,7 +346,7 @@ else:
                 try:
                     resultado = (
                         supabase.table("usuarios_admin")
-                        .select("id,contrasena_encriptada")
+                        .select("id,usuario,contrasena_encriptada,es_superadmin,permisos")
                         .eq("usuario", user_input.strip())
                         .limit(1)
                         .execute()
@@ -306,6 +362,11 @@ else:
                             supabase.table("usuarios_admin").update({
                                 "contrasena_encriptada": encriptar_contrasena(pass_input)
                             }).eq("id", admins[0]["id"]).execute()
+                        st.session_state.admin_id = admins[0]["id"]
+                        st.session_state.admin_usuario = admins[0]["usuario"]
+                        st.session_state.admin_es_superadmin = bool(admins[0].get("es_superadmin", False))
+                        permisos_guardados = admins[0].get("permisos") or []
+                        st.session_state.admin_permisos = permisos_guardados if isinstance(permisos_guardados, list) else []
                         st.session_state.logged_in = True
                         st.rerun()
                     else:
@@ -314,8 +375,12 @@ else:
                     st.error(f"❌ Error al validar credenciales: {e}")
         else:
             st.title(":material/dashboard: Panel de Control Global (Dueño)")
-            if st.sidebar.button("Cerrar Sesión"):
+            if st.sidebar.button("Cerrar sesión", icon=":material/logout:", type="primary"):
                 st.session_state.logged_in = False
+                st.session_state.admin_id = None
+                st.session_state.admin_usuario = ""
+                st.session_state.admin_es_superadmin = False
+                st.session_state.admin_permisos = []
                 st.rerun()
                 
             # Inicializar llaves de control para limpiar formularios si no existen
@@ -338,10 +403,24 @@ else:
             except Exception as e:
                 opciones_locales, opciones_planes, costos_planes = {}, {}, {}
                 
-            # Definición indexada exacta de las 6 pestañas unificadas de gestión
-            pestanas = st.tabs(["Sucursales", "Inscripciones", "Renovaciones", "Planes y tarifas", "Agenda", "Alumnos"])
-            
-            with pestanas[0]:
+            # Las ventanas se muestran según los permisos guardados en el perfil del administrador.
+            permisos_sesion = set(st.session_state.admin_permisos or [])
+            ventanas_disponibles = list(VENTANAS_ADMIN.keys())
+            ventanas_visibles = [
+                clave for clave in ventanas_disponibles
+                if st.session_state.admin_es_superadmin or clave in permisos_sesion
+            ]
+            claves_pestanas = ventanas_visibles + ["mi_cuenta"]
+            if st.session_state.admin_es_superadmin:
+                claves_pestanas.append("usuarios")
+            nombres_pestanas = {**VENTANAS_ADMIN, "mi_cuenta": "Mi cuenta", "usuarios": "Usuarios y accesos"}
+            pestanas = st.tabs([nombres_pestanas[clave] for clave in claves_pestanas])
+            paneles_admin = dict(zip(claves_pestanas, pestanas))
+
+            if not ventanas_visibles:
+                st.info("Tu cuenta solo tiene acceso a Mi cuenta. Pide a un superadministrador que te asigne otras ventanas si las necesitas.")
+
+            with paneles_admin["sucursales"] if "sucursales" in paneles_admin else st.container():
                 st.subheader("Alta de Locales")
                 nombre_local = st.text_input("Nombre de la sede (ej: Barranco):", key=f"loc_name_{st.session_state.clear_local}")
                 direccion_local = st.text_input("Dirección:", key=f"loc_dir_{st.session_state.clear_local}")
@@ -362,7 +441,7 @@ else:
                         st.session_state.clear_local += 1
                         st.rerun()
 
-            with pestanas[1]:
+            with paneles_admin["inscripciones"]:
                 st.subheader("Formulario de Inscripción y Venta de Paquete")
                 
                 col1, col2 = st.columns(2)
@@ -430,7 +509,7 @@ else:
                     if st.button("Limpiar Pantalla", key="btn_clear_ins"):
                         st.session_state.clear_ins += 1
                         st.rerun()
-            with pestanas[2]:
+            with paneles_admin["renovaciones"]:
                 st.subheader(":material/autorenew: Renovar paquete de alumno")
                 try:
                     alumnos_res = supabase.table("alumnos").select("id", "nombre", "apellido", "telefono").order("nombre").execute()
@@ -511,7 +590,7 @@ else:
                                 st.rerun()
                 except Exception as e: st.error(f"Error: {e}")
 
-            with pestanas[3]:
+            with paneles_admin["planes"]:
                 st.subheader(":material/payments: Catálogo de planes, clases y costos")
                 sub_tab1, sub_tab2, sub_tab3 = st.tabs(["Crear plan", "Modificar costos", "Planes vigentes"])
                 
@@ -570,7 +649,7 @@ else:
                         else: st.info("💡 No se encontraron planes registrados.")
                     except Exception as e: st.error(f"Error: {e}")
                     
-            with pestanas[4]:
+            with paneles_admin["agenda"]:
                 st.subheader("🗓️ Control de Agenda, Clases e Inactividades")
                 sub_agenda1, sub_agenda2, sub_agenda3, sub_agenda4 = st.tabs([
                     "Instructoras", "Programación de horarios", "Días laborales", "Feriados y festivos"
@@ -695,7 +774,7 @@ else:
                         except Exception as e: st.error(f"Error: {e}")
 
             # --- CONSULTA PREDICTIVA DE ALUMNOS Y KÁRDEX ---
-            with pestanas[5]:
+            with paneles_admin["alumnos"]:
                 st.subheader(":material/clinical_notes: Kárdex e historial de clases")
 
                 if "kardex_alumno_id" not in st.session_state:
