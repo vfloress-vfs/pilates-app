@@ -1,5 +1,7 @@
 import streamlit as st
 import hashlib
+import hmac
+import secrets
 from datetime import datetime, timedelta
 from supabase import create_client, Client
 
@@ -20,15 +22,39 @@ except Exception as e:
     st.stop()
 
 # 3. FUNCIONES DE SEGURIDAD Y LÓGICA DE NEGOCIO
+# PBKDF2 con sal aleatoria se almacena en la columna text existente.
+ITERACIONES_HASH = 600_000
+
 def encriptar_contrasena(password):
-    return hashlib.sha256(password.encode()).hexdigest()
+    sal = secrets.token_hex(16)
+    derivado = hashlib.pbkdf2_hmac(
+        "sha256", password.encode("utf-8"), bytes.fromhex(sal), ITERACIONES_HASH
+    ).hex()
+    return f"pbkdf2_sha256${ITERACIONES_HASH}${sal}${derivado}"
+
+def verificar_contrasena(password, hash_guardado):
+    # Migra los SHA-256 anteriores al formato PBKDF2 al primer inicio de sesión válido.
+    if hash_guardado and hash_guardado.startswith("pbkdf2_sha256$"):
+        try:
+            algoritmo, iteraciones, sal, derivado = hash_guardado.split("$", 3)
+            if algoritmo != "pbkdf2_sha256":
+                return False, False
+            calculado = hashlib.pbkdf2_hmac(
+                "sha256", password.encode("utf-8"), bytes.fromhex(sal), int(iteraciones)
+            ).hex()
+            return hmac.compare_digest(calculado, derivado), False
+        except (ValueError, TypeError):
+            return False, False
+    anterior = hashlib.sha256(password.encode("utf-8")).hexdigest()
+    coincide = bool(hash_guardado) and hmac.compare_digest(anterior, hash_guardado)
+    return coincide, coincide
 
 def verificar_primer_inicio():
-    try:
-        respuesta = supabase.table("usuarios_admin").select("*", count="exact").execute()
-        return len(respuesta.data) == 0
-    except Exception as e:
-        return True
+    # Un error de conexión/permisos nunca debe habilitar el alta inicial.
+    respuesta = supabase.table("usuarios_admin").select("id", count="exact").limit(1).execute()
+    if respuesta.count is None:
+        raise RuntimeError("Supabase no devolvió el conteo de administradores.")
+    return respuesta.count == 0
 
 # --- ESTADOS DE LA SESIÓN ---
 if "logged_in" not in st.session_state:
@@ -38,8 +64,14 @@ if "logged_in" not in st.session_state:
 # FLUJO PRINCIPAL DE ACCESO
 # ------------------------------------------------------------------
 
-# CASO 1: CONFIGURACIÓN INICIAL (Si la tabla de administradores está vacía)
-if verificar_primer_inicio():
+# CASO 1: CONFIGURACIÓN INICIAL (solo si se confirma que no existen administradores)
+try:
+    primer_inicio = verificar_primer_inicio()
+except Exception:
+    st.error("No se pudo verificar la cuenta administradora. Revisa la conexión y los permisos de Supabase.")
+    st.stop()
+
+if primer_inicio:
     st.title("🛡️ Configuración Inicial del Sistema")
     st.subheader("Configura tu cuenta de Dueño/Administrador por primera vez:")
     st.info("Esta pantalla desaparecerá automáticamente una vez registres tu clave.")
@@ -49,20 +81,21 @@ if verificar_primer_inicio():
     confirmar_clave = st.text_input("Confirma tu contraseña:", type="password")
     
     if st.button("Activar e Iniciar Sistema"):
-        if not nuevo_usuario or not nueva_clave:
+        if not nuevo_usuario.strip() or not nueva_clave:
             st.error("❌ Por favor completa todos los campos.")
         elif nueva_clave != confirmar_clave:
             st.error("❌ Las contraseñas no coinciden.")
-        elif len(nueva_clave) < 6:
-            st.error("⚠️ La contraseña debe tener al menos 6 caracteres.")
+        elif len(nueva_clave) < 12:
+            st.error("⚠️ Usa una contraseña de al menos 12 caracteres.")
         else:
             try:
                 clave_segura = encriptar_contrasena(nueva_clave)
                 supabase.table("usuarios_admin").insert({
-                    "usuario": nuevo_usuario,
+                    "usuario": nuevo_usuario.strip(),
                     "contrasena_encriptada": clave_segura
                 }).execute()
-                st.success("¡Sistema activado con éxito! Recargando...")
+                st.session_state.logged_in = True
+                st.success("¡Sistema activado con éxito! Abriendo el panel...")
                 st.rerun()
             except Exception as e:
                 st.error(f"❌ Error al guardar el administrador: {e}")
@@ -78,13 +111,20 @@ else:
         telefono_alumno = st.text_input("Ingresa tu teléfono registrado para ver tu pase de acceso:")
         if telefono_alumno:
             try:
-                alumno = supabase.table("alumnos").select("*").eq("telefono", telefono_alumno).execute()
+                alumno = supabase.table("alumnos").select("id,nombre,apellido").eq("telefono", telefono_alumno.strip()).execute()
                 if alumno and hasattr(alumno, 'data') and alumno.data and len(alumno.data) > 0:
                     datos_alumno = alumno.data[0]
                     st.success(f"¡Hola, {datos_alumno.get('nombre', '')} {datos_alumno.get('apellido', '')}!")
                     
                     # Buscar paquetes contratados vigentes
-                    paquetes_res = supabase.table("paquetes").select("*").eq("alumno_id", datos_alumno['id']).eq("estado", "Activo").execute()
+                    paquetes_res = (
+                        supabase.table("paquetes")
+                        .select("modalidad_plan,tipo_paquete,clases_restantes,fecha_vencimiento")
+                        .eq("alumno_id", datos_alumno['id'])
+                        .eq("estado", "Activo")
+                        .gte("fecha_vencimiento", datetime.now().date().isoformat())
+                        .execute()
+                    )
                     if paquetes_res.data and len(paquetes_res.data) > 0:
                         for p in paquetes_res.data:
                             st.metric(label=f"Plan {p['modalidad_plan']} ({p['tipo_paquete']})", value=f"{p['clases_restantes']} clases")
@@ -111,9 +151,24 @@ else:
             
             if st.button("Ingresar"):
                 try:
-                    clave_hash = encriptar_contrasena(pass_input)
-                    resultado = supabase.table("usuarios_admin").select("*").eq("usuario", user_input).eq("contrasena_encriptada", clave_hash).execute()
-                    if resultado and hasattr(resultado, 'data') and resultado.data and len(resultado.data) > 0:
+                    resultado = (
+                        supabase.table("usuarios_admin")
+                        .select("id,contrasena_encriptada")
+                        .eq("usuario", user_input.strip())
+                        .limit(1)
+                        .execute()
+                    )
+                    admins = resultado.data or []
+                    coincide, migrar_hash = (False, False)
+                    if admins:
+                        coincide, migrar_hash = verificar_contrasena(
+                            pass_input, admins[0]["contrasena_encriptada"]
+                        )
+                    if coincide:
+                        if migrar_hash:
+                            supabase.table("usuarios_admin").update({
+                                "contrasena_encriptada": encriptar_contrasena(pass_input)
+                            }).eq("id", admins[0]["id"]).execute()
                         st.session_state.logged_in = True
                         st.rerun()
                     else:
@@ -193,8 +248,8 @@ else:
                 col_i1, col_i2 = st.columns(2)
                 with col_i1:
                     if st.button("Registrar Alumno"):
-                        if not a_nombre or not a_telefono:
-                            st.error("❌ Nombre y Teléfono son campos obligatorios.")
+                        if not a_nombre.strip() or not a_apellido.strip() or not a_telefono.strip():
+                            st.error("❌ Nombre, apellido y teléfono son campos obligatorios.")
                         elif not opciones_planes:
                             st.error("❌ No puedes registrar alumnos sin configurar planes vigentes.")
                         elif modalidad == "Fixed" and not opciones_locales:
@@ -202,19 +257,17 @@ else:
                         else:
                             try:
                                 nuevo_alumno = supabase.table("alumnos").insert({
-                                    "nombre": a_nombre,
-                                    "apellido": a_apellido,
-                                    "telefono": a_telefono
-                                }).execute()
-                                
-                                if nuevo_alumno and hasattr(nuevo_alumno, 'data') and nuevo_alumno.data and len(nuevo_alumno.data) > 0:
-                                    datos_nuevo_alumno = nuevo_alumno.data[0]
-                                    id_alumno = datos_nuevo_alumno['id']
-                                    total_c = opciones_planes[tipo_p]
-                                    
-                                    fecha_vence = (datetime.now() + timedelta(days=30)).date().isoformat()
-                                    id_local_fijo = opciones_locales[sede_assigned] if modalidad == "Fixed" and opciones_locales else None
-                                    
+                                    "nombre": a_nombre.strip(),
+                                    "apellido": a_apellido.strip(),
+                                    "telefono": a_telefono.strip()
+                                }).select("id").execute()
+                                if not nuevo_alumno.data:
+                                    raise RuntimeError("No se recibió el identificador del alumno.")
+                                id_alumno = nuevo_alumno.data[0]["id"]
+                                total_c = opciones_planes[tipo_p]
+                                fecha_vence = (datetime.now().date() + timedelta(days=30)).isoformat()
+                                id_local_fijo = opciones_locales[sede_assigned] if modalidad == "Fixed" else None
+                                try:
                                     supabase.table("paquetes").insert({
                                         "alumno_id": id_alumno,
                                         "tipo_paquete": tipo_p,
@@ -225,9 +278,12 @@ else:
                                         "fecha_vencimiento": fecha_vence,
                                         "estado": "Activo"
                                     }).execute()
-                                    
-                                    st.success(f"🎉 **¡Inscripción Exitosa!** Alumno **{a_nombre} {a_apellido}** dado de alta.")
-                                    st.balloons()
+                                except Exception:
+                                    # Compensa la primera escritura para no dejar un alumno sin paquete.
+                                    supabase.table("alumnos").delete().eq("id", id_alumno).execute()
+                                    raise
+                                st.success(f"🎉 **¡Inscripción Exitosa!** Alumno **{a_nombre.strip()} {a_apellido.strip()}** dado de alta.")
+                                st.balloons()
                             except Exception as e:
                                 error_msg = str(e)
                                 if "23505" in error_msg or "already exists" in error_msg.lower():
@@ -240,10 +296,14 @@ else:
             with pestanas[2]:
                 st.subheader("🔄 Renovar Paquete de Alumno Existente")
                 try:
-                    alumnos_res = supabase.table("alumnos").select("id", "nombre", "apellido").order("nombre").execute()
+                    alumnos_res = supabase.table("alumnos").select("id", "nombre", "apellido", "telefono").order("nombre").execute()
                     lista_alumnos = alumnos_res.data if alumnos_res.data else []
-                    opciones_alumnos = [""] + [f"{al['nombre']} {al['apellido']}" for al in lista_alumnos]
-                    dicc_alumnos = {f"{al['nombre']} {al['apellido']}": al['id'] for al in lista_alumnos}
+                    etiquetas_alumnos = {
+                        al["id"]: f"{al['nombre']} {al['apellido']} — {al['telefono']}"
+                        for al in lista_alumnos
+                    }
+                    opciones_alumnos = [""] + list(etiquetas_alumnos.values())
+                    dicc_alumnos = {etiquetas_alumnos[al["id"]]: al["id"] for al in lista_alumnos}
                     
                     alumno_sel = st.selectbox("Selecciona el Alumno a renovar:", opciones_alumnos, key=f"ren_sel_{st.session_state.clear_ren}", index=0)
                     
@@ -251,14 +311,19 @@ else:
                         st.info("💡 Por favor, busca y selecciona un alumno en el menú superior para procesar su renovación.")
                     else:
                         id_alumno_sel = dicc_alumnos[alumno_sel]
-                        paquete_previo = supabase.table("paquetes").select("id", "clases_restantes", "tipo_paquete", "fecha_vencimiento").eq("alumno_id", id_alumno_sel).eq("estado", "Activo").execute()
-                        
-                        clases_flotantes = 0
-                        if paquete_previo and hasattr(paquete_previo, 'data') and paquete_previo.data and len(paquete_previo.data) > 0:
-                            info_p = paquete_previo.data[0]
-                            clases_flotantes = info_p.get('clases_restantes', 0)
-                            if clases_flotantes > 0:
-                                st.warning(f"📢 **Aviso Operativo:** Al alumno **{alumno_sel}** aún le quedan **{clases_flotantes} clases pendientes**.")
+                        hoy = datetime.now().date().isoformat()
+                        paquete_previo = (
+                            supabase.table("paquetes")
+                            .select("id,clases_restantes,fecha_vencimiento")
+                            .eq("alumno_id", id_alumno_sel)
+                            .eq("estado", "Activo")
+                            .gte("fecha_vencimiento", hoy)
+                            .execute()
+                        )
+                        paquetes_vigentes = paquete_previo.data or []
+                        clases_flotantes = sum(max(0, p.get("clases_restantes") or 0) for p in paquetes_vigentes)
+                        if clases_flotantes > 0:
+                            st.warning(f"📢 **Aviso Operativo:** Al alumno **{alumno_sel}** le quedan **{clases_flotantes} clases vigentes** que se sumarán al renovar.")
                         
                         col_ren1, col_ren2 = st.columns(2)
                         with col_ren1:
@@ -276,21 +341,32 @@ else:
                         with col_r1:
                             if st.button("Procesar Renovación"):
                                 try:
-                                    if paquete_previo and hasattr(paquete_previo, 'data') and paquete_previo.data and len(paquete_previo.data) > 0:
-                                        supabase.table("paquetes").update({"estado": "Agotado"}).eq("id", paquete_previo.data[0]['id']).execute()
-                                    
-                                    base_nuevas = opciones_planes[tipo_p_nuevo]
-                                    total_unificado = base_nuevas + clases_flotantes
-                                    fecha_vence_nueva = (datetime.now() + timedelta(days=30)).date().isoformat()
-                                    id_local_fijo_nuevo = opciones_locales[sede_assigned_new] if modalidad_nueva == "Fixed" and opciones_locales else None
-                                    
-                                    supabase.table("paquetes").insert({
-                                        "alumno_id": id_alumno_sel, "tipo_paquete": tipo_p_nuevo, "modalidad_plan": modalidad_nueva,
-                                        "local_id_fijo": id_local_fijo_nuevo, "clases_totales": total_unificado, "clases_restantes": total_unificado,
-                                        "fecha_vencimiento": fecha_vence_nueva, "estado": "Activo"
-                                    }).execute()
-                                    st.success(f"🔄 ¡Renovación Exitosa! **{alumno_sel}** cuenta con **{total_unificado} clases**.")
-                                    st.balloons()
+                                    if not opciones_planes or tipo_p_nuevo not in opciones_planes:
+                                        st.error("❌ Selecciona un plan vigente antes de renovar.")
+                                    elif modalidad_nueva == "Fixed" and (not opciones_locales or sede_assigned_new not in opciones_locales):
+                                        st.error("❌ Selecciona una sede válida para el plan Fixed.")
+                                    else:
+                                        base_nuevas = opciones_planes[tipo_p_nuevo]
+                                        total_unificado = base_nuevas + clases_flotantes
+                                        fecha_vence_nueva = (datetime.now().date() + timedelta(days=30)).isoformat()
+                                        id_local_fijo_nuevo = opciones_locales[sede_assigned_new] if modalidad_nueva == "Fixed" else None
+                                        paquete_nuevo = supabase.table("paquetes").insert({
+                                            "alumno_id": id_alumno_sel, "tipo_paquete": tipo_p_nuevo, "modalidad_plan": modalidad_nueva,
+                                            "local_id_fijo": id_local_fijo_nuevo, "clases_totales": total_unificado, "clases_restantes": total_unificado,
+                                            "fecha_vencimiento": fecha_vence_nueva, "estado": "Activo"
+                                        }).select("id").execute()
+                                        if not paquete_nuevo.data:
+                                            raise RuntimeError("No se recibió el identificador del paquete renovado.")
+                                        try:
+                                            if paquetes_vigentes:
+                                                supabase.table("paquetes").update({"estado": "Agotado"}).in_(
+                                                    "id", [p["id"] for p in paquetes_vigentes]
+                                                ).execute()
+                                        except Exception:
+                                            supabase.table("paquetes").delete().eq("id", paquete_nuevo.data[0]["id"]).execute()
+                                            raise
+                                        st.success(f"🔄 ¡Renovación Exitosa! **{alumno_sel}** cuenta con **{total_unificado} clases**.")
+                                        st.balloons()
                                 except Exception as e: st.error(f"❌ Error al procesar la renovación: {e}")
                         with col_r2:
                             if st.button("Limpiar Pantalla", key="btn_clear_ren"):
@@ -412,7 +488,7 @@ else:
                         with col_d5: 
                             if st.checkbox("Viernes", value=True): dias_seleccionados.append(4)
                         
-                        if st.button("⚡ Generar y Publicar Clases en Bloque"):
+                        if st.button("⚡ Calcular fechas elegibles"):
                             if not opciones_locales or not opciones_inst: st.error("❌ Se requieren locales e instructoras.")
                             elif fecha_inicio > fecha_fin: st.error("❌ Rango inválido.")
                             elif not dias_seleccionados: st.error("❌ Selecciona al menos un día.")
@@ -426,7 +502,7 @@ else:
                                     if num_dia in dias_seleccionados and dias_habilitados.get(num_dia, False) and (fecha_actual.isoformat() not in lista_feriados):
                                         total_creadas += 1
                                     fecha_actual += timedelta(days=1)
-                                st.success(f"⚡ ¡Proceso Concluido! Se publicaron **{total_creadas} clases**.")
+                                st.info(f"Se encontraron **{total_creadas} fechas elegibles**. Este cálculo no crea ni publica clases en la base de datos.")
                     except Exception as e: st.error(f"Error: {e}")
 
                 with sub_agenda3:
