@@ -244,6 +244,9 @@ if "admin_migracion_pendiente" not in st.session_state:
 # ------------------------------------------------------------------
 # FLUJO PRINCIPAL DE ACCESO
 # ------------------------------------------------------------------
+for llave_limpieza in ("clear_bootstrap", "clear_login", "clear_portal_alumno"):
+    if llave_limpieza not in st.session_state:
+        st.session_state[llave_limpieza] = 0
 
 # CASO 1: CONFIGURACIÓN INICIAL (solo si se confirma que no existen administradores)
 try:
@@ -257,9 +260,9 @@ if primer_inicio:
     st.subheader("Configura tu cuenta de Dueño/Administrador por primera vez:")
     st.info("Esta pantalla desaparecerá automáticamente una vez registres tu clave.")
     
-    nuevo_usuario = st.text_input("Nombre de usuario o correo de administrador:")
-    nueva_clave = st.text_input("Contraseña de acceso:", type="password")
-    confirmar_clave = st.text_input("Confirma tu contraseña:", type="password")
+    nuevo_usuario = st.text_input("Nombre de usuario o correo de administrador:", key=f"bootstrap_usuario_{st.session_state.clear_bootstrap}")
+    nueva_clave = st.text_input("Contraseña de acceso:", type="password", key=f"bootstrap_clave_{st.session_state.clear_bootstrap}")
+    confirmar_clave = st.text_input("Confirma tu contraseña:", type="password", key=f"bootstrap_confirmar_{st.session_state.clear_bootstrap}")
     
     if st.button("Activar e Iniciar Sistema"):
         if not nuevo_usuario.strip() or not nueva_clave:
@@ -289,6 +292,9 @@ if primer_inicio:
                 st.rerun()
             except Exception as e:
                 st.error(f"❌ Error al guardar el administrador: {e}")
+    if st.button("Limpiar campos", key="limpiar_bootstrap"):
+        st.session_state.clear_bootstrap += 1
+        st.rerun()
 
 # CASO 2: EL SISTEMA YA TIENE ENLACE SEGURO (Flujo de Operación Normal)
 else:
@@ -303,7 +309,10 @@ else:
     # --- VISTA ALUMNOS ---
     if rol_acceso == "Alumnos":
         st.title(":material/smartphone: Portal del Alumno")
-        telefono_alumno = st.text_input("Ingresa tu teléfono registrado para ver tu pase de acceso:")
+        telefono_alumno = st.text_input("Ingresa tu teléfono registrado para ver tu pase de acceso:", key=f"portal_telefono_{st.session_state.clear_portal_alumno}")
+        if st.button("Limpiar búsqueda", key="limpiar_portal_alumno"):
+            st.session_state.clear_portal_alumno += 1
+            st.rerun()
         if telefono_alumno:
             try:
                 alumno = supabase.table("alumnos").select("id,nombre,apellido").eq("telefono", telefono_alumno.strip()).execute()
@@ -341,8 +350,8 @@ else:
     elif rol_acceso == "Administrador":
         if not st.session_state.logged_in:
             st.title(":material/lock: Panel Administrativo Privado")
-            user_input = st.text_input("Usuario:")
-            pass_input = st.text_input("Contraseña:", type="password")
+            user_input = st.text_input("Usuario:", key=f"login_usuario_{st.session_state.clear_login}")
+            pass_input = st.text_input("Contraseña:", type="password", key=f"login_clave_{st.session_state.clear_login}")
             
             if st.button("Ingresar"):
                 try:
@@ -398,6 +407,9 @@ else:
                         st.error("❌ Credenciales incorrectas.")
                 except Exception as e:
                     st.error(f"❌ Error al validar credenciales: {e}")
+            if st.button("Limpiar campos", key="limpiar_login"):
+                st.session_state.clear_login += 1
+                st.rerun()
         else:
             st.title(":material/dashboard: Panel de Control Global (Dueño)")
             if st.sidebar.button("Cerrar sesión", icon=":material/logout:", type="primary"):
@@ -415,6 +427,9 @@ else:
             if "clear_ren" not in st.session_state: st.session_state.clear_ren = 0
             if "clear_search" not in st.session_state: st.session_state.clear_search = 0
             if "clear_plan" not in st.session_state: st.session_state.clear_plan = 0
+            for llave_limpieza in ("clear_instructora", "clear_agenda", "clear_feriado", "clear_usuario", "clear_tarifa", "clear_cuenta", "clear_reset_clave"):
+                if llave_limpieza not in st.session_state:
+                    st.session_state[llave_limpieza] = 0
 
             # LECTURA GLOBAL DE CATÁLOGOS COLECTIVOS (Variables seguras en memoria)
             try:
@@ -650,13 +665,19 @@ else:
                     with sub_tab2:
                         st.markdown("#### Actualizar Precios de Planes Existentes")
                         if opciones_planes:
-                            plan_a_modificar = st.selectbox("Selecciona el plan que deseas actualizar:", list(opciones_planes.keys()))
-                            nuevo_precio = st.number_input("Establecer nuevo precio ($):", min_value=0.0, max_value=5000.0, value=costos_planes.get(plan_a_modificar, 0.0), step=5.0)
-                            if st.button("Actualizar Tarifa Comercial"):
-                                try:
-                                    supabase.table("tipos_paquetes").update({"costo": nuevo_precio}).eq("nombre_paquete", plan_a_modificar).execute()
-                                    st.success(f"📈 ¡Precio del plan '{plan_a_modificar}' actualizado correctamente a ${nuevo_precio:.2f}!")
-                                except Exception as e: st.error(f"❌ Error al actualizar precio: {e}")
+                            plan_a_modificar = st.selectbox("Selecciona el plan que deseas actualizar:", list(opciones_planes.keys()), key=f"tarifa_plan_{st.session_state.clear_tarifa}")
+                            nuevo_precio = st.number_input("Establecer nuevo precio ($):", min_value=0.0, max_value=5000.0, value=costos_planes.get(plan_a_modificar, 0.0), step=5.0, key=f"tarifa_precio_{st.session_state.clear_tarifa}")
+                            col_tarifa_1, col_tarifa_2 = st.columns(2)
+                            with col_tarifa_1:
+                                if st.button("Actualizar Tarifa Comercial", key="actualizar_tarifa_comercial"):
+                                    try:
+                                        supabase.table("tipos_paquetes").update({"costo": nuevo_precio}).eq("nombre_paquete", plan_a_modificar).execute()
+                                        st.success(f"📈 ¡Precio del plan '{plan_a_modificar}' actualizado correctamente a ${nuevo_precio:.2f}!")
+                                    except Exception as e: st.error(f"❌ Error al actualizar precio: {e}")
+                            with col_tarifa_2:
+                                if st.button("Limpiar campos", key="limpiar_tarifa"):
+                                    st.session_state.clear_tarifa += 1
+                                    st.rerun()
                         else: st.info("No hay planes configurados para modificar.")
 
                     with sub_tab3:
@@ -691,16 +712,22 @@ else:
                                     
                     with sub_agenda1:
                         st.markdown("#### Alta de Profesoras y Tarifas por Hora")
-                        inst_nombre = st.text_input("Nombre completo de la Instructora:")
-                        inst_telefono = st.text_input("Teléfono de contacto:")
-                        inst_costo = st.number_input("Costo / Tarifa por hora dictada ($):", min_value=0.0, value=50.0, step=5.0)
-                        if st.button("Guardar Instructora"):
-                            if inst_nombre:
-                                try:
-                                    supabase.table("instructoras").insert({"nombre": inst_nombre, "telefono": inst_telefono, "costo_hora": inst_costo}).execute()
-                                    st.success(f"🎉 Instructora '{inst_nombre}' registrada con éxito.")
-                                except Exception as e: st.error(f"❌ Error al guardar instructora: {e}")
-                            else: st.error("El nombre es obligatorio.")
+                        inst_nombre = st.text_input("Nombre completo de la Instructora:", key=f"inst_nombre_{st.session_state.clear_instructora}")
+                        inst_telefono = st.text_input("Teléfono de contacto:", key=f"inst_telefono_{st.session_state.clear_instructora}")
+                        inst_costo = st.number_input("Costo / Tarifa por hora dictada ($):", min_value=0.0, value=50.0, step=5.0, key=f"inst_costo_{st.session_state.clear_instructora}")
+                        col_inst_1, col_inst_2 = st.columns(2)
+                        with col_inst_1:
+                            if st.button("Guardar Instructora"):
+                                if inst_nombre:
+                                    try:
+                                        supabase.table("instructoras").insert({"nombre": inst_nombre, "telefono": inst_telefono, "costo_hora": inst_costo}).execute()
+                                        st.success(f"🎉 Instructora '{inst_nombre}' registrada con éxito.")
+                                    except Exception as e: st.error(f"❌ Error al guardar instructora: {e}")
+                                else: st.error("El nombre es obligatorio.")
+                        with col_inst_2:
+                            if st.button("Limpiar campos", key="limpiar_instructora"):
+                                st.session_state.clear_instructora += 1
+                                st.rerun()
                                                 
                     with sub_agenda2:
                         st.markdown("#### 🚀 Generador Automatizado de Calendario Mensual")
@@ -714,29 +741,29 @@ else:
                                             
                             col_mas1, col_mas2 = st.columns(2)
                             with col_mas1:
-                                sede_agenda = st.selectbox("Selecciona Sede:", list(opciones_locales.keys()) if opciones_locales else ["No hay locales"], key="mas_sede")
-                                fecha_inicio = st.date_input("Fecha de Inicio:", min_value=datetime.now().date(), key="mas_f_ini")
-                                fecha_fin = st.date_input("Fecha de Fin:", value=datetime.now().date() + timedelta(days=30), key="mas_f_fin")
-                                hora_agenda = st.time_input("Hora de Inicio:", key="mas_hora")
+                                sede_agenda = st.selectbox("Selecciona Sede:", list(opciones_locales.keys()) if opciones_locales else ["No hay locales"], key=f"mas_sede_{st.session_state.clear_agenda}")
+                                fecha_inicio = st.date_input("Fecha de Inicio:", min_value=datetime.now().date(), key=f"mas_f_ini_{st.session_state.clear_agenda}")
+                                fecha_fin = st.date_input("Fecha de Fin:", value=datetime.now().date() + timedelta(days=30), key=f"mas_f_fin_{st.session_state.clear_agenda}")
+                                hora_agenda = st.time_input("Hora de Inicio:", key=f"mas_hora_{st.session_state.clear_agenda}")
                             with col_mas2:
-                                inst_agenda = st.selectbox("Asignar Instructora:", list(opciones_inst.keys()) if opciones_inst else ["Primero registra una instructora"], key="mas_inst")
-                                tipo_serv_agenda = st.selectbox("Tipo de Sesión:", ["Grupal", "Privado"], key="mas_tipo")
+                                inst_agenda = st.selectbox("Asignar Instructora:", list(opciones_inst.keys()) if opciones_inst else ["Primero registra una instructora"], key=f"mas_inst_{st.session_state.clear_agenda}")
+                                tipo_serv_agenda = st.selectbox("Tipo de Sesión:", ["Grupal", "Privado"], key=f"mas_tipo_{st.session_state.clear_agenda}")
                                 if tipo_serv_agenda == "Grupal":
-                                    aforo_agenda = st.number_input("Aforo Máximo Camillas:", min_value=4, max_value=10, value=4, key="mas_aforo")
+                                    aforo_agenda = st.number_input("Aforo Máximo Camillas:", min_value=4, max_value=10, value=4, key=f"mas_aforo_{st.session_state.clear_agenda}")
                                 else: aforo_agenda = 1
                                             
                             dias_seleccionados = []
                             col_d1, col_d2, col_d3, col_d4, col_d5 = st.columns(5)
                             with col_d1: 
-                                if st.checkbox("Lunes", value=True): dias_seleccionados.append(0)
+                                if st.checkbox("Lunes", value=True, key=f"dia_lunes_{st.session_state.clear_agenda}"): dias_seleccionados.append(0)
                             with col_d2: 
-                                if st.checkbox("Martes", value=True): dias_seleccionados.append(1)
+                                if st.checkbox("Martes", value=True, key=f"dia_martes_{st.session_state.clear_agenda}"): dias_seleccionados.append(1)
                             with col_d3: 
-                                if st.checkbox("Miércoles", value=True): dias_seleccionados.append(2)
+                                if st.checkbox("Miércoles", value=True, key=f"dia_miercoles_{st.session_state.clear_agenda}"): dias_seleccionados.append(2)
                             with col_d4: 
-                                if st.checkbox("Jueves", value=True): dias_seleccionados.append(3)
+                                if st.checkbox("Jueves", value=True, key=f"dia_jueves_{st.session_state.clear_agenda}"): dias_seleccionados.append(3)
                             with col_d5: 
-                                if st.checkbox("Viernes", value=True): dias_seleccionados.append(4)
+                                if st.checkbox("Viernes", value=True, key=f"dia_viernes_{st.session_state.clear_agenda}"): dias_seleccionados.append(4)
                                             
                             if st.button("⚡ Calcular fechas elegibles"):
                                 if not opciones_locales or not opciones_inst: st.error("❌ Se requieren locales e instructoras.")
@@ -753,6 +780,9 @@ else:
                                             total_creadas += 1
                                         fecha_actual += timedelta(days=1)
                                     st.info(f"Se encontraron **{total_creadas} fechas elegibles**. Este cálculo no crea ni publica clases en la base de datos.")
+                            if st.button("Limpiar campos", key="limpiar_generador_agenda"):
+                                st.session_state.clear_agenda += 1
+                                st.rerun()
                         except Exception as e: st.error(f"Error: {e}")
 
                     with sub_agenda3:
@@ -777,8 +807,8 @@ else:
                         st.markdown("#### Registro y Eliminación Interactiva de Días Festivos")
                         col_f1, col_f2 = st.columns(2)
                         with col_f1:
-                            fecha_f = st.date_input("Fecha del Feriado:", key="input_fecha_feriado")
-                            desc_f = st.text_input("Descripción del Festivo:", key="input_desc_feriado")
+                            fecha_f = st.date_input("Fecha del Feriado:", key=f"input_fecha_feriado_{st.session_state.clear_feriado}")
+                            desc_f = st.text_input("Descripción del Festivo:", key=f"input_desc_feriado_{st.session_state.clear_feriado}")
                             if st.button("Habilitar Feriado"):
                                 if desc_f:
                                     try:
@@ -787,6 +817,9 @@ else:
                                         st.rerun()
                                     except Exception as e: st.error(f"❌ Ya registrado o error: {e}")
                                 else: st.error("Agrega una descripción.")
+                            if st.button("Limpiar campos", key="limpiar_feriado"):
+                                st.session_state.clear_feriado += 1
+                                st.rerun()
                         with col_f2:
                             try:
                                 feriados_res = supabase.table("feriados").select("*").order("fecha").execute()
@@ -922,11 +955,15 @@ else:
             with paneles_admin["mi_cuenta"]:
                 st.subheader(":material/key: Cambiar mi contraseña")
                 st.caption(f"Sesión iniciada como **{st.session_state.admin_usuario}**")
-                with st.form("form_cambiar_clave_admin"):
-                    clave_actual = st.text_input("Contraseña actual", type="password", key="cuenta_clave_actual")
-                    clave_nueva = st.text_input("Nueva contraseña (mínimo 12 caracteres)", type="password", key="cuenta_clave_nueva")
-                    clave_confirmacion = st.text_input("Confirmar nueva contraseña", type="password", key="cuenta_clave_confirmacion")
+                with st.form(f"form_cambiar_clave_admin_{st.session_state.clear_cuenta}"):
+                    clave_actual = st.text_input("Contraseña actual", type="password", key=f"cuenta_clave_actual_{st.session_state.clear_cuenta}")
+                    clave_nueva = st.text_input("Nueva contraseña (mínimo 12 caracteres)", type="password", key=f"cuenta_clave_nueva_{st.session_state.clear_cuenta}")
+                    clave_confirmacion = st.text_input("Confirmar nueva contraseña", type="password", key=f"cuenta_clave_confirmacion_{st.session_state.clear_cuenta}")
                     guardar_clave = st.form_submit_button("Actualizar contraseña", type="primary")
+                    limpiar_clave = st.form_submit_button("Limpiar campos")
+                if limpiar_clave:
+                    st.session_state.clear_cuenta += 1
+                    st.rerun()
                 if guardar_clave:
                     if len(clave_nueva) < 12:
                         st.error("La nueva contraseña debe tener al menos 12 caracteres.")
@@ -954,17 +991,21 @@ else:
                     st.subheader(":material/manage_accounts: Usuarios y permisos de acceso")
                     st.caption("Cada usuario solo verá las ventanas asignadas. Todos pueden cambiar su contraseña desde Mi cuenta.")
 
-                    with st.form("form_crear_usuario_admin"):
-                        nuevo_usuario_admin = st.text_input("Nombre de usuario", key="nuevo_usuario_admin")
-                        nueva_clave_admin = st.text_input("Contraseña inicial (mínimo 12 caracteres)", type="password", key="nueva_clave_admin")
-                        confirmar_clave_admin = st.text_input("Confirmar contraseña", type="password", key="confirmar_clave_admin")
+                    with st.form(f"form_crear_usuario_admin_{st.session_state.clear_usuario}"):
+                        nuevo_usuario_admin = st.text_input("Nombre de usuario", key=f"nuevo_usuario_admin_{st.session_state.clear_usuario}")
+                        nueva_clave_admin = st.text_input("Contraseña inicial (mínimo 12 caracteres)", type="password", key=f"nueva_clave_admin_{st.session_state.clear_usuario}")
+                        confirmar_clave_admin = st.text_input("Confirmar contraseña", type="password", key=f"confirmar_clave_admin_{st.session_state.clear_usuario}")
                         permisos_nuevos = st.multiselect(
                             "Ventanas que podrá administrar",
                             options=list(VENTANAS_ADMIN.keys()),
                             format_func=lambda permiso: VENTANAS_ADMIN[permiso],
-                            key="permisos_nuevo_admin"
+                            key=f"permisos_nuevo_admin_{st.session_state.clear_usuario}"
                         )
                         crear_usuario = st.form_submit_button("Crear usuario administrador", type="primary")
+                        limpiar_usuario = st.form_submit_button("Limpiar campos")
+                    if limpiar_usuario:
+                        st.session_state.clear_usuario += 1
+                        st.rerun()
                     if crear_usuario:
                         if not nuevo_usuario_admin.strip():
                             st.error("Escribe un nombre de usuario.")
@@ -981,6 +1022,7 @@ else:
                                     "permisos": permisos_nuevos
                                 }).execute()
                                 st.success(f"Usuario {nuevo_usuario_admin.strip()} creado.")
+                                st.session_state.clear_usuario += 1
                                 st.rerun()
                             except Exception as e:
                                 if "23505" in str(e) or "already exists" in str(e).lower():
@@ -989,6 +1031,51 @@ else:
                                     st.error("Ejecuta primero supabase_admin_users_migration.sql en Supabase para habilitar los permisos.")
                                 else:
                                     st.error("No se pudo crear el usuario. Revisa la conexión y los permisos de Supabase.")
+
+                    st.divider()
+                    st.markdown("#### Restablecer contraseña de un usuario")
+                    try:
+                        usuarios_claves_res = supabase.table("usuarios_admin").select("id,usuario").order("usuario").execute()
+                        usuarios_claves = usuarios_claves_res.data or []
+                        if usuarios_claves:
+                            usuarios_clave_labels = {f"{u['usuario']}" : u["id"] for u in usuarios_claves}
+                            usuario_clave_sel = st.selectbox(
+                                "Usuario al que cambiar la contraseña",
+                                list(usuarios_clave_labels.keys()),
+                                key="usuario_restablecer_clave"
+                            )
+                            with st.form(f"form_restablecer_clave_{st.session_state.clear_reset_clave}"):
+                                clave_admin_nueva = st.text_input(
+                                    "Nueva contraseña (mínimo 12 caracteres)",
+                                    type="password",
+                                    key=f"reset_clave_nueva_{st.session_state.clear_reset_clave}"
+                                )
+                                confirmar_clave_admin_nueva = st.text_input(
+                                    "Confirmar nueva contraseña",
+                                    type="password",
+                                    key=f"reset_clave_confirmar_{st.session_state.clear_reset_clave}"
+                                )
+                                cambiar_clave_usuario = st.form_submit_button("Cambiar contraseña", type="primary")
+                                limpiar_reset_clave = st.form_submit_button("Limpiar campos")
+                            if limpiar_reset_clave:
+                                st.session_state.clear_reset_clave += 1
+                                st.rerun()
+                            if cambiar_clave_usuario:
+                                if len(clave_admin_nueva) < 12:
+                                    st.error("La contraseña debe tener al menos 12 caracteres.")
+                                elif clave_admin_nueva != confirmar_clave_admin_nueva:
+                                    st.error("Las contraseñas no coinciden.")
+                                else:
+                                    supabase.table("usuarios_admin").update({
+                                        "contrasena_encriptada": encriptar_contrasena(clave_admin_nueva)
+                                    }).eq("id", usuarios_clave_labels[usuario_clave_sel]).execute()
+                                    st.success(f"Contraseña de {usuario_clave_sel} cambiada correctamente.")
+                                    st.session_state.clear_reset_clave += 1
+                                    st.rerun()
+                        else:
+                            st.info("No hay usuarios administradores registrados.")
+                    except Exception:
+                        st.error("No se pudo restablecer la contraseña. Revisa la conexión y los permisos de Supabase.")
 
                     st.divider()
                     st.markdown("#### Editar permisos de un usuario existente")
