@@ -717,10 +717,33 @@ else:
                                 
                     if tipo_p in costos_planes and costos_planes[tipo_p] > 0:
                         st.info(f"💵 **Valor comercial del paquete seleccionado:** ${costos_planes[tipo_p]:.2f}")
+
+                    inscripcion_completa = bool(
+                        a_nombre.strip() and a_apellido.strip() and a_telefono.strip()
+                        and tipo_p and modalidad
+                        and (modalidad != "Fixed" or sede_assigned in opciones_locales)
+                    )
+                    if inscripcion_completa:
+                        fecha_vencimiento_inscripcion = datetime.now().date() + timedelta(days=30)
+                        sede_resumen = f" · Sede: {sede_assigned}" if modalidad == "Fixed" else ""
+                        st.info(
+                            f"**Resumen de inscripción**  \n"
+                            f"Alumno: {a_nombre.strip()} {a_apellido.strip()} · Paquete: {tipo_p} "
+                            f"({opciones_planes[tipo_p]} clases) · Acceso: {modalidad}{sede_resumen} · "
+                            f"Vencimiento: {fecha_vencimiento_inscripcion.strftime('%d/%m/%Y')} · "
+                            f"Total a pagar: ${costos_planes.get(tipo_p, 0):.2f}"
+                        )
+                        confirmar_pago_inscripcion = st.checkbox(
+                            "Confirmo que el alumno ya pagó el plan indicado.",
+                            key=f"pago_confirmado_ins_{st.session_state.clear_ins}"
+                        )
+                    else:
+                        confirmar_pago_inscripcion = False
+                        st.caption("Completa los datos del alumno y del plan para revisar el detalle antes de confirmar el pago.")
                         
                     col_i1, col_i2 = st.columns(2)
                     with col_i1:
-                        if st.button("Registrar Alumno"):
+                        if st.button("Confirmar pago e inscribir", type="primary", disabled=not (inscripcion_completa and confirmar_pago_inscripcion), key=f"registrar_alumno_{st.session_state.clear_ins}"):
                             if not a_nombre.strip() or not a_apellido.strip() or not a_telefono.strip() or not tipo_p or not modalidad:
                                 st.error("❌ Completa nombre, apellido, teléfono, plan y modalidad.")
                             elif not opciones_planes:
@@ -740,8 +763,10 @@ else:
                                     total_c = opciones_planes[tipo_p]
                                     fecha_vence = (datetime.now().date() + timedelta(days=30)).isoformat()
                                     id_local_fijo = opciones_locales[sede_assigned] if modalidad == "Fixed" else None
+                                    id_paquete_creado = None
                                     try:
-                                        supabase.table("paquetes").insert({
+                                        fecha_pago = datetime.now().astimezone().isoformat()
+                                        nuevo_paquete = supabase.table("paquetes").insert({
                                             "alumno_id": id_alumno,
                                             "tipo_paquete": tipo_p,
                                             "modalidad_plan": modalidad,
@@ -749,13 +774,36 @@ else:
                                             "clases_totales": total_c,
                                             "clases_restantes": total_c,
                                             "fecha_vencimiento": fecha_vence,
-                                            "estado": "Activo"
+                                            "estado": "Activo",
+                                            "pagado": True,
+                                            "fecha_pago": fecha_pago,
+                                            "pago_confirmado_por": st.session_state.admin_id
+                                        }).select("id").execute()
+                                        if not nuevo_paquete.data:
+                                            raise RuntimeError("No se recibió el identificador del paquete.")
+                                        id_paquete_creado = nuevo_paquete.data[0]["id"]
+                                        supabase.table("eventos_paquetes").insert({
+                                            "paquete_id": id_paquete_creado,
+                                            "alumno_id": id_alumno,
+                                            "tipo_evento": "inscripcion",
+                                            "realizado_por": st.session_state.admin_id,
+                                            "detalles": {
+                                                "alumno": f"{a_nombre.strip()} {a_apellido.strip()}",
+                                                "tipo_paquete": tipo_p,
+                                                "modalidad_plan": modalidad,
+                                                "local_id_fijo": id_local_fijo,
+                                                "clases_totales": total_c,
+                                                "costo": costos_planes.get(tipo_p, 0),
+                                                "fecha_vencimiento": fecha_vence,
+                                                "fecha_pago": fecha_pago
+                                            }
                                         }).execute()
                                     except Exception:
-                                        # Compensa la primera escritura para no dejar un alumno sin paquete.
+                                        if id_paquete_creado is not None:
+                                            supabase.table("paquetes").delete().eq("id", id_paquete_creado).execute()
                                         supabase.table("alumnos").delete().eq("id", id_alumno).execute()
                                         raise
-                                    st.session_state.aviso_inscripcion = f"Inscripción exitosa: {a_nombre.strip()} {a_apellido.strip()} quedó registrado."
+                                    st.session_state.aviso_inscripcion = f"Pago confirmado e inscripción registrada para {a_nombre.strip()} {a_apellido.strip()}."
                                     st.session_state.clear_ins += 1
                                     st.balloons()
                                     st.rerun()
@@ -793,7 +841,7 @@ else:
                             hoy = datetime.now().date().isoformat()
                             paquete_previo = (
                                 supabase.table("paquetes")
-                                .select("id,clases_restantes,fecha_vencimiento")
+                                .select("id,clases_restantes,fecha_vencimiento,estado")
                                 .eq("alumno_id", id_alumno_sel)
                                 .eq("estado", "Activo")
                                 .gte("fecha_vencimiento", hoy)
@@ -816,10 +864,35 @@ else:
                                     
                             if tipo_p_nuevo in costos_planes and costos_planes[tipo_p_nuevo] > 0:
                                 st.info(f"💵 **Valor comercial de esta renovación:** ${costos_planes[tipo_p_nuevo]:.2f}")
+
+                            renovacion_completa = bool(
+                                tipo_p_nuevo in opciones_planes and modalidad_nueva
+                                and (modalidad_nueva != "Fixed" or sede_assigned_new in opciones_locales)
+                            )
+                            fecha_vencimiento_renovacion = datetime.now().date() + timedelta(days=30)
+                            if renovacion_completa:
+                                base_resumen_renovacion = opciones_planes[tipo_p_nuevo]
+                                total_resumen_renovacion = base_resumen_renovacion + clases_flotantes
+                                sede_resumen_renovacion = f" · Sede: {sede_assigned_new}" if modalidad_nueva == "Fixed" else ""
+                                st.info(
+                                    f"**Resumen de renovación**  \n"
+                                    f"Alumno: {alumno_sel} · Paquete: {tipo_p_nuevo} · "
+                                    f"Clases del plan: {base_resumen_renovacion} · Saldo anterior: {clases_flotantes} · "
+                                    f"Saldo total: {total_resumen_renovacion} · Acceso: {modalidad_nueva}{sede_resumen_renovacion} · "
+                                    f"Vencimiento: {fecha_vencimiento_renovacion.strftime('%d/%m/%Y')} · "
+                                    f"Total a pagar: ${costos_planes.get(tipo_p_nuevo, 0):.2f}"
+                                )
+                                confirmar_pago_renovacion = st.checkbox(
+                                    "Confirmo que el alumno ya pagó la renovación.",
+                                    key=f"pago_confirmado_ren_{st.session_state.clear_ren}"
+                                )
+                            else:
+                                confirmar_pago_renovacion = False
+                                st.caption("Selecciona alumno, paquete y modalidad para revisar el detalle y confirmar el pago.")
                                     
                             col_r1, col_r2 = st.columns(2)
                             with col_r1:
-                                if st.button("Procesar Renovación"):
+                                if st.button("Confirmar pago y renovar", type="primary", disabled=not (renovacion_completa and confirmar_pago_renovacion), key=f"procesar_renovacion_{st.session_state.clear_ren}"):
                                     try:
                                         if not tipo_p_nuevo or not modalidad_nueva:
                                             st.error("❌ Selecciona un plan y una modalidad antes de renovar.")
@@ -832,10 +905,12 @@ else:
                                             total_unificado = base_nuevas + clases_flotantes
                                             fecha_vence_nueva = (datetime.now().date() + timedelta(days=30)).isoformat()
                                             id_local_fijo_nuevo = opciones_locales[sede_assigned_new] if modalidad_nueva == "Fixed" else None
+                                            fecha_pago_renovacion = datetime.now().astimezone().isoformat()
                                             paquete_nuevo = supabase.table("paquetes").insert({
                                                 "alumno_id": id_alumno_sel, "tipo_paquete": tipo_p_nuevo, "modalidad_plan": modalidad_nueva,
                                                 "local_id_fijo": id_local_fijo_nuevo, "clases_totales": total_unificado, "clases_restantes": total_unificado,
-                                                "fecha_vencimiento": fecha_vence_nueva, "estado": "Activo"
+                                                "fecha_vencimiento": fecha_vence_nueva, "estado": "Activo", "pagado": True,
+                                                "fecha_pago": fecha_pago_renovacion, "pago_confirmado_por": st.session_state.admin_id
                                             }).select("id").execute()
                                             if not paquete_nuevo.data:
                                                 raise RuntimeError("No se recibió el identificador del paquete renovado.")
@@ -844,10 +919,30 @@ else:
                                                     supabase.table("paquetes").update({"estado": "Agotado"}).in_(
                                                         "id", [p["id"] for p in paquetes_vigentes]
                                                     ).execute()
+                                                supabase.table("eventos_paquetes").insert({
+                                                    "paquete_id": paquete_nuevo.data[0]["id"],
+                                                    "alumno_id": id_alumno_sel,
+                                                    "tipo_evento": "renovacion",
+                                                    "realizado_por": st.session_state.admin_id,
+                                                    "detalles": {
+                                                        "tipo_paquete": tipo_p_nuevo,
+                                                        "modalidad_plan": modalidad_nueva,
+                                                        "local_id_fijo": id_local_fijo_nuevo,
+                                                        "clases_totales": total_unificado,
+                                                        "clases_plan": base_nuevas,
+                                                        "clases_anteriores_sumadas": clases_flotantes,
+                                                        "costo": costos_planes.get(tipo_p_nuevo, 0),
+                                                        "fecha_vencimiento": fecha_vence_nueva,
+                                                        "fecha_pago": fecha_pago_renovacion,
+                                                        "paquetes_anteriores": [{"id": p["id"], "estado": p.get("estado")} for p in paquetes_vigentes]
+                                                    }
+                                                }).execute()
                                             except Exception:
+                                                for paquete_anterior in paquetes_vigentes:
+                                                    supabase.table("paquetes").update({"estado": paquete_anterior.get("estado", "Activo")}).eq("id", paquete_anterior["id"]).execute()
                                                 supabase.table("paquetes").delete().eq("id", paquete_nuevo.data[0]["id"]).execute()
                                                 raise
-                                            st.session_state.aviso_renovacion = f"Renovación exitosa: {alumno_sel} cuenta con {total_unificado} clases."
+                                            st.session_state.aviso_renovacion = f"Pago confirmado y renovación registrada para {alumno_sel}: {total_unificado} clases disponibles."
                                             st.session_state.clear_ren += 1
                                             st.balloons()
                                             st.rerun()
@@ -1220,7 +1315,7 @@ else:
                                 try:
                                     paquetes_activos_res = (
                                         supabase.table("paquetes")
-                                        .select("id,tipo_paquete,modalidad_plan,local_id_fijo,clases_totales,clases_restantes,fecha_vencimiento")
+                                        .select("id,tipo_paquete,modalidad_plan,local_id_fijo,clases_totales,clases_restantes,fecha_vencimiento,estado,pagado,fecha_pago,pago_confirmado_por,pago_revertido_en,pago_revertido_por")
                                         .eq("alumno_id", data_al["id"])
                                         .eq("estado", "Activo")
                                         .gte("fecha_vencimiento", datetime.now().date().isoformat())
@@ -1256,6 +1351,18 @@ else:
                                                     key=f"upgrade_paquete_alumno_{paquete_actual['id']}_{st.session_state.clear_paquete_alumno}",
                                                     placeholder="Sin cambio de paquete..."
                                                 )
+                                                confirmar_pago_upgrade = False
+                                                if paquete_nuevo_alumno and paquete_nuevo_alumno != "Sin cambio":
+                                                    diferencia_upgrade = planes_superiores[paquete_nuevo_alumno] - int(paquete_actual.get("clases_totales") or 0)
+                                                    st.info(
+                                                        f"**Resumen del cambio de plan:** {paquete_actual['tipo_paquete']} → {paquete_nuevo_alumno} · "
+                                                        f"Se añadirán {diferencia_upgrade} clases al saldo actual · "
+                                                        f"Total a pagar: ${costos_planes.get(paquete_nuevo_alumno, 0):.2f}"
+                                                    )
+                                                    confirmar_pago_upgrade = st.checkbox(
+                                                        "Confirmo que el alumno ya pagó el cambio de plan.",
+                                                        key=f"pago_confirmado_upgrade_{paquete_actual['id']}_{st.session_state.clear_paquete_alumno}"
+                                                    )
                                                 modalidad_nueva_alumno = st.selectbox(
                                                     "Modalidad de acceso:",
                                                     ["", "Fixed", "Flex"],
@@ -1271,27 +1378,69 @@ else:
                                                         placeholder="Selecciona una sede..."
                                                     )
                                                 guardar_paquete_alumno = st.form_submit_button("Guardar paquete y modalidad", type="primary")
-                                            if guardar_paquete_alumno:
+                                                limpiar_paquete_alumno = st.form_submit_button("Limpiar campos")
+                                            if limpiar_paquete_alumno:
+                                                st.session_state.clear_paquete_alumno += 1
+                                                st.rerun()
+                                            elif guardar_paquete_alumno:
                                                 if not modalidad_nueva_alumno:
                                                     st.error("Selecciona la modalidad de acceso.")
                                                 elif modalidad_nueva_alumno == "Fixed" and not sede_nueva_alumno:
                                                     st.error("Selecciona la sede base para la modalidad Fixed.")
+                                                elif paquete_nuevo_alumno and paquete_nuevo_alumno != "Sin cambio" and not confirmar_pago_upgrade:
+                                                    st.error("Confirma que el cambio de plan ya fue pagado para proceder.")
                                                 else:
                                                     try:
+                                                        paquete_anterior_snapshot = {
+                                                            campo: paquete_actual.get(campo)
+                                                            for campo in (
+                                                                "tipo_paquete", "modalidad_plan", "local_id_fijo", "clases_totales",
+                                                                "clases_restantes", "fecha_vencimiento", "estado", "pagado", "fecha_pago",
+                                                                "pago_confirmado_por", "pago_revertido_en", "pago_revertido_por"
+                                                            )
+                                                        }
                                                         actualizacion_paquete = {
                                                             "modalidad_plan": modalidad_nueva_alumno,
                                                             "local_id_fijo": opciones_locales[sede_nueva_alumno] if modalidad_nueva_alumno == "Fixed" else None,
                                                         }
+                                                        tipo_evento_paquete = "cambio_modalidad"
+                                                        fecha_pago_upgrade = None
                                                         if paquete_nuevo_alumno and paquete_nuevo_alumno != "Sin cambio":
                                                             clases_nuevo_plan = planes_superiores[paquete_nuevo_alumno]
                                                             diferencia_clases = clases_nuevo_plan - int(paquete_actual.get("clases_totales") or 0)
+                                                            fecha_pago_upgrade = datetime.now().astimezone().isoformat()
                                                             actualizacion_paquete.update({
                                                                 "tipo_paquete": paquete_nuevo_alumno,
                                                                 "clases_totales": clases_nuevo_plan,
                                                                 "clases_restantes": int(paquete_actual.get("clases_restantes") or 0) + diferencia_clases,
+                                                                "pagado": True,
+                                                                "fecha_pago": fecha_pago_upgrade,
+                                                                "pago_confirmado_por": st.session_state.admin_id,
+                                                                "pago_revertido_en": None,
+                                                                "pago_revertido_por": None,
                                                             })
-                                                        supabase.table("paquetes").update(actualizacion_paquete).eq("id", paquete_actual["id"]).execute()
-                                                        st.session_state.mensaje_gestion_alumno = "Paquete y modalidad de acceso actualizados correctamente."
+                                                            tipo_evento_paquete = "cambio_plan"
+                                                        try:
+                                                            supabase.table("paquetes").update(actualizacion_paquete).eq("id", paquete_actual["id"]).execute()
+                                                            detalles_evento = {
+                                                                "paquete_anterior": paquete_anterior_snapshot,
+                                                                "tipo_paquete_nuevo": paquete_nuevo_alumno if tipo_evento_paquete == "cambio_plan" else paquete_actual["tipo_paquete"],
+                                                                "modalidad_nueva": modalidad_nueva_alumno,
+                                                                "local_id_fijo_nuevo": actualizacion_paquete["local_id_fijo"],
+                                                                "costo": costos_planes.get(paquete_nuevo_alumno, 0) if tipo_evento_paquete == "cambio_plan" else 0,
+                                                                "fecha_pago": fecha_pago_upgrade
+                                                            }
+                                                            supabase.table("eventos_paquetes").insert({
+                                                                "paquete_id": paquete_actual["id"],
+                                                                "alumno_id": data_al["id"],
+                                                                "tipo_evento": tipo_evento_paquete,
+                                                                "realizado_por": st.session_state.admin_id,
+                                                                "detalles": detalles_evento
+                                                            }).execute()
+                                                        except Exception:
+                                                            supabase.table("paquetes").update(paquete_anterior_snapshot).eq("id", paquete_actual["id"]).execute()
+                                                            raise
+                                                        st.session_state.mensaje_gestion_alumno = "Pago confirmado y paquete actualizado." if tipo_evento_paquete == "cambio_plan" else "Modalidad de acceso actualizada."
                                                         st.session_state.clear_paquete_alumno += 1
                                                         st.rerun()
                                                     except Exception as e:
@@ -1301,7 +1450,7 @@ else:
 
                                 paq_res = (
                                     supabase.table("paquetes")
-                                    .select("tipo_paquete,modalidad_plan,clases_totales,clases_restantes,fecha_vencimiento,estado")
+                                    .select("id,tipo_paquete,modalidad_plan,clases_totales,clases_restantes,fecha_vencimiento,estado,pagado,fecha_pago,pago_revertido_en")
                                     .eq("alumno_id", data_al["id"])
                                     .order("fecha_compra", desc=True)
                                     .execute()
@@ -1310,20 +1459,61 @@ else:
                                     st.markdown("#### :material/loyalty: Historial de paquetes y membresías")
                                     df_paq = pd.DataFrame(paq_res.data)
                                     df_paq["Clases Consumidas"] = df_paq["clases_totales"] - df_paq["clases_restantes"]
+                                    df_paq["Pago confirmado"] = df_paq["pagado"].map({True: "Sí", False: "No"}).fillna("Sin registro histórico")
                                     df_reporte_paq = df_paq[[
                                         "tipo_paquete", "modalidad_plan", "clases_totales", "Clases Consumidas",
-                                        "clases_restantes", "fecha_vencimiento", "estado"
+                                        "clases_restantes", "fecha_vencimiento", "estado", "Pago confirmado", "fecha_pago"
                                     ]].rename(columns={
                                         "tipo_paquete": "Paquete Contratado",
                                         "modalidad_plan": "Tipo Plan",
                                         "clases_totales": "Clases Totales",
                                         "clases_restantes": "Clases Pendientes (Saldo)",
                                         "fecha_vencimiento": "Caduca El",
-                                        "estado": "Estado Plan"
+                                        "estado": "Estado Plan",
+                                        "fecha_pago": "Fecha de pago"
                                     })
                                     st.dataframe(df_reporte_paq, use_container_width=True, hide_index=True)
+                                    for paquete_historial in paq_res.data:
+                                        if paquete_historial.get("pagado") and not paquete_historial.get("pago_revertido_en"):
+                                            if st.button(
+                                                f"Revertir pago confirmado · {paquete_historial['tipo_paquete']} (paquete #{paquete_historial['id']})",
+                                                key=f"revertir_pago_{paquete_historial['id']}_{st.session_state.clear_paquete_alumno}"
+                                            ):
+                                                try:
+                                                    supabase.rpc("revertir_pago_paquete", {
+                                                        "p_paquete_id": paquete_historial["id"],
+                                                        "p_usuario_id": st.session_state.admin_id
+                                                    }).execute()
+                                                    st.session_state.mensaje_gestion_alumno = "Se revirtió la confirmación de pago. La operación quedó registrada en auditoría."
+                                                    st.session_state.clear_paquete_alumno += 1
+                                                    st.rerun()
+                                                except Exception as e:
+                                                    st.error(f"No se pudo revertir el pago. Verifica que supabase_pagos_migration.sql esté aplicado y que el paquete no tenga reservas: {e}")
                                 else:
                                     st.info("Este alumno aún no tiene paquetes registrados.")
+
+                                try:
+                                    eventos_alumno_res = (
+                                        supabase.table("eventos_paquetes")
+                                        .select("tipo_evento,fecha_evento,realizado_por,detalles")
+                                        .eq("alumno_id", data_al["id"])
+                                        .order("fecha_evento", desc=True)
+                                        .execute()
+                                    )
+                                    if eventos_alumno_res.data:
+                                        st.markdown("#### :material/history: Auditoría de pagos y cambios")
+                                        df_eventos = pd.DataFrame([
+                                            {
+                                                "Evento": evento["tipo_evento"],
+                                                "Fecha": evento["fecha_evento"],
+                                                "Administrador ID": evento.get("realizado_por"),
+                                                "Detalle": str(evento.get("detalles") or {})
+                                            }
+                                            for evento in eventos_alumno_res.data
+                                        ])
+                                        st.dataframe(df_eventos, use_container_width=True, hide_index=True)
+                                except Exception:
+                                    st.caption("La auditoría estará disponible después de ejecutar supabase_pagos_migration.sql en Supabase.")
 
                                 res_res = (
                                     supabase.table("reservas")
