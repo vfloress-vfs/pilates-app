@@ -1495,22 +1495,96 @@ else:
                                 try:
                                     eventos_alumno_res = (
                                         supabase.table("eventos_paquetes")
-                                        .select("tipo_evento,fecha_evento,realizado_por,detalles")
+                                        .select("id,tipo_evento,fecha_evento,realizado_por,detalles")
                                         .eq("alumno_id", data_al["id"])
                                         .order("fecha_evento", desc=True)
                                         .execute()
                                     )
                                     if eventos_alumno_res.data:
                                         st.markdown("#### :material/history: Auditoría de pagos y cambios")
-                                        df_eventos = pd.DataFrame([
-                                            {
-                                                "Evento": evento["tipo_evento"],
-                                                "Fecha": evento["fecha_evento"],
-                                                "Administrador ID": evento.get("realizado_por"),
-                                                "Detalle": str(evento.get("detalles") or {})
-                                            }
-                                            for evento in eventos_alumno_res.data
-                                        ])
+                                        nombres_eventos = {
+                                            "inscripcion": "Inscripción registrada",
+                                            "renovacion": "Renovación de paquete",
+                                            "cambio_plan": "Cambio a paquete superior",
+                                            "cambio_modalidad": "Cambio de modalidad",
+                                            "reversion_pago": "Reversión de pago"
+                                        }
+                                        eventos_por_id = {str(ev["id"]): ev for ev in eventos_alumno_res.data}
+                                        try:
+                                            admins_eventos = supabase.table("usuarios_admin").select("id,usuario").execute().data or []
+                                            nombres_admin_eventos = {str(admin["id"]): admin["usuario"] for admin in admins_eventos}
+                                        except Exception:
+                                            nombres_admin_eventos = {}
+                                        locales_por_id = {str(local["id"]): local["nombre"] for local in lista_locales_admin}
+
+                                        filas_auditoria = []
+                                        for evento in eventos_alumno_res.data:
+                                            detalle = evento.get("detalles") or {}
+                                            tipo_evento = evento.get("tipo_evento", "")
+                                            movimiento = nombres_eventos.get(tipo_evento, "Actualización")
+                                            importe = "—"
+                                            if tipo_evento == "inscripcion":
+                                                modalidad_detalle = detalle.get("modalidad_plan", "")
+                                                sede_detalle = locales_por_id.get(str(detalle.get("local_id_fijo")), "")
+                                                texto_detalle = (
+                                                    f"Inscripción de {detalle.get('alumno', 'alumno')}: paquete "
+                                                    f"{detalle.get('tipo_paquete', '—')} con {detalle.get('clases_totales', '—')} clases, "
+                                                    f"acceso {modalidad_detalle}"
+                                                )
+                                                if sede_detalle:
+                                                    texto_detalle += f" en {sede_detalle}"
+                                                importe = f"${float(detalle.get('costo') or 0):.2f}"
+                                            elif tipo_evento == "renovacion":
+                                                texto_detalle = (
+                                                    f"Paquete {detalle.get('tipo_paquete', '—')}: "
+                                                    f"{detalle.get('clases_plan', '—')} clases nuevas + "
+                                                    f"{detalle.get('clases_anteriores_sumadas', 0)} clases anteriores "
+                                                    f"(saldo total: {detalle.get('clases_totales', '—')}); "
+                                                    f"acceso {detalle.get('modalidad_plan', '—')}"
+                                                )
+                                                importe = f"${float(detalle.get('costo') or 0):.2f}"
+                                            elif tipo_evento == "cambio_plan":
+                                                anterior = detalle.get("paquete_anterior") or {}
+                                                texto_detalle = (
+                                                    f"De {anterior.get('tipo_paquete', 'paquete anterior')} a "
+                                                    f"{detalle.get('tipo_paquete_nuevo', 'paquete superior')}; "
+                                                    f"modalidad {detalle.get('modalidad_nueva', '—')}"
+                                                )
+                                                importe = f"${float(detalle.get('costo') or 0):.2f}"
+                                            elif tipo_evento == "cambio_modalidad":
+                                                local_detalle = locales_por_id.get(str(detalle.get("local_id_fijo_nuevo")), "")
+                                                texto_detalle = f"Modalidad actualizada a {detalle.get('modalidad_nueva', '—')}"
+                                                if local_detalle:
+                                                    texto_detalle += f" en {local_detalle}"
+                                            elif tipo_evento == "reversion_pago":
+                                                evento_original = eventos_por_id.get(str(detalle.get("evento_original_id")), {})
+                                                tipo_original = (evento_original or {}).get("tipo_evento", detalle.get("evento_original", ""))
+                                                movimiento = f"Pago revertido · {nombres_eventos.get(tipo_original, 'operación anterior')}"
+                                                detalle_original = (evento_original or {}).get("detalles") or {}
+                                                paquete_original = detalle_original.get("tipo_paquete_nuevo") or detalle_original.get("tipo_paquete")
+                                                texto_detalle = "Se restauró el estado anterior del paquete y se registró la reversión."
+                                                if paquete_original:
+                                                    texto_detalle = f"Se revirtió el pago asociado al paquete {paquete_original} y se restauró el estado anterior."
+                                                if detalle_original.get("costo") is not None:
+                                                    importe = f"${float(detalle_original.get('costo') or 0):.2f} (revertido)"
+                                            else:
+                                                texto_detalle = "Se actualizaron los datos del paquete."
+
+                                            fecha_evento = str(evento.get("fecha_evento") or "")
+                                            try:
+                                                fecha_evento = datetime.fromisoformat(fecha_evento.replace("Z", "+00:00")).astimezone().strftime("%d/%m/%Y %H:%M")
+                                            except (TypeError, ValueError):
+                                                pass
+                                            admin_id_evento = evento.get("realizado_por")
+                                            responsable = nombres_admin_eventos.get(str(admin_id_evento), "Administrador")
+                                            filas_auditoria.append({
+                                                "Fecha y hora": fecha_evento,
+                                                "Movimiento": movimiento,
+                                                "Detalle": texto_detalle,
+                                                "Importe": importe,
+                                                "Responsable": responsable
+                                            })
+                                        df_eventos = pd.DataFrame(filas_auditoria)
                                         st.dataframe(df_eventos, use_container_width=True, hide_index=True)
                                 except Exception:
                                     st.caption("La auditoría estará disponible después de ejecutar supabase_pagos_migration.sql en Supabase.")
