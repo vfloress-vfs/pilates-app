@@ -511,6 +511,10 @@ else:
                         st.session_state.admin_migracion_pendiente = esquema_antiguo
                         st.session_state.logged_in = True
                         st.session_state.clear_login += 1
+                        # Cada sesión administrativa inicia la Gestión de Alumnos en el directorio.
+                        st.session_state.kardex_alumno_id = None
+                        st.session_state.pop("selector_predictivo_kardex", None)
+                        st.session_state.pop("alumno_en_edicion_id", None)
                         st.rerun()
                     else:
                         st.error("❌ Credenciales incorrectas.")
@@ -526,6 +530,9 @@ else:
                 st.session_state.admin_es_superadmin = False
                 st.session_state.admin_permisos = []
                 st.session_state.admin_migracion_pendiente = False
+                st.session_state.kardex_alumno_id = None
+                st.session_state.pop("selector_predictivo_kardex", None)
+                st.session_state.pop("alumno_en_edicion_id", None)
                 st.rerun()
                 
             # Inicializar llaves de control para limpiar formularios si no existen
