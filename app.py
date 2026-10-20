@@ -188,24 +188,6 @@ def verificar_primer_inicio():
         raise RuntimeError("Supabase no devolvió el conteo de administradores.")
     return respuesta.count == 0
 
-# Cabecera compartida para que cada sección se sienta parte de la misma escuela.
-st.markdown("""
-<div class="pilates-brand">
-    <div class="pilates-mark" aria-label="Símbolo Pilates Studio">
-        <svg width="34" height="34" viewBox="0 0 48 48" role="img" aria-hidden="true" fill="none" xmlns="http://www.w3.org/2000/svg">
-            <circle cx="25" cy="8.5" r="3.2" fill="#102019"/>
-            <path d="M23 14c-2.8 2.5-4.5 5.8-4.5 9.5 0 2.7 1.2 5.1 3.2 6.7M25 14c3.2 2.4 5 5.5 5 9.1 0 3.5-1.5 6.4-4.2 8.7M21.5 30.2c-4.5 1.5-7.1 4.5-7.8 9M24 31.1c4.3 1.6 7.2 4.1 8.4 8.1M18.5 21.5c3.7 2.1 7.3 2.1 11 0M12 39.5h24" stroke="#102019" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>
-            <path d="M7 24c0-9.4 7.6-17 17-17M41 24c0 9.4-7.6 17-17 17" stroke="#e7f0e8" stroke-width="1.5" stroke-linecap="round" opacity=".9"/>
-        </svg>
-    </div>
-    <div class="pilates-brand-copy">
-        <span class="pilates-kicker">Movimiento · Equilibrio · Bienestar</span>
-        <span class="pilates-brand-title">Pilates Studio</span>
-        <span class="pilates-brand-subtitle">Escuela de Pilates · Gestión del estudio</span>
-    </div>
-</div>
-""", unsafe_allow_html=True)
-
 # --- ESTADOS DE LA SESIÓN ---
 if "logged_in" not in st.session_state:
     st.session_state.logged_in = False
