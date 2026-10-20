@@ -12,20 +12,21 @@ st.set_page_config(page_title="Pilates Studio | Gestión", page_icon="🧘", lay
 st.markdown("""
 <style>
 :root {
-    --pilates-forest: #23443b;
-    --pilates-forest-dark: #19362f;
-    --pilates-sage: #8da99a;
-    --pilates-sage-light: #e7eee8;
-    --pilates-cream: #f7f5f0;
-    --pilates-paper: #fffefa;
-    --pilates-ink: #26352f;
-    --pilates-muted: #718078;
-    --pilates-clay: #c88f68;
-    --pilates-border: #e5e7df;
+    --pilates-forest: #a9c5b2;
+    --pilates-forest-dark: #0b1512;
+    --pilates-sage: #8fb49d;
+    --pilates-sage-light: #263a31;
+    --pilates-cream: #0e1714;
+    --pilates-paper: #1b2923;
+    --pilates-panel: #17231e;
+    --pilates-ink: #edf2ed;
+    --pilates-muted: #a9b8ae;
+    --pilates-clay: #d9aa84;
+    --pilates-border: #35463d;
 }
 
 .stApp { background: var(--pilates-cream); color: var(--pilates-ink); }
-[data-testid="stHeader"] { background: rgba(247,245,240,.92); }
+[data-testid="stHeader"] { background: rgba(14,23,20,.96); }
 [data-testid="stToolbar"] { right: 1rem; }
 .block-container { padding-top: 2rem; padding-bottom: 3rem; max-width: 1500px; }
 
@@ -54,19 +55,19 @@ h2, h3 { color: var(--pilates-forest); font-weight: 650; letter-spacing: -.02em;
 .pilates-brand {
     display: flex; align-items: center; gap: 1rem;
     padding: 1.2rem 1.5rem; margin: 0 0 1.8rem;
-    border: 1px solid rgba(35,68,59,.08); border-radius: 20px;
-    background: linear-gradient(110deg, #fffefa 0%, #edf2ec 100%);
-    box-shadow: 0 8px 24px rgba(34,57,47,.055);
+    border: 1px solid #35463d; border-radius: 20px;
+    background: linear-gradient(115deg, #17231e 0%, #203329 100%);
+    box-shadow: 0 12px 32px rgba(0,0,0,.18);
 }
 .pilates-mark {
     width: 54px; height: 54px; flex: 0 0 54px; border-radius: 17px;
-    display: grid; place-items: center; background: var(--pilates-forest); color: #fffefa;
-    font: 700 1.45rem Georgia, serif; letter-spacing: -.08em;
+    display: grid; place-items: center; background: linear-gradient(145deg, #9fbea9, #648875);
+    color: #102019; box-shadow: inset 0 1px 0 rgba(255,255,255,.3), 0 5px 14px rgba(0,0,0,.18);
 }
 .pilates-brand-copy { display: flex; flex-direction: column; gap: .12rem; }
 .pilates-kicker { color: var(--pilates-clay); text-transform: uppercase; letter-spacing: .16em; font-size: .67rem; font-weight: 750; }
-.pilates-brand-title { color: var(--pilates-forest); font: 650 1.3rem "Aptos", "Segoe UI", sans-serif; letter-spacing: -.035em; }
-.pilates-brand-subtitle { color: var(--pilates-muted); font-size: .87rem; }
+.pilates-brand-title { color: #edf4ee; font: 650 1.3rem "Aptos", "Segoe UI", sans-serif; letter-spacing: -.035em; }
+.pilates-brand-subtitle { color: #b7c7bc; font-size: .87rem; }
 
 /* Navegación */
 [data-testid="stSidebar"] { background: var(--pilates-forest-dark); border-right: 1px solid rgba(255,255,255,.08); }
@@ -90,12 +91,12 @@ h2, h3 { color: var(--pilates-forest); font-weight: 650; letter-spacing: -.02em;
 /* Componentes de Streamlit */
 .stButton > button, .stFormSubmitButton > button {
     min-height: 2.7rem; border: 1px solid var(--pilates-forest); border-radius: 11px;
-    background: var(--pilates-forest); color: #fffefa; font-weight: 650;
-    box-shadow: 0 3px 8px rgba(35,68,59,.12); transition: all .18s ease;
+    background: var(--pilates-forest); color: #102019; font-weight: 700;
+    box-shadow: 0 3px 10px rgba(0,0,0,.2); transition: all .18s ease;
 }
 .stButton > button:hover, .stFormSubmitButton > button:hover {
-    border-color: var(--pilates-forest-dark); background: var(--pilates-forest-dark);
-    color: #fffefa; transform: translateY(-1px); box-shadow: 0 6px 14px rgba(35,68,59,.18);
+    border-color: #c4d9ca; background: #c4d9ca;
+    color: #102019; transform: translateY(-1px); box-shadow: 0 7px 18px rgba(0,0,0,.28);
 }
 [data-testid="stTextInput"] input, [data-testid="stNumberInput"] input,
 [data-testid="stDateInput"] input, [data-testid="stTimeInput"] input,
@@ -105,11 +106,12 @@ h2, h3 { color: var(--pilates-forest); font-weight: 650; letter-spacing: -.02em;
     color: var(--pilates-ink) !important; -webkit-text-fill-color: var(--pilates-ink) !important;
 }
 [data-testid="stTextInput"] input::placeholder, [data-testid="stTextArea"] textarea::placeholder {
-    color: #78857e !important; -webkit-text-fill-color: #78857e !important; opacity: 1;
+    color: var(--pilates-muted) !important; -webkit-text-fill-color: var(--pilates-muted) !important; opacity: 1;
 }
 [data-testid="stSelectbox"] [data-baseweb="select"] *,
 [data-baseweb="popover"] [role="option"] {
     color: var(--pilates-ink) !important; -webkit-text-fill-color: var(--pilates-ink) !important;
+    background: var(--pilates-paper) !important;
 }
 [data-testid="stTextInput"] input:focus, [data-testid="stNumberInput"] input:focus,
 [data-testid="stTextArea"] textarea:focus {
@@ -118,7 +120,10 @@ h2, h3 { color: var(--pilates-forest); font-weight: 650; letter-spacing: -.02em;
 [data-testid="stTabs"] [role="tablist"] { gap: .35rem; border-bottom: 1px solid var(--pilates-border); }
 [data-testid="stTabs"] button[role="tab"] { color: var(--pilates-muted); font-weight: 600; padding: .7rem .85rem; }
 [data-testid="stTabs"] button[role="tab"][aria-selected="true"] { color: var(--pilates-forest); border-bottom: 3px solid var(--pilates-sage); }
-[data-testid="stAlert"] { border-radius: 12px; border: 1px solid var(--pilates-border); }
+[data-testid="stAlert"] { border-radius: 12px; border: 1px solid var(--pilates-border); background: var(--pilates-panel); color: var(--pilates-ink); }
+[data-testid="stAlert"] p { color: var(--pilates-ink); }
+[data-testid="stDataFrame"], [data-testid="stTable"] { background: var(--pilates-panel); }
+.material-icons, .material-symbols-rounded { color: var(--pilates-sage); font-variation-settings: "FILL" 0, "wght" 500, "GRAD" 0, "opsz" 20; }
 [data-testid="stMetric"] { padding: 1rem 1.1rem; border: 1px solid var(--pilates-border); border-radius: 15px; background: var(--pilates-paper); box-shadow: 0 4px 14px rgba(34,57,47,.04); }
 [data-testid="stMetricLabel"] { color: var(--pilates-muted); }
 [data-testid="stMetricValue"] { color: var(--pilates-forest); font-weight: 700; }
@@ -186,7 +191,13 @@ def verificar_primer_inicio():
 # Cabecera compartida para que cada sección se sienta parte de la misma escuela.
 st.markdown("""
 <div class="pilates-brand">
-    <div class="pilates-mark">P.</div>
+    <div class="pilates-mark" aria-label="Símbolo Pilates Studio">
+        <svg width="34" height="34" viewBox="0 0 48 48" role="img" aria-hidden="true" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <circle cx="25" cy="8.5" r="3.2" fill="#102019"/>
+            <path d="M23 14c-2.8 2.5-4.5 5.8-4.5 9.5 0 2.7 1.2 5.1 3.2 6.7M25 14c3.2 2.4 5 5.5 5 9.1 0 3.5-1.5 6.4-4.2 8.7M21.5 30.2c-4.5 1.5-7.1 4.5-7.8 9M24 31.1c4.3 1.6 7.2 4.1 8.4 8.1M18.5 21.5c3.7 2.1 7.3 2.1 11 0M12 39.5h24" stroke="#102019" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>
+            <path d="M7 24c0-9.4 7.6-17 17-17M41 24c0 9.4-7.6 17-17 17" stroke="#e7f0e8" stroke-width="1.5" stroke-linecap="round" opacity=".9"/>
+        </svg>
+    </div>
     <div class="pilates-brand-copy">
         <span class="pilates-kicker">Movimiento · Equilibrio · Bienestar</span>
         <span class="pilates-brand-title">Pilates Studio</span>
@@ -211,7 +222,7 @@ except Exception:
     st.stop()
 
 if primer_inicio:
-    st.title("🛡️ Configuración Inicial del Sistema")
+    st.title(":material/admin_panel_settings: Configuración Inicial del Sistema")
     st.subheader("Configura tu cuenta de Dueño/Administrador por primera vez:")
     st.info("Esta pantalla desaparecerá automáticamente una vez registres tu clave.")
     
@@ -247,11 +258,11 @@ else:
         <span>Gestión del estudio</span>
     </div>
     """, unsafe_allow_html=True)
-    rol_acceso = st.sidebar.radio("Menú de Perfiles:", ["👤 Alumnos", "📲 Tablet Check-in", "💼 Administrador"])
+    rol_acceso = st.sidebar.radio("Menú de Perfiles:", ["Alumnos", "Tablet Check-in", "Administrador"])
     
     # --- VISTA ALUMNOS ---
-    if rol_acceso == "👤 Alumnos":
-        st.title("📱 Portal del Alumno")
+    if rol_acceso == "Alumnos":
+        st.title(":material/smartphone: Portal del Alumno")
         telefono_alumno = st.text_input("Ingresa tu teléfono registrado para ver tu pase de acceso:")
         if telefono_alumno:
             try:
@@ -281,15 +292,15 @@ else:
                 st.error(f"Error al consultar alumno: {e}")
 
     # --- VISTA TABLET ---
-    elif rol_acceso == "📲 Tablet Check-in":
-        st.title("📸 Estación de Check-in (Tablet del Local)")
+    elif rol_acceso == "Tablet Check-in":
+        st.title(":material/qr_code_scanner: Estación de Check-in (Tablet del Local)")
         st.write("Coloca esta pantalla fija en la entrada de tu estudio.")
         st.camera_input("Muestra tu código QR frente a la cámara")
                 
     # --- VISTA ADMINISTRADOR ---
-    elif rol_acceso == "💼 Administrador":
+    elif rol_acceso == "Administrador":
         if not st.session_state.logged_in:
-            st.title("🔐 Panel Administrativo Privado")
+            st.title(":material/lock: Panel Administrativo Privado")
             user_input = st.text_input("Usuario:")
             pass_input = st.text_input("Contraseña:", type="password")
             
@@ -320,7 +331,7 @@ else:
                 except Exception as e:
                     st.error(f"❌ Error al validar credenciales: {e}")
         else:
-            st.title("💼 Panel de Control Global (Dueño)")
+            st.title(":material/dashboard: Panel de Control Global (Dueño)")
             if st.sidebar.button("Cerrar Sesión"):
                 st.session_state.logged_in = False
                 st.rerun()
@@ -346,7 +357,7 @@ else:
                 opciones_locales, opciones_planes, costos_planes = {}, {}, {}
                 
             # Definición indexada exacta de las 6 pestañas unificadas de gestión
-            pestanas = st.tabs(["🏢 Configurar Sucursales", "👥 Inscribir Alumno", "🔄 Renovaciones", "💰 Tarifas y Planes", "🗓️ Agenda y Horarios", "🔍 Consulta de Alumno"])
+            pestanas = st.tabs(["Sucursales", "Inscripciones", "Renovaciones", "Planes y tarifas", "Agenda", "Alumnos"])
             
             with pestanas[0]:
                 st.subheader("Alta de Locales")
@@ -438,7 +449,7 @@ else:
                         st.session_state.clear_ins += 1
                         st.rerun()
             with pestanas[2]:
-                st.subheader("🔄 Renovar Paquete de Alumno Existente")
+                st.subheader(":material/autorenew: Renovar paquete de alumno")
                 try:
                     alumnos_res = supabase.table("alumnos").select("id", "nombre", "apellido", "telefono").order("nombre").execute()
                     lista_alumnos = alumnos_res.data if alumnos_res.data else []
@@ -519,8 +530,8 @@ else:
                 except Exception as e: st.error(f"Error: {e}")
 
             with pestanas[3]:
-                st.subheader("💰 Catálogo de Planes, Clases y Costos")
-                sub_tab1, sub_tab2, sub_tab3 = st.tabs(["➕ Crear Nuevo Plan", "📈 Modificar Costos Existentes", "📋 Lista de Planes Vigentes"])
+                st.subheader(":material/payments: Catálogo de planes, clases y costos")
+                sub_tab1, sub_tab2, sub_tab3 = st.tabs(["Crear plan", "Modificar costos", "Planes vigentes"])
                 
                 with sub_tab1:
                     st.markdown("#### Registro de Nuevas Ofertas Comerciales")
@@ -580,7 +591,7 @@ else:
             with pestanas[4]:
                 st.subheader("🗓️ Control de Agenda, Clases e Inactividades")
                 sub_agenda1, sub_agenda2, sub_agenda3, sub_agenda4 = st.tabs([
-                    "👩 Registrar Instructoras", "📅 Programación Masiva de Horarios", "📅 Días Laborales", "🌴 Feriados / Festivos"
+                    "Instructoras", "Programación de horarios", "Días laborales", "Feriados y festivos"
                 ])
                 
                 with sub_agenda1:
@@ -703,7 +714,7 @@ else:
 
             # --- CONSULTA PREDICTIVA DE ALUMNOS Y KÁRDEX ---
             with pestanas[5]:
-                st.subheader("🔍 Kárdex e Historial de Clases de Alumno")
+                st.subheader(":material/clinical_notes: Kárdex e historial de clases")
 
                 if "kardex_alumno_id" not in st.session_state:
                     st.session_state.kardex_alumno_id = None
@@ -773,7 +784,7 @@ else:
                                 .execute()
                             )
                             if paq_res.data:
-                                st.markdown("#### 📋 Historial de paquetes y membresías")
+                                st.markdown("#### :material/loyalty: Historial de paquetes y membresías")
                                 df_paq = pd.DataFrame(paq_res.data)
                                 df_paq["Clases Consumidas"] = df_paq["clases_totales"] - df_paq["clases_restantes"]
                                 df_reporte_paq = df_paq[[
@@ -798,7 +809,7 @@ else:
                                 .order("fecha_clase", desc=True)
                                 .execute()
                             )
-                            st.markdown("#### 🗓️ Historial de clases y asistencia")
+                            st.markdown("#### :material/event_note: Historial de clases y asistencia")
                             if res_res.data:
                                 df_res = pd.DataFrame(res_res.data).rename(columns={
                                     "fecha_clase": "Fecha de Clase",
