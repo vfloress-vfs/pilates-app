@@ -475,7 +475,7 @@ else:
                         except Exception as e: st.error(f"Error: {e}")
 
             # --- PESTAÑA 5: CONSULTA DE ALUMNOS CON CAPTURA DE SELECCIÓN CORREGIDA ---
-            with pestanas:
+            with pestanas[5]:
                 st.subheader("🔍 Kárdex e Historial de Clases de Alumno")
                 
                 try:
@@ -514,12 +514,13 @@ else:
                             key="directorio_general_alumnos"
                         )
                         
-                        # Captura prioritaria del teléfono seleccionado (Funciona con lista completa o filtrada)
+                        # CAPTURA PRIORITARIA: Funciona instantáneamente con la lista completa o filtrada
                         if st.session_state.get("directorio_general_alumnos") and "edited_rows" in st.session_state.directorio_general_alumnos:
                             filas_tocadas = st.session_state.directorio_general_alumnos["edited_rows"]
                             for fila_idx, estado_casilla in filas_tocadas.items():
                                 if estado_casilla.get("Ver Kárdex") == True:
                                     telefono_seleccionado = df_dir_visual.iloc[fila_idx]["Teléfono"]
+
                         if telefono_seleccionado:
                             st.markdown("---")
                             try:
