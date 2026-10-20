@@ -130,8 +130,7 @@ else:
             if "clear_ren" not in st.session_state: st.session_state.clear_ren = 0
             if "clear_search" not in st.session_state: st.session_state.clear_search = 0
             if "clear_plan" not in st.session_state: st.session_state.clear_plan = 0
-                
-            # LECTURA GLOBAL DE CATÁLOGOS COLECTIVOS
+            # LECTURA GLOBAL DE CATÁLOGOS COLECTIVOS (Variables seguras en memoria)
             try:
                 locales_res = supabase.table("locales").select("id", "nombre").execute()
                 lista_locales = locales_res.data if locales_res.data else []
@@ -143,6 +142,7 @@ else:
                 costos_planes = {p['nombre_paquete']: float(p['costo']) for p in lista_p_db}
             except Exception as e:
                 opciones_locales, opciones_planes, costos_planes = {}, {}, {}
+                
             # Definición indexada exacta de las 6 pestañas unificadas de gestión
             pestanas = st.tabs(["🏢 Configurar Sucursales", "👥 Inscribir Alumno", "🔄 Renovaciones", "💰 Tarifas y Planes", "🗓️ Agenda y Horarios", "🔍 Consulta de Alumno"])
             
@@ -204,7 +204,6 @@ else:
                                 }).execute()
                                 
                                 if nuevo_alumno and hasattr(nuevo_alumno, 'data') and nuevo_alumno.data and len(nuevo_alumno.data) > 0:
-                                    # CORRECCIÓN DEFINITIVA: Se extrae la primera posición de la lista [0]
                                     datos_nuevo_alumno = nuevo_alumno.data[0]
                                     id_alumno = datos_nuevo_alumno['id']
                                     total_c = opciones_planes[tipo_p]
@@ -252,7 +251,7 @@ else:
                         
                         clases_flotantes = 0
                         if paquete_previo and hasattr(paquete_previo, 'data') and paquete_previo.data and len(paquete_previo.data) > 0:
-                            info_p = paquete_previo.data
+                            info_p = paquete_previo.data[0]
                             clases_flotantes = info_p.get('clases_restantes', 0)
                             if clases_flotantes > 0:
                                 st.warning(f"📢 **Aviso Operativo:** Al alumno **{alumno_sel}** aún le quedan **{clases_flotantes} clases pendientes**.")
@@ -274,7 +273,7 @@ else:
                             if st.button("Procesar Renovación"):
                                 try:
                                     if paquete_previo and hasattr(paquete_previo, 'data') and paquete_previo.data and len(paquete_previo.data) > 0:
-                                        supabase.table("paquetes").update({"estado": "Agotado"}).eq("id", paquete_previo.data['id']).execute()
+                                        supabase.table("paquetes").update({"estado": "Agotado"}).eq("id", paquete_previo.data[0]['id']).execute()
                                     
                                     base_nuevas = opciones_planes[tipo_p_nuevo]
                                     total_unificado = base_nuevas + clases_flotantes
@@ -286,7 +285,7 @@ else:
                                         "local_id_fijo": id_local_fijo_nuevo, "clases_totales": total_unificado, "clases_restantes": total_unificado,
                                         "fecha_vencimiento": fecha_vence_nueva, "estado": "Activo"
                                     }).execute()
-                                    st.success(f"🔄 **¡Renovación Exitosa!** **{alumno_sel}** cuenta con **{total_unificado} clases**.")
+                                    st.success(f"🔄 ¡Renovación Exitosa! **{alumno_sel}** cuenta con **{total_unificado} clases**.")
                                     st.balloons()
                                 except Exception as e: st.error(f"❌ Error al procesar la renovación: {e}")
                         with col_r2:
@@ -376,7 +375,6 @@ else:
                     try:
                         dias_db = supabase.table("dias_operativos").select("nombre_dia", "numero_dia", "habilitado").execute()
                         dias_habilitados = {d['numero_dia']: d['habilitado'] for d in dias_db.data} if dias_db.data else {}
-                        nombres_dias_mapeo = {0: "Lunes", 1: "Martes", 2: "Miércoles", 3: "Jueves", 4: "Viernes", 5: "Sábado", 6: "Domingo"}
                         
                         inst_res = supabase.table("instructoras").select("id", "nombre").eq("activo", True).execute()
                         lista_inst = inst_res.data if inst_res.data else []
@@ -476,10 +474,10 @@ else:
                             else: st.info("No hay feriados agendados.")
                         except Exception as e: st.error(f"Error: {e}")
 
+            # --- PESTAÑA 5: CONSULTA DE ALUMNOS CON BUSCADOR PREDICTIVO POR NOMBRE ---
             with pestanas[5]:
                 st.subheader("🔍 Kárdex e Historial de Clases de Alumno")
                 
-                # 1. Cargar directorio completo de alumnos desde Supabase
                 try:
                     todos_al_res = supabase.table("alumnos").select("*").order("nombre").execute()
                     lista_alumnos_all = todos_al_res.data if todos_al_res.data else []
@@ -493,24 +491,19 @@ else:
                     import pandas as pd
                     df_dir = pd.DataFrame(lista_alumnos_all)
                     
-                    # MEJORA CRÍTICA: Buscador predictivo por texto
                     busqueda_nombre = st.text_input("🔍 Escribe el nombre o apellido del alumno para filtrar la lista:", key="input_predictivo_nombre")
                     
-                    # Filtrado dinámico en tiempo real según lo que escriba el usuario
                     if busqueda_nombre:
                         df_dir = df_dir[
                             df_dir['nombre'].str.contains(busqueda_nombre, case=False, na=False) | 
                             df_dir['apellido'].str.contains(busqueda_nombre, case=False, na=False)
                         ]
-                    
-                    # Añadir la columna interactiva de selección
                     if not df_dir.empty:
                         df_dir["Ver Kárdex"] = False
                         df_dir_visual = df_dir[["nombre", "apellido", "telefono", "fecha_registro", "Ver Kárdex"]].rename(columns={
                             "nombre": "Nombre", "apellido": "Apellido", "telefono": "Teléfono", "fecha_registro": "Fecha Registro"
                         })
                         
-                        # Desplegamos la tabla filtrada y optimizada
                         editor_directorio = st.data_editor(
                             df_dir_visual,
                             hide_index=True,
@@ -519,7 +512,6 @@ else:
                             key="directorio_general_alumnos"
                         )
                         
-                        # Capturar el teléfono del alumno seleccionado
                         if st.session_state.get("directorio_general_alumnos") and "edited_rows" in st.session_state.directorio_general_alumnos:
                             filas_tocadas = st.session_state.directorio_general_alumnos["edited_rows"]
                             for fila_idx, estado_casilla in filas_tocadas.items():
@@ -530,17 +522,15 @@ else:
                 else:
                     st.info("💡 Aún no registras ningún alumno en el sistema.")
                 
-                # 2. SECCIÓN DE DESPLIEGUE AUTOMÁTICO DEL KÁRDEX 360°
                 if telefono_seleccionado:
                     st.markdown("---")
                     try:
                         al_res = supabase.table("alumnos").select("*").eq("telefono", telefono_seleccionado).execute()
                         if al_res.data and len(al_res.data) > 0:
-                            data_al = al_res.data
+                            data_al = al_res.data[0]
                             st.markdown(f"### 📊 Ficha de Control: **{data_al['nombre']} {data_al['apellido']}**")
                             st.markdown(f"📱 **Contacto:** {data_al['telefono']}")
                             
-                            # Cargar historial de paquetes
                             paq_res = supabase.table("paquetes").select("*").eq("alumno_id", data_al['id']).order("fecha_compra", desc=True).execute()
                             if paq_res.data and len(paq_res.data) > 0:
                                 st.markdown("#### 📋 Historial de Paquetes y Membresías")
@@ -551,7 +541,6 @@ else:
                                 })
                                 st.dataframe(df_reporte_paq, use_container_width=True, hide_index=True)
                                 
-                            # Cargar bitácora de asistencias
                             res_res = supabase.table("reservas").select("fecha_clase", "hora_clase", "tipo_servicio", "estado").eq("alumno_id", data_al['id']).order("fecha_clase", desc=True).execute()
                             st.markdown("#### 🗓️ Bitácora de Clases y Asistencia Diaria")
                             if res_res.data and len(res_res.data) > 0:
