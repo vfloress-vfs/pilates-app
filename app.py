@@ -474,8 +474,8 @@ else:
                             else: st.info("No hay feriados agendados.")
                         except Exception as e: st.error(f"Error: {e}")
 
-            # --- PESTAÑA 5: CONSULTA DE ALUMNOS CON BUSCADOR PREDICTIVO POR NOMBRE ---
-            with pestanas[5]:
+            # --- PESTAÑA 5: CONSULTA DE ALUMNOS CON CAPTURA DE SELECCIÓN CORREGIDA ---
+            with pestanas:
                 st.subheader("🔍 Kárdex e Historial de Clases de Alumno")
                 
                 try:
@@ -498,6 +498,8 @@ else:
                             df_dir['nombre'].str.contains(busqueda_nombre, case=False, na=False) | 
                             df_dir['apellido'].str.contains(busqueda_nombre, case=False, na=False)
                         ]
+                    
+                    # CORRECCIÓN DE FLUJO: Evaluamos y creamos la tabla interactiva de inmediato
                     if not df_dir.empty:
                         df_dir["Ver Kárdex"] = False
                         df_dir_visual = df_dir[["nombre", "apellido", "telefono", "fecha_registro", "Ver Kárdex"]].rename(columns={
@@ -512,41 +514,43 @@ else:
                             key="directorio_general_alumnos"
                         )
                         
+                        # Captura prioritaria del teléfono seleccionado (Funciona con lista completa o filtrada)
                         if st.session_state.get("directorio_general_alumnos") and "edited_rows" in st.session_state.directorio_general_alumnos:
                             filas_tocadas = st.session_state.directorio_general_alumnos["edited_rows"]
                             for fila_idx, estado_casilla in filas_tocadas.items():
                                 if estado_casilla.get("Ver Kárdex") == True:
                                     telefono_seleccionado = df_dir_visual.iloc[fila_idx]["Teléfono"]
+                        if telefono_seleccionado:
+                            st.markdown("---")
+                            try:
+                                al_res = supabase.table("alumnos").select("*").eq("telefono", telefono_seleccionado).execute()
+                                if al_res.data and len(al_res.data) > 0:
+                                    data_al = al_res.data
+                                    st.markdown(f"### 📊 Ficha de Control: **{data_al['nombre']} {data_al['apellido']}**")
+                                    st.markdown(f"📱 **Contacto:** {data_al['telefono']}")
+                                    
+                                    # Historial de Membresías
+                                    paq_res = supabase.table("paquetes").select("*").eq("alumno_id", data_al['id']).order("fecha_compra", desc=True).execute()
+                                    if paq_res.data and len(paq_res.data) > 0:
+                                        st.markdown("#### 📋 Historial de Paquetes y Membresías")
+                                        df_paq = pd.DataFrame(paq_res.data)
+                                        df_paq["Clases Consumidas"] = df_paq["clases_totales"] - df_paq["clases_restantes"]
+                                        df_reporte_paq = df_paq[["tipo_paquete", "modalidad_plan", "clases_totales", "Clases Consumidas", "clases_restantes", "fecha_vencimiento", "estado"]].rename(columns={
+                                            "tipo_paquete": "Paquete Contratado", "modalidad_plan": "Tipo Plan", "clases_totales": "Clases Totales", "clases_restantes": "Clases Pendientes (Saldo)", "fecha_vencimiento": "Caduca El", "estado": "Estado Plan"
+                                        })
+                                        st.dataframe(df_reporte_paq, use_container_width=True, hide_index=True)
+                                        
+                                    # Bitácora de Asistencias
+                                    res_res = supabase.table("reservas").select("fecha_clase", "hora_clase", "tipo_servicio", "estado").eq("alumno_id", data_al['id']).order("fecha_clase", desc=True).execute()
+                                    st.markdown("#### 🗓️ Bitácora de Clases y Asistencia Diaria")
+                                    if res_res.data and len(res_res.data) > 0:
+                                        df_res = pd.DataFrame(res_res.data).rename(columns={"fecha_clase": "Fecha de Clase", "hora_clase": "Horario", "tipo_servicio": "Modalidad", "estado": "Asistencia"})
+                                        st.dataframe(df_res, use_container_width=True, hide_index=True)
+                                    else:
+                                        st.info("💡 El alumno aún no tiene un historial de asistencias en la agenda.")
+                            except Exception as e:
+                                st.error(f"Error al cargar la ficha del alumno: {e}")
                     else:
                         st.warning("⚠️ No se encontraron alumnos que coincidan con la búsqueda.")
                 else:
                     st.info("💡 Aún no registras ningún alumno en el sistema.")
-                
-                if telefono_seleccionado:
-                    st.markdown("---")
-                    try:
-                        al_res = supabase.table("alumnos").select("*").eq("telefono", telefono_seleccionado).execute()
-                        if al_res.data and len(al_res.data) > 0:
-                            data_al = al_res.data[0]
-                            st.markdown(f"### 📊 Ficha de Control: **{data_al['nombre']} {data_al['apellido']}**")
-                            st.markdown(f"📱 **Contacto:** {data_al['telefono']}")
-                            
-                            paq_res = supabase.table("paquetes").select("*").eq("alumno_id", data_al['id']).order("fecha_compra", desc=True).execute()
-                            if paq_res.data and len(paq_res.data) > 0:
-                                st.markdown("#### 📋 Historial de Paquetes y Membresías")
-                                df_paq = pd.DataFrame(paq_res.data)
-                                df_paq["Clases Consumidas"] = df_paq["clases_totales"] - df_paq["clases_restantes"]
-                                df_reporte_paq = df_paq[["tipo_paquete", "modalidad_plan", "clases_totales", "Clases Consumidas", "clases_restantes", "fecha_vencimiento", "estado"]].rename(columns={
-                                    "tipo_paquete": "Paquete Contratado", "modalidad_plan": "Tipo Plan", "clases_totales": "Clases Totales", "clases_restantes": "Clases Pendientes (Saldo)", "fecha_vencimiento": "Caduca El", "estado": "Estado Plan"
-                                })
-                                st.dataframe(df_reporte_paq, use_container_width=True, hide_index=True)
-                                
-                            res_res = supabase.table("reservas").select("fecha_clase", "hora_clase", "tipo_servicio", "estado").eq("alumno_id", data_al['id']).order("fecha_clase", desc=True).execute()
-                            st.markdown("#### 🗓️ Bitácora de Clases y Asistencia Diaria")
-                            if res_res.data and len(res_res.data) > 0:
-                                df_res = pd.DataFrame(res_res.data).rename(columns={"fecha_clase": "Fecha de Clase", "hora_clase": "Horario", "tipo_servicio": "Modalidad", "estado": "Asistencia"})
-                                st.dataframe(df_res, use_container_width=True, hide_index=True)
-                            else:
-                                st.info("💡 El alumno aún no tiene un historial de asistencias en la agenda.")
-                    except Exception as e:
-                        st.error(f"Error al cargar la ficha del alumno: {e}")
