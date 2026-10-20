@@ -541,7 +541,7 @@ else:
             if "clear_ren" not in st.session_state: st.session_state.clear_ren = 0
             if "clear_search" not in st.session_state: st.session_state.clear_search = 0
             if "clear_plan" not in st.session_state: st.session_state.clear_plan = 0
-            for llave_limpieza in ("clear_instructora", "clear_agenda", "clear_feriado", "clear_usuario", "clear_tarifa", "clear_cuenta", "clear_reset_clave", "clear_configuracion", "clear_editar_alumno", "clear_permisos", "clear_eliminar_usuario", "clear_catalogo", "clear_dias_operativos", "clear_feriados_tabla"):
+            for llave_limpieza in ("clear_instructora", "clear_agenda", "clear_feriado", "clear_usuario", "clear_tarifa", "clear_cuenta", "clear_reset_clave", "clear_configuracion", "clear_editar_alumno", "clear_permisos", "clear_eliminar_usuario", "clear_catalogo", "clear_dias_operativos", "clear_feriados_tabla", "clear_paquete_alumno"):
                 if llave_limpieza not in st.session_state:
                     st.session_state[llave_limpieza] = 0
 
@@ -1213,6 +1213,91 @@ else:
                                                     st.error("Ese teléfono ya está registrado para otro alumno.")
                                                 else:
                                                     st.error(f"No se pudieron actualizar los datos: {e}")
+
+                                # Permite cambiar la modalidad o hacer upgrade del paquete vigente.
+                                st.markdown("#### :material/swap_horiz: Paquete y modalidad de acceso")
+                                st.caption("El paquete solo puede cambiarse por uno de mayor nivel. Al subir de plan se conserva el consumo y se suman al saldo las clases de diferencia.")
+                                try:
+                                    paquetes_activos_res = (
+                                        supabase.table("paquetes")
+                                        .select("id,tipo_paquete,modalidad_plan,local_id_fijo,clases_totales,clases_restantes,fecha_vencimiento")
+                                        .eq("alumno_id", data_al["id"])
+                                        .eq("estado", "Activo")
+                                        .gte("fecha_vencimiento", datetime.now().date().isoformat())
+                                        .order("fecha_compra", desc=True)
+                                        .execute()
+                                    )
+                                    paquetes_activos = paquetes_activos_res.data or []
+                                    if not paquetes_activos:
+                                        st.info("El alumno no tiene un paquete activo que se pueda modificar.")
+                                    else:
+                                        paquetes_etiquetas = {
+                                            f"{p['tipo_paquete']} · {p['modalidad_plan']} · {p['clases_restantes']} clases · vence {p['fecha_vencimiento']}": p
+                                            for p in paquetes_activos
+                                        }
+                                        paquete_elegido_label = st.selectbox(
+                                            "Paquete activo a modificar:",
+                                            [""] + list(paquetes_etiquetas.keys()),
+                                            key=f"seleccionar_paquete_alumno_{data_al['id']}_{st.session_state.clear_paquete_alumno}",
+                                            placeholder="Selecciona un paquete..."
+                                        )
+                                        if paquete_elegido_label:
+                                            paquete_actual = paquetes_etiquetas[paquete_elegido_label]
+                                            planes_superiores = {
+                                                p["nombre_paquete"]: int(p["clases_totales"])
+                                                for p in lista_p_db
+                                                if int(p["clases_totales"]) > int(paquete_actual.get("clases_totales") or 0)
+                                            }
+                                            opciones_upgrade = ["Sin cambio"] + list(planes_superiores.keys())
+                                            with st.form(f"form_actualizar_paquete_alumno_{paquete_actual['id']}_{st.session_state.clear_paquete_alumno}"):
+                                                paquete_nuevo_alumno = st.selectbox(
+                                                    "Cambiar a un paquete superior (opcional):",
+                                                    [""] + opciones_upgrade,
+                                                    key=f"upgrade_paquete_alumno_{paquete_actual['id']}_{st.session_state.clear_paquete_alumno}",
+                                                    placeholder="Sin cambio de paquete..."
+                                                )
+                                                modalidad_nueva_alumno = st.selectbox(
+                                                    "Modalidad de acceso:",
+                                                    ["", "Fixed", "Flex"],
+                                                    key=f"modalidad_paquete_alumno_{paquete_actual['id']}_{st.session_state.clear_paquete_alumno}",
+                                                    placeholder="Selecciona una modalidad..."
+                                                )
+                                                sede_nueva_alumno = ""
+                                                if modalidad_nueva_alumno == "Fixed":
+                                                    sede_nueva_alumno = st.selectbox(
+                                                        "Sede base:",
+                                                        [""] + list(opciones_locales.keys()),
+                                                        key=f"sede_paquete_alumno_{paquete_actual['id']}_{st.session_state.clear_paquete_alumno}",
+                                                        placeholder="Selecciona una sede..."
+                                                    )
+                                                guardar_paquete_alumno = st.form_submit_button("Guardar paquete y modalidad", type="primary")
+                                            if guardar_paquete_alumno:
+                                                if not modalidad_nueva_alumno:
+                                                    st.error("Selecciona la modalidad de acceso.")
+                                                elif modalidad_nueva_alumno == "Fixed" and not sede_nueva_alumno:
+                                                    st.error("Selecciona la sede base para la modalidad Fixed.")
+                                                else:
+                                                    try:
+                                                        actualizacion_paquete = {
+                                                            "modalidad_plan": modalidad_nueva_alumno,
+                                                            "local_id_fijo": opciones_locales[sede_nueva_alumno] if modalidad_nueva_alumno == "Fixed" else None,
+                                                        }
+                                                        if paquete_nuevo_alumno and paquete_nuevo_alumno != "Sin cambio":
+                                                            clases_nuevo_plan = planes_superiores[paquete_nuevo_alumno]
+                                                            diferencia_clases = clases_nuevo_plan - int(paquete_actual.get("clases_totales") or 0)
+                                                            actualizacion_paquete.update({
+                                                                "tipo_paquete": paquete_nuevo_alumno,
+                                                                "clases_totales": clases_nuevo_plan,
+                                                                "clases_restantes": int(paquete_actual.get("clases_restantes") or 0) + diferencia_clases,
+                                                            })
+                                                        supabase.table("paquetes").update(actualizacion_paquete).eq("id", paquete_actual["id"]).execute()
+                                                        st.session_state.mensaje_gestion_alumno = "Paquete y modalidad de acceso actualizados correctamente."
+                                                        st.session_state.clear_paquete_alumno += 1
+                                                        st.rerun()
+                                                    except Exception as e:
+                                                        st.error(f"No se pudo actualizar el paquete: {e}")
+                                except Exception as e:
+                                    st.error(f"No se pudieron cargar los paquetes activos: {e}")
 
                                 paq_res = (
                                     supabase.table("paquetes")
