@@ -238,6 +238,8 @@ if "admin_es_superadmin" not in st.session_state:
     st.session_state.admin_es_superadmin = False
 if "admin_permisos" not in st.session_state:
     st.session_state.admin_permisos = []
+if "admin_migracion_pendiente" not in st.session_state:
+    st.session_state.admin_migracion_pendiente = False
 
 # ------------------------------------------------------------------
 # FLUJO PRINCIPAL DE ACCESO
@@ -344,13 +346,27 @@ else:
             
             if st.button("Ingresar"):
                 try:
-                    resultado = (
-                        supabase.table("usuarios_admin")
-                        .select("id,usuario,contrasena_encriptada,es_superadmin,permisos")
-                        .eq("usuario", user_input.strip())
-                        .limit(1)
-                        .execute()
-                    )
+                    esquema_antiguo = False
+                    try:
+                        resultado = (
+                            supabase.table("usuarios_admin")
+                            .select("id,usuario,contrasena_encriptada,es_superadmin,permisos")
+                            .eq("usuario", user_input.strip())
+                            .limit(1)
+                            .execute()
+                        )
+                    except Exception as error_esquema:
+                        if "42703" not in str(error_esquema) and getattr(error_esquema, "code", None) != "42703":
+                            raise
+                        # Acceso completo temporal para las cuentas existentes mientras se aplica el SQL.
+                        esquema_antiguo = True
+                        resultado = (
+                            supabase.table("usuarios_admin")
+                            .select("id,usuario,contrasena_encriptada")
+                            .eq("usuario", user_input.strip())
+                            .limit(1)
+                            .execute()
+                        )
                     admins = resultado.data or []
                     coincide, migrar_hash = (False, False)
                     if admins:
@@ -359,14 +375,23 @@ else:
                         )
                     if coincide:
                         if migrar_hash:
-                            supabase.table("usuarios_admin").update({
-                                "contrasena_encriptada": encriptar_contrasena(pass_input)
-                            }).eq("id", admins[0]["id"]).execute()
+                            try:
+                                supabase.table("usuarios_admin").update({
+                                    "contrasena_encriptada": encriptar_contrasena(pass_input)
+                                }).eq("id", admins[0]["id"]).execute()
+                            except Exception:
+                                # La actualización del formato de hash no debe impedir
+                                # que una cuenta válida entre al panel.
+                                st.warning("Ingresaste correctamente. No se pudo actualizar el formato de tu contraseña; podrás hacerlo desde Mi cuenta.")
                         st.session_state.admin_id = admins[0]["id"]
                         st.session_state.admin_usuario = admins[0]["usuario"]
-                        st.session_state.admin_es_superadmin = bool(admins[0].get("es_superadmin", False))
+                        st.session_state.admin_es_superadmin = esquema_antiguo or bool(admins[0].get("es_superadmin", False))
                         permisos_guardados = admins[0].get("permisos") or []
-                        st.session_state.admin_permisos = permisos_guardados if isinstance(permisos_guardados, list) else []
+                        st.session_state.admin_permisos = (
+                            list(VENTANAS_ADMIN.keys()) if esquema_antiguo
+                            else permisos_guardados if isinstance(permisos_guardados, list) else []
+                        )
+                        st.session_state.admin_migracion_pendiente = esquema_antiguo
                         st.session_state.logged_in = True
                         st.rerun()
                     else:
@@ -381,6 +406,7 @@ else:
                 st.session_state.admin_usuario = ""
                 st.session_state.admin_es_superadmin = False
                 st.session_state.admin_permisos = []
+                st.session_state.admin_migracion_pendiente = False
                 st.rerun()
                 
             # Inicializar llaves de control para limpiar formularios si no existen
@@ -403,6 +429,9 @@ else:
             except Exception as e:
                 opciones_locales, opciones_planes, costos_planes = {}, {}, {}
                 
+            if st.session_state.admin_migracion_pendiente:
+                st.warning("Tu cuenta conserva acceso completo. Ejecuta supabase_admin_users_migration.sql en Supabase para habilitar la gestión de usuarios y permisos.")
+
             # Las ventanas se muestran según los permisos guardados en el perfil del administrador.
             permisos_sesion = set(st.session_state.admin_permisos or [])
             ventanas_disponibles = list(VENTANAS_ADMIN.keys())
@@ -420,466 +449,574 @@ else:
             if not ventanas_visibles:
                 st.info("Tu cuenta solo tiene acceso a Mi cuenta. Pide a un superadministrador que te asigne otras ventanas si las necesitas.")
 
-            with paneles_admin["sucursales"] if "sucursales" in paneles_admin else st.container():
-                st.subheader("Alta de Locales")
-                nombre_local = st.text_input("Nombre de la sede (ej: Barranco):", key=f"loc_name_{st.session_state.clear_local}")
-                direccion_local = st.text_input("Dirección:", key=f"loc_dir_{st.session_state.clear_local}")
-                
-                col_btn1, col_btn2 = st.columns(2)
-                with col_btn1:
-                    if st.button("Guardar Local"):
-                        if nombre_local:
-                            try:
-                                supabase.table("locales").insert({"nombre": nombre_local, "direccion": direccion_local}).execute()
-                                st.success(f"¡Sede {nombre_local} registrada exitosamente!")
-                            except Exception as e:
-                                st.error(f"❌ Error al guardar el local: {e}")
-                        else:
-                            st.error("❌ El nombre del local es obligatorio.")
-                with col_btn2:
-                    if st.button("Limpiar Pantalla", key="btn_clear_loc"):
-                        st.session_state.clear_local += 1
-                        st.rerun()
-
-            with paneles_admin["inscripciones"]:
-                st.subheader("Formulario de Inscripción y Venta de Paquete")
-                
-                col1, col2 = st.columns(2)
-                with col1:
-                    a_nombre = st.text_input("Nombre del Alumno:", key=f"ins_nom_{st.session_state.clear_ins}")
-                    a_apellido = st.text_input("Apellido del Alumno:", key=f"ins_ape_{st.session_state.clear_ins}")
-                    a_telefono = st.text_input("Teléfono (único para acceso móvil):", key=f"ins_tel_{st.session_state.clear_ins}")
-                with col2:
-                    tipo_p = st.selectbox("Selecciona el Paquete:", list(opciones_planes.keys()) if opciones_planes else ["Configura planes en la pestaña Tarifas"], key=f"ins_paq_{st.session_state.clear_ins}")
-                    modalidad = st.selectbox("Modalidad de Acceso:", ["Fixed", "Flex"], key=f"ins_mod_{st.session_state.clear_ins}")
+            if "sucursales" in paneles_admin:
+                with paneles_admin["sucursales"]:
+                    st.subheader("Alta de Locales")
+                    nombre_local = st.text_input("Nombre de la sede (ej: Barranco):", key=f"loc_name_{st.session_state.clear_local}")
+                    direccion_local = st.text_input("Dirección:", key=f"loc_dir_{st.session_state.clear_local}")
                     
-                    if modalidad == "Fixed":
-                        sede_assigned = st.selectbox("Sede Base / Asignada:", list(opciones_locales.keys()) if opciones_locales else ["Primero registra un local"], key=f"ins_sed_{st.session_state.clear_ins}")
-                    else:
-                        st.write("✨ Plan Flex seleccionado: El alumno tendrá acceso a todas las sedes libres.")
-                        
-                if tipo_p in costos_planes and costos_planes[tipo_p] > 0:
-                    st.info(f"💵 **Valor comercial del paquete seleccionado:** ${costos_planes[tipo_p]:.2f}")
-                
-                col_i1, col_i2 = st.columns(2)
-                with col_i1:
-                    if st.button("Registrar Alumno"):
-                        if not a_nombre.strip() or not a_apellido.strip() or not a_telefono.strip():
-                            st.error("❌ Nombre, apellido y teléfono son campos obligatorios.")
-                        elif not opciones_planes:
-                            st.error("❌ No puedes registrar alumnos sin configurar planes vigentes.")
-                        elif modalidad == "Fixed" and not opciones_locales:
-                            st.error("❌ Debes registrar al menos un local antes de inscribir alumnos Fixed.")
-                        else:
-                            try:
-                                nuevo_alumno = supabase.table("alumnos").insert({
-                                    "nombre": a_nombre.strip(),
-                                    "apellido": a_apellido.strip(),
-                                    "telefono": a_telefono.strip()
-                                }).select("id").execute()
-                                if not nuevo_alumno.data:
-                                    raise RuntimeError("No se recibió el identificador del alumno.")
-                                id_alumno = nuevo_alumno.data[0]["id"]
-                                total_c = opciones_planes[tipo_p]
-                                fecha_vence = (datetime.now().date() + timedelta(days=30)).isoformat()
-                                id_local_fijo = opciones_locales[sede_assigned] if modalidad == "Fixed" else None
+                    col_btn1, col_btn2 = st.columns(2)
+                    with col_btn1:
+                        if st.button("Guardar Local"):
+                            if nombre_local:
                                 try:
-                                    supabase.table("paquetes").insert({
-                                        "alumno_id": id_alumno,
-                                        "tipo_paquete": tipo_p,
-                                        "modalidad_plan": modalidad,
-                                        "local_id_fijo": id_local_fijo,
-                                        "clases_totales": total_c,
-                                        "clases_restantes": total_c,
-                                        "fecha_vencimiento": fecha_vence,
-                                        "estado": "Activo"
-                                    }).execute()
-                                except Exception:
-                                    # Compensa la primera escritura para no dejar un alumno sin paquete.
-                                    supabase.table("alumnos").delete().eq("id", id_alumno).execute()
-                                    raise
-                                st.success(f"🎉 **¡Inscripción Exitosa!** Alumno **{a_nombre.strip()} {a_apellido.strip()}** dado de alta.")
-                                st.balloons()
-                            except Exception as e:
-                                error_msg = str(e)
-                                if "23505" in error_msg or "already exists" in error_msg.lower():
-                                    st.error(f"⚠️ El alumno con el teléfono **{a_telefono}** ya se encuentra registrado.")
-                                else: st.error(f"❌ Error en la inscripción: {e}")
-                with col_i2:
-                    if st.button("Limpiar Pantalla", key="btn_clear_ins"):
-                        st.session_state.clear_ins += 1
-                        st.rerun()
-            with paneles_admin["renovaciones"]:
-                st.subheader(":material/autorenew: Renovar paquete de alumno")
-                try:
-                    alumnos_res = supabase.table("alumnos").select("id", "nombre", "apellido", "telefono").order("nombre").execute()
-                    lista_alumnos = alumnos_res.data if alumnos_res.data else []
-                    etiquetas_alumnos = {
-                        al["id"]: f"{al['nombre']} {al['apellido']} — {al['telefono']}"
-                        for al in lista_alumnos
-                    }
-                    opciones_alumnos = [""] + list(etiquetas_alumnos.values())
-                    dicc_alumnos = {etiquetas_alumnos[al["id"]]: al["id"] for al in lista_alumnos}
-                    
-                    alumno_sel = st.selectbox("Selecciona el Alumno a renovar:", opciones_alumnos, key=f"ren_sel_{st.session_state.clear_ren}", index=0)
-                    
-                    if alumno_sel == "":
-                        st.info("💡 Por favor, busca y selecciona un alumno en el menú superior para procesar su renovación.")
-                    else:
-                        id_alumno_sel = dicc_alumnos[alumno_sel]
-                        hoy = datetime.now().date().isoformat()
-                        paquete_previo = (
-                            supabase.table("paquetes")
-                            .select("id,clases_restantes,fecha_vencimiento")
-                            .eq("alumno_id", id_alumno_sel)
-                            .eq("estado", "Activo")
-                            .gte("fecha_vencimiento", hoy)
-                            .execute()
-                        )
-                        paquetes_vigentes = paquete_previo.data or []
-                        clases_flotantes = sum(max(0, p.get("clases_restantes") or 0) for p in paquetes_vigentes)
-                        if clases_flotantes > 0:
-                            st.warning(f"📢 **Aviso Operativo:** Al alumno **{alumno_sel}** le quedan **{clases_flotantes} clases vigentes** que se sumarán al renovar.")
-                        
-                        col_ren1, col_ren2 = st.columns(2)
-                        with col_ren1:
-                            tipo_p_nuevo = st.selectbox("Nuevo Paquete:", list(opciones_planes.keys()) if opciones_planes else ["Sin planes"], key=f"ren_p_{st.session_state.clear_ren}")
-                            modalidad_nueva = st.selectbox("Nueva Modalidad de Acceso:", ["Fixed", "Flex"], key=f"ren_m_{st.session_state.clear_ren}")
-                        with col_ren2:
-                            if modalidad_nueva == "Fixed":
-                                sede_assigned_new = st.selectbox("Asignar Sede para este periodo:", list(opciones_locales.keys()) if opciones_locales else ["Primero registra un local"], key=f"ren_s_{st.session_state.clear_ren}")
-                            else: st.write("✨ Plan Flex seleccionado: Acceso global habilitado.")
-                        
-                        if tipo_p_nuevo in costos_planes and costos_planes[tipo_p_nuevo] > 0:
-                            st.info(f"💵 **Valor comercial de esta renovación:** ${costos_planes[tipo_p_nuevo]:.2f}")
-                        
-                        col_r1, col_r2 = st.columns(2)
-                        with col_r1:
-                            if st.button("Procesar Renovación"):
-                                try:
-                                    if not opciones_planes or tipo_p_nuevo not in opciones_planes:
-                                        st.error("❌ Selecciona un plan vigente antes de renovar.")
-                                    elif modalidad_nueva == "Fixed" and (not opciones_locales or sede_assigned_new not in opciones_locales):
-                                        st.error("❌ Selecciona una sede válida para el plan Fixed.")
-                                    else:
-                                        base_nuevas = opciones_planes[tipo_p_nuevo]
-                                        total_unificado = base_nuevas + clases_flotantes
-                                        fecha_vence_nueva = (datetime.now().date() + timedelta(days=30)).isoformat()
-                                        id_local_fijo_nuevo = opciones_locales[sede_assigned_new] if modalidad_nueva == "Fixed" else None
-                                        paquete_nuevo = supabase.table("paquetes").insert({
-                                            "alumno_id": id_alumno_sel, "tipo_paquete": tipo_p_nuevo, "modalidad_plan": modalidad_nueva,
-                                            "local_id_fijo": id_local_fijo_nuevo, "clases_totales": total_unificado, "clases_restantes": total_unificado,
-                                            "fecha_vencimiento": fecha_vence_nueva, "estado": "Activo"
-                                        }).select("id").execute()
-                                        if not paquete_nuevo.data:
-                                            raise RuntimeError("No se recibió el identificador del paquete renovado.")
-                                        try:
-                                            if paquetes_vigentes:
-                                                supabase.table("paquetes").update({"estado": "Agotado"}).in_(
-                                                    "id", [p["id"] for p in paquetes_vigentes]
-                                                ).execute()
-                                        except Exception:
-                                            supabase.table("paquetes").delete().eq("id", paquete_nuevo.data[0]["id"]).execute()
-                                            raise
-                                        st.success(f"🔄 ¡Renovación Exitosa! **{alumno_sel}** cuenta con **{total_unificado} clases**.")
-                                        st.balloons()
-                                except Exception as e: st.error(f"❌ Error al procesar la renovación: {e}")
-                        with col_r2:
-                            if st.button("Limpiar Pantalla", key="btn_clear_ren"):
-                                st.session_state.clear_ren += 1
-                                st.rerun()
-                except Exception as e: st.error(f"Error: {e}")
-
-            with paneles_admin["planes"]:
-                st.subheader(":material/payments: Catálogo de planes, clases y costos")
-                sub_tab1, sub_tab2, sub_tab3 = st.tabs(["Crear plan", "Modificar costos", "Planes vigentes"])
-                
-                with sub_tab1:
-                    st.markdown("#### Registro de Nuevas Ofertas Comerciales")
-                    p_nombre = st.text_input("Nombre del nuevo paquete (ej: Plan Black 30 clases):", key=f"p_n_{st.session_state.clear_plan}")
-                    p_clases = st.number_input("Cantidad exacta de clases asignadas:", min_value=1, max_value=200, value=10, key=f"p_c_{st.session_state.clear_plan}")
-                    p_costo = st.number_input("Precio / Costo comercial del plan ($):", min_value=0.0, max_value=5000.0, value=250.0, step=10.0, key=f"p_v_{st.session_state.clear_plan}")
-                    
-                    col_p1, col_p2 = st.columns(2)
-                    with col_p1:
-                        if st.button("Dar de Alta Plan"):
-                            if p_nombre:
-                                try:
-                                    supabase.table("tipos_paquetes").insert({"nombre_paquete": p_nombre, "clases_totales": p_clases, "costo": p_costo}).execute()
-                                    st.success(f"🎉 ¡Plan '{p_nombre}' añadido al catálogo con éxito!")
-                                except Exception as e: st.error(f"❌ Error al guardar el plan: {e}")
-                            else: st.error("El nombre del paquete es obligatorio.")
-                    with col_p2:
-                        if st.button("Limpiar Pantalla", key="btn_clear_plan"):
-                            st.session_state.clear_plan += 1
-                            st.rerun()
-                            
-                with sub_tab2:
-                    st.markdown("#### Actualizar Precios de Planes Existentes")
-                    if opciones_planes:
-                        plan_a_modificar = st.selectbox("Selecciona el plan que deseas actualizar:", list(opciones_planes.keys()))
-                        nuevo_precio = st.number_input("Establecer nuevo precio ($):", min_value=0.0, max_value=5000.0, value=costos_planes.get(plan_a_modificar, 0.0), step=5.0)
-                        if st.button("Actualizar Tarifa Comercial"):
-                            try:
-                                supabase.table("tipos_paquetes").update({"costo": nuevo_precio}).eq("nombre_paquete", plan_a_modificar).execute()
-                                st.success(f"📈 ¡Precio del plan '{plan_a_modificar}' actualizado correctamente a ${nuevo_precio:.2f}!")
-                            except Exception as e: st.error(f"❌ Error al actualizar precio: {e}")
-                    else: st.info("No hay planes configurados para modificar.")
-
-                with sub_tab3:
-                    st.markdown("#### Lista de Tarifas Ordenadas de Mayor a Menor Precio")
-                    try:
-                        todos_planes_res = supabase.table("tipos_paquetes").select("*").order("costo", desc=True).execute()
-                        if todos_planes_res.data and len(todos_planes_res.data) > 0:
-                            import pandas as pd
-                            df_catalogo = pd.DataFrame(todos_planes_res.data)
-                            df_catalogo_amigable = df_catalogo[["id", "nombre_paquete", "clases_totales", "costo", "activo"]].rename(columns={
-                                "nombre_paquete": "Nombre del Paquete", "clases_totales": "Clases que Incluye", "costo": "Precio Comercial ($)", "activo": "Disponible para Venta"
-                            })
-                            cambios_tabla = st.data_editor(df_catalogo_amigable, hide_index=True, disabled=["id", "Nombre del Paquete", "Clases que Incluye", "Precio Comercial ($)"], use_container_width=True, key="editor_catalogo_planes")
-                            if st.session_state.get("editor_catalogo_planes") and "edited_rows" in st.session_state.editor_catalogo_planes:
-                                filas_editadas = st.session_state.editor_catalogo_planes["edited_rows"]
-                                for indice_fila, cambios in filas_editadas.items():
-                                    if "Disponible para Venta" in cambios:
-                                        nuevo_estado = cambios["Disponible para Venta"]
-                                        id_registro = int(df_catalogo_amigable.iloc[indice_fila]["id"])
-                                        supabase.table("tipos_paquetes").update({"activo": nuevo_estado}).eq("id", id_registro).execute()
-                                        st.success("🔄 ¡Catálogo de ventas actualizado en la nube!")
-                                        st.rerun()
-                        else: st.info("💡 No se encontraron planes registrados.")
-                    except Exception as e: st.error(f"Error: {e}")
-                    
-            with paneles_admin["agenda"]:
-                st.subheader("🗓️ Control de Agenda, Clases e Inactividades")
-                sub_agenda1, sub_agenda2, sub_agenda3, sub_agenda4 = st.tabs([
-                    "Instructoras", "Programación de horarios", "Días laborales", "Feriados y festivos"
-                ])
-                
-                with sub_agenda1:
-                    st.markdown("#### Alta de Profesoras y Tarifas por Hora")
-                    inst_nombre = st.text_input("Nombre completo de la Instructora:")
-                    inst_telefono = st.text_input("Teléfono de contacto:")
-                    inst_costo = st.number_input("Costo / Tarifa por hora dictada ($):", min_value=0.0, value=50.0, step=5.0)
-                    if st.button("Guardar Instructora"):
-                        if inst_nombre:
-                            try:
-                                supabase.table("instructoras").insert({"nombre": inst_nombre, "telefono": inst_telefono, "costo_hora": inst_costo}).execute()
-                                st.success(f"🎉 Instructora '{inst_nombre}' registrada con éxito.")
-                            except Exception as e: st.error(f"❌ Error al guardar instructora: {e}")
-                        else: st.error("El nombre es obligatorio.")
-                            
-                with sub_agenda2:
-                    st.markdown("#### 🚀 Generador Automatizado de Calendario Mensual")
-                    try:
-                        dias_db = supabase.table("dias_operativos").select("nombre_dia", "numero_dia", "habilitado").execute()
-                        dias_habilitados = {d['numero_dia']: d['habilitado'] for d in dias_db.data} if dias_db.data else {}
-                        
-                        inst_res = supabase.table("instructoras").select("id", "nombre").eq("activo", True).execute()
-                        lista_inst = inst_res.data if inst_res.data else []
-                        opciones_inst = {ins['nombre']: ins['id'] for ins in lista_inst}
-                        
-                        col_mas1, col_mas2 = st.columns(2)
-                        with col_mas1:
-                            sede_agenda = st.selectbox("Selecciona Sede:", list(opciones_locales.keys()) if opciones_locales else ["No hay locales"], key="mas_sede")
-                            fecha_inicio = st.date_input("Fecha de Inicio:", min_value=datetime.now().date(), key="mas_f_ini")
-                            fecha_fin = st.date_input("Fecha de Fin:", value=datetime.now().date() + timedelta(days=30), key="mas_f_fin")
-                            hora_agenda = st.time_input("Hora de Inicio:", key="mas_hora")
-                        with col_mas2:
-                            inst_agenda = st.selectbox("Asignar Instructora:", list(opciones_inst.keys()) if opciones_inst else ["Primero registra una instructora"], key="mas_inst")
-                            tipo_serv_agenda = st.selectbox("Tipo de Sesión:", ["Grupal", "Privado"], key="mas_tipo")
-                            if tipo_serv_agenda == "Grupal":
-                                aforo_agenda = st.number_input("Aforo Máximo Camillas:", min_value=4, max_value=10, value=4, key="mas_aforo")
-                            else: aforo_agenda = 1
-                        
-                        dias_seleccionados = []
-                        col_d1, col_d2, col_d3, col_d4, col_d5 = st.columns(5)
-                        with col_d1: 
-                            if st.checkbox("Lunes", value=True): dias_seleccionados.append(0)
-                        with col_d2: 
-                            if st.checkbox("Martes", value=True): dias_seleccionados.append(1)
-                        with col_d3: 
-                            if st.checkbox("Miércoles", value=True): dias_seleccionados.append(2)
-                        with col_d4: 
-                            if st.checkbox("Jueves", value=True): dias_seleccionados.append(3)
-                        with col_d5: 
-                            if st.checkbox("Viernes", value=True): dias_seleccionados.append(4)
-                        
-                        if st.button("⚡ Calcular fechas elegibles"):
-                            if not opciones_locales or not opciones_inst: st.error("❌ Se requieren locales e instructoras.")
-                            elif fecha_inicio > fecha_fin: st.error("❌ Rango inválido.")
-                            elif not dias_seleccionados: st.error("❌ Selecciona al menos un día.")
+                                    supabase.table("locales").insert({"nombre": nombre_local, "direccion": direccion_local}).execute()
+                                    st.success(f"¡Sede {nombre_local} registrada exitosamente!")
+                                except Exception as e:
+                                    st.error(f"❌ Error al guardar el local: {e}")
                             else:
-                                feriados_db = supabase.table("feriados").select("fecha").execute()
-                                lista_feriados = [f['fecha'] for f in feriados_db.data] if feriados_db.data else []
-                                total_creadas = 0
-                                fecha_actual = fecha_inicio
-                                while fecha_actual <= fecha_fin:
-                                    num_dia = fecha_actual.weekday()
-                                    if num_dia in dias_seleccionados and dias_habilitados.get(num_dia, False) and (fecha_actual.isoformat() not in lista_feriados):
-                                        total_creadas += 1
-                                    fecha_actual += timedelta(days=1)
-                                st.info(f"Se encontraron **{total_creadas} fechas elegibles**. Este cálculo no crea ni publica clases en la base de datos.")
-                    except Exception as e: st.error(f"Error: {e}")
+                                st.error("❌ El nombre del local es obligatorio.")
+                    with col_btn2:
+                        if st.button("Limpiar Pantalla", key="btn_clear_loc"):
+                            st.session_state.clear_local += 1
+                            st.rerun()
 
-                with sub_agenda3:
-                    st.markdown("#### Configuración de Días Laborales del Estudio")
-                    try:
-                        dias_consulta = supabase.table("dias_operativos").select("*").order("numero_dia").execute()
-                        if dias_consulta.data:
-                            import pandas as pd
-                            df_dias = pd.DataFrame(dias_consulta.data)
-                            df_dias_amigable = df_dias[["id", "nombre_dia", "habilitado"]].rename(columns={"nombre_dia": "Día de la Semana", "habilitado": "Estudio Abierto"})
-                            cambios_dias = st.data_editor(df_dias_amigable, hide_index=True, disabled=["id", "Día de la Semana"], use_container_width=True, key="editor_dias_operativos")
-                            if st.session_state.get("editor_dias_operativos") and "edited_rows" in st.session_state.editor_dias_operativos:
-                                filas_edit_dias = st.session_state.editor_dias_operativos["edited_rows"]
-                                for idx_fila, cambio_dia in filas_edit_dias.items():
-                                    if "Estudio Abierto" in cambio_dia:
-                                        supabase.table("dias_operativos").update({"habilitado": cambio_dia["Estudio Abierto"]}).eq("id", int(df_dias_amigable.iloc[idx_fila]["id"])).execute()
-                                        st.success("🔄 ¡Calendario laboral actualizado!")
-                                        st.rerun()
-                    except Exception as e: st.error(f"Error: {e}")
-
-                with sub_agenda4:
-                    st.markdown("#### Registro y Eliminación Interactiva de Días Festivos")
-                    col_f1, col_f2 = st.columns(2)
-                    with col_f1:
-                        fecha_f = st.date_input("Fecha del Feriado:", key="input_fecha_feriado")
-                        desc_f = st.text_input("Descripción del Festivo:", key="input_desc_feriado")
-                        if st.button("Habilitar Feriado"):
-                            if desc_f:
+            if "inscripciones" in paneles_admin:
+                with paneles_admin["inscripciones"]:
+                    st.subheader("Formulario de Inscripción y Venta de Paquete")
+                        
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        a_nombre = st.text_input("Nombre del Alumno:", key=f"ins_nom_{st.session_state.clear_ins}")
+                        a_apellido = st.text_input("Apellido del Alumno:", key=f"ins_ape_{st.session_state.clear_ins}")
+                        a_telefono = st.text_input("Teléfono (único para acceso móvil):", key=f"ins_tel_{st.session_state.clear_ins}")
+                    with col2:
+                        tipo_p = st.selectbox("Selecciona el Paquete:", list(opciones_planes.keys()) if opciones_planes else ["Configura planes en la pestaña Tarifas"], key=f"ins_paq_{st.session_state.clear_ins}")
+                        modalidad = st.selectbox("Modalidad de Acceso:", ["Fixed", "Flex"], key=f"ins_mod_{st.session_state.clear_ins}")
+                            
+                        if modalidad == "Fixed":
+                            sede_assigned = st.selectbox("Sede Base / Asignada:", list(opciones_locales.keys()) if opciones_locales else ["Primero registra un local"], key=f"ins_sed_{st.session_state.clear_ins}")
+                        else:
+                            st.write("✨ Plan Flex seleccionado: El alumno tendrá acceso a todas las sedes libres.")
+                                
+                    if tipo_p in costos_planes and costos_planes[tipo_p] > 0:
+                        st.info(f"💵 **Valor comercial del paquete seleccionado:** ${costos_planes[tipo_p]:.2f}")
+                        
+                    col_i1, col_i2 = st.columns(2)
+                    with col_i1:
+                        if st.button("Registrar Alumno"):
+                            if not a_nombre.strip() or not a_apellido.strip() or not a_telefono.strip():
+                                st.error("❌ Nombre, apellido y teléfono son campos obligatorios.")
+                            elif not opciones_planes:
+                                st.error("❌ No puedes registrar alumnos sin configurar planes vigentes.")
+                            elif modalidad == "Fixed" and not opciones_locales:
+                                st.error("❌ Debes registrar al menos un local antes de inscribir alumnos Fixed.")
+                            else:
                                 try:
-                                    supabase.table("feriados").insert({"fecha": fecha_f.isoformat(), "descripcion": desc_f}).execute()
-                                    st.success(f"🌴 ¡Fecha {fecha_f} bloqueada!")
+                                    nuevo_alumno = supabase.table("alumnos").insert({
+                                        "nombre": a_nombre.strip(),
+                                        "apellido": a_apellido.strip(),
+                                        "telefono": a_telefono.strip()
+                                    }).select("id").execute()
+                                    if not nuevo_alumno.data:
+                                        raise RuntimeError("No se recibió el identificador del alumno.")
+                                    id_alumno = nuevo_alumno.data[0]["id"]
+                                    total_c = opciones_planes[tipo_p]
+                                    fecha_vence = (datetime.now().date() + timedelta(days=30)).isoformat()
+                                    id_local_fijo = opciones_locales[sede_assigned] if modalidad == "Fixed" else None
+                                    try:
+                                        supabase.table("paquetes").insert({
+                                            "alumno_id": id_alumno,
+                                            "tipo_paquete": tipo_p,
+                                            "modalidad_plan": modalidad,
+                                            "local_id_fijo": id_local_fijo,
+                                            "clases_totales": total_c,
+                                            "clases_restantes": total_c,
+                                            "fecha_vencimiento": fecha_vence,
+                                            "estado": "Activo"
+                                        }).execute()
+                                    except Exception:
+                                        # Compensa la primera escritura para no dejar un alumno sin paquete.
+                                        supabase.table("alumnos").delete().eq("id", id_alumno).execute()
+                                        raise
+                                    st.success(f"🎉 **¡Inscripción Exitosa!** Alumno **{a_nombre.strip()} {a_apellido.strip()}** dado de alta.")
+                                    st.balloons()
+                                except Exception as e:
+                                    error_msg = str(e)
+                                    if "23505" in error_msg or "already exists" in error_msg.lower():
+                                        st.error(f"⚠️ El alumno con el teléfono **{a_telefono}** ya se encuentra registrado.")
+                                    else: st.error(f"❌ Error en la inscripción: {e}")
+                    with col_i2:
+                        if st.button("Limpiar Pantalla", key="btn_clear_ins"):
+                            st.session_state.clear_ins += 1
+                            st.rerun()
+            if "renovaciones" in paneles_admin:
+                with paneles_admin["renovaciones"]:
+                    st.subheader(":material/autorenew: Renovar paquete de alumno")
+                    try:
+                        alumnos_res = supabase.table("alumnos").select("id", "nombre", "apellido", "telefono").order("nombre").execute()
+                        lista_alumnos = alumnos_res.data if alumnos_res.data else []
+                        etiquetas_alumnos = {
+                            al["id"]: f"{al['nombre']} {al['apellido']} — {al['telefono']}"
+                            for al in lista_alumnos
+                        }
+                        opciones_alumnos = [""] + list(etiquetas_alumnos.values())
+                        dicc_alumnos = {etiquetas_alumnos[al["id"]]: al["id"] for al in lista_alumnos}
+                                
+                        alumno_sel = st.selectbox("Selecciona el Alumno a renovar:", opciones_alumnos, key=f"ren_sel_{st.session_state.clear_ren}", index=0)
+                                
+                        if alumno_sel == "":
+                            st.info("💡 Por favor, busca y selecciona un alumno en el menú superior para procesar su renovación.")
+                        else:
+                            id_alumno_sel = dicc_alumnos[alumno_sel]
+                            hoy = datetime.now().date().isoformat()
+                            paquete_previo = (
+                                supabase.table("paquetes")
+                                .select("id,clases_restantes,fecha_vencimiento")
+                                .eq("alumno_id", id_alumno_sel)
+                                .eq("estado", "Activo")
+                                .gte("fecha_vencimiento", hoy)
+                                .execute()
+                            )
+                            paquetes_vigentes = paquete_previo.data or []
+                            clases_flotantes = sum(max(0, p.get("clases_restantes") or 0) for p in paquetes_vigentes)
+                            if clases_flotantes > 0:
+                                st.warning(f"📢 **Aviso Operativo:** Al alumno **{alumno_sel}** le quedan **{clases_flotantes} clases vigentes** que se sumarán al renovar.")
+                                    
+                            col_ren1, col_ren2 = st.columns(2)
+                            with col_ren1:
+                                tipo_p_nuevo = st.selectbox("Nuevo Paquete:", list(opciones_planes.keys()) if opciones_planes else ["Sin planes"], key=f"ren_p_{st.session_state.clear_ren}")
+                                modalidad_nueva = st.selectbox("Nueva Modalidad de Acceso:", ["Fixed", "Flex"], key=f"ren_m_{st.session_state.clear_ren}")
+                            with col_ren2:
+                                if modalidad_nueva == "Fixed":
+                                    sede_assigned_new = st.selectbox("Asignar Sede para este periodo:", list(opciones_locales.keys()) if opciones_locales else ["Primero registra un local"], key=f"ren_s_{st.session_state.clear_ren}")
+                                else: st.write("✨ Plan Flex seleccionado: Acceso global habilitado.")
+                                    
+                            if tipo_p_nuevo in costos_planes and costos_planes[tipo_p_nuevo] > 0:
+                                st.info(f"💵 **Valor comercial de esta renovación:** ${costos_planes[tipo_p_nuevo]:.2f}")
+                                    
+                            col_r1, col_r2 = st.columns(2)
+                            with col_r1:
+                                if st.button("Procesar Renovación"):
+                                    try:
+                                        if not opciones_planes or tipo_p_nuevo not in opciones_planes:
+                                            st.error("❌ Selecciona un plan vigente antes de renovar.")
+                                        elif modalidad_nueva == "Fixed" and (not opciones_locales or sede_assigned_new not in opciones_locales):
+                                            st.error("❌ Selecciona una sede válida para el plan Fixed.")
+                                        else:
+                                            base_nuevas = opciones_planes[tipo_p_nuevo]
+                                            total_unificado = base_nuevas + clases_flotantes
+                                            fecha_vence_nueva = (datetime.now().date() + timedelta(days=30)).isoformat()
+                                            id_local_fijo_nuevo = opciones_locales[sede_assigned_new] if modalidad_nueva == "Fixed" else None
+                                            paquete_nuevo = supabase.table("paquetes").insert({
+                                                "alumno_id": id_alumno_sel, "tipo_paquete": tipo_p_nuevo, "modalidad_plan": modalidad_nueva,
+                                                "local_id_fijo": id_local_fijo_nuevo, "clases_totales": total_unificado, "clases_restantes": total_unificado,
+                                                "fecha_vencimiento": fecha_vence_nueva, "estado": "Activo"
+                                            }).select("id").execute()
+                                            if not paquete_nuevo.data:
+                                                raise RuntimeError("No se recibió el identificador del paquete renovado.")
+                                            try:
+                                                if paquetes_vigentes:
+                                                    supabase.table("paquetes").update({"estado": "Agotado"}).in_(
+                                                        "id", [p["id"] for p in paquetes_vigentes]
+                                                    ).execute()
+                                            except Exception:
+                                                supabase.table("paquetes").delete().eq("id", paquete_nuevo.data[0]["id"]).execute()
+                                                raise
+                                            st.success(f"🔄 ¡Renovación Exitosa! **{alumno_sel}** cuenta con **{total_unificado} clases**.")
+                                            st.balloons()
+                                    except Exception as e: st.error(f"❌ Error al procesar la renovación: {e}")
+                            with col_r2:
+                                if st.button("Limpiar Pantalla", key="btn_clear_ren"):
+                                    st.session_state.clear_ren += 1
                                     st.rerun()
-                                except Exception as e: st.error(f"❌ Ya registrado o error: {e}")
-                            else: st.error("Agrega una descripción.")
-                    with col_f2:
+                    except Exception as e: st.error(f"Error: {e}")
+
+            if "planes" in paneles_admin:
+                with paneles_admin["planes"]:
+                    st.subheader(":material/payments: Catálogo de planes, clases y costos")
+                    sub_tab1, sub_tab2, sub_tab3 = st.tabs(["Crear plan", "Modificar costos", "Planes vigentes"])
+                                
+                    with sub_tab1:
+                        st.markdown("#### Registro de Nuevas Ofertas Comerciales")
+                        p_nombre = st.text_input("Nombre del nuevo paquete (ej: Plan Black 30 clases):", key=f"p_n_{st.session_state.clear_plan}")
+                        p_clases = st.number_input("Cantidad exacta de clases asignadas:", min_value=1, max_value=200, value=10, key=f"p_c_{st.session_state.clear_plan}")
+                        p_costo = st.number_input("Precio / Costo comercial del plan ($):", min_value=0.0, max_value=5000.0, value=250.0, step=10.0, key=f"p_v_{st.session_state.clear_plan}")
+                                    
+                        col_p1, col_p2 = st.columns(2)
+                        with col_p1:
+                            if st.button("Dar de Alta Plan"):
+                                if p_nombre:
+                                    try:
+                                        supabase.table("tipos_paquetes").insert({"nombre_paquete": p_nombre, "clases_totales": p_clases, "costo": p_costo}).execute()
+                                        st.success(f"🎉 ¡Plan '{p_nombre}' añadido al catálogo con éxito!")
+                                    except Exception as e: st.error(f"❌ Error al guardar el plan: {e}")
+                                else: st.error("El nombre del paquete es obligatorio.")
+                        with col_p2:
+                            if st.button("Limpiar Pantalla", key="btn_clear_plan"):
+                                st.session_state.clear_plan += 1
+                                st.rerun()
+                                            
+                    with sub_tab2:
+                        st.markdown("#### Actualizar Precios de Planes Existentes")
+                        if opciones_planes:
+                            plan_a_modificar = st.selectbox("Selecciona el plan que deseas actualizar:", list(opciones_planes.keys()))
+                            nuevo_precio = st.number_input("Establecer nuevo precio ($):", min_value=0.0, max_value=5000.0, value=costos_planes.get(plan_a_modificar, 0.0), step=5.0)
+                            if st.button("Actualizar Tarifa Comercial"):
+                                try:
+                                    supabase.table("tipos_paquetes").update({"costo": nuevo_precio}).eq("nombre_paquete", plan_a_modificar).execute()
+                                    st.success(f"📈 ¡Precio del plan '{plan_a_modificar}' actualizado correctamente a ${nuevo_precio:.2f}!")
+                                except Exception as e: st.error(f"❌ Error al actualizar precio: {e}")
+                        else: st.info("No hay planes configurados para modificar.")
+
+                    with sub_tab3:
+                        st.markdown("#### Lista de Tarifas Ordenadas de Mayor a Menor Precio")
                         try:
-                            feriados_res = supabase.table("feriados").select("*").order("fecha").execute()
-                            if feriados_res.data:
+                            todos_planes_res = supabase.table("tipos_paquetes").select("*").order("costo", desc=True).execute()
+                            if todos_planes_res.data and len(todos_planes_res.data) > 0:
                                 import pandas as pd
-                                df_fer = pd.DataFrame(feriados_res.data)
-                                df_fer["Eliminar"] = False
-                                df_fer_amigable = df_fer[["id", "fecha", "descripcion", "Eliminar"]].rename(columns={"fecha": "Fecha Bloqueada", "descripcion": "Festivo / Motivo"})
-                                cambios_feriados = st.data_editor(df_fer_amigable, hide_index=True, disabled=["id", "Fecha Bloqueada", "Festivo / Motivo"], use_container_width=True, key="editor_tabla_feriados")
-                                if st.session_state.get("editor_tabla_feriados") and "edited_rows" in st.session_state.editor_tabla_feriados:
-                                    filas_edit_fer = st.session_state.editor_tabla_feriados["edited_rows"]
-                                    for idx_f, cambio_f in filas_edit_fer.items():
-                                        if "Eliminar" in cambio_f and cambio_f["Eliminar"] == True:
-                                            id_fer_borrar = int(df_fer_amigable.iloc[idx_f]["id"])
-                                            supabase.table("feriados").delete().eq("id", id_fer_borrar).execute()
-                                            st.success("🗑️ ¡Feriado eliminado!")
+                                df_catalogo = pd.DataFrame(todos_planes_res.data)
+                                df_catalogo_amigable = df_catalogo[["id", "nombre_paquete", "clases_totales", "costo", "activo"]].rename(columns={
+                                    "nombre_paquete": "Nombre del Paquete", "clases_totales": "Clases que Incluye", "costo": "Precio Comercial ($)", "activo": "Disponible para Venta"
+                                })
+                                cambios_tabla = st.data_editor(df_catalogo_amigable, hide_index=True, disabled=["id", "Nombre del Paquete", "Clases que Incluye", "Precio Comercial ($)"], use_container_width=True, key="editor_catalogo_planes")
+                                if st.session_state.get("editor_catalogo_planes") and "edited_rows" in st.session_state.editor_catalogo_planes:
+                                    filas_editadas = st.session_state.editor_catalogo_planes["edited_rows"]
+                                    for indice_fila, cambios in filas_editadas.items():
+                                        if "Disponible para Venta" in cambios:
+                                            nuevo_estado = cambios["Disponible para Venta"]
+                                            id_registro = int(df_catalogo_amigable.iloc[indice_fila]["id"])
+                                            supabase.table("tipos_paquetes").update({"activo": nuevo_estado}).eq("id", id_registro).execute()
+                                            st.success("🔄 ¡Catálogo de ventas actualizado en la nube!")
                                             st.rerun()
-                            else: st.info("No hay feriados agendados.")
+                            else: st.info("💡 No se encontraron planes registrados.")
+                        except Exception as e: st.error(f"Error: {e}")
+                                    
+            if "agenda" in paneles_admin:
+                with paneles_admin["agenda"]:
+                    st.subheader("🗓️ Control de Agenda, Clases e Inactividades")
+                    sub_agenda1, sub_agenda2, sub_agenda3, sub_agenda4 = st.tabs([
+                        "Instructoras", "Programación de horarios", "Días laborales", "Feriados y festivos"
+                    ])
+                                    
+                    with sub_agenda1:
+                        st.markdown("#### Alta de Profesoras y Tarifas por Hora")
+                        inst_nombre = st.text_input("Nombre completo de la Instructora:")
+                        inst_telefono = st.text_input("Teléfono de contacto:")
+                        inst_costo = st.number_input("Costo / Tarifa por hora dictada ($):", min_value=0.0, value=50.0, step=5.0)
+                        if st.button("Guardar Instructora"):
+                            if inst_nombre:
+                                try:
+                                    supabase.table("instructoras").insert({"nombre": inst_nombre, "telefono": inst_telefono, "costo_hora": inst_costo}).execute()
+                                    st.success(f"🎉 Instructora '{inst_nombre}' registrada con éxito.")
+                                except Exception as e: st.error(f"❌ Error al guardar instructora: {e}")
+                            else: st.error("El nombre es obligatorio.")
+                                                
+                    with sub_agenda2:
+                        st.markdown("#### 🚀 Generador Automatizado de Calendario Mensual")
+                        try:
+                            dias_db = supabase.table("dias_operativos").select("nombre_dia", "numero_dia", "habilitado").execute()
+                            dias_habilitados = {d['numero_dia']: d['habilitado'] for d in dias_db.data} if dias_db.data else {}
+                                            
+                            inst_res = supabase.table("instructoras").select("id", "nombre").eq("activo", True).execute()
+                            lista_inst = inst_res.data if inst_res.data else []
+                            opciones_inst = {ins['nombre']: ins['id'] for ins in lista_inst}
+                                            
+                            col_mas1, col_mas2 = st.columns(2)
+                            with col_mas1:
+                                sede_agenda = st.selectbox("Selecciona Sede:", list(opciones_locales.keys()) if opciones_locales else ["No hay locales"], key="mas_sede")
+                                fecha_inicio = st.date_input("Fecha de Inicio:", min_value=datetime.now().date(), key="mas_f_ini")
+                                fecha_fin = st.date_input("Fecha de Fin:", value=datetime.now().date() + timedelta(days=30), key="mas_f_fin")
+                                hora_agenda = st.time_input("Hora de Inicio:", key="mas_hora")
+                            with col_mas2:
+                                inst_agenda = st.selectbox("Asignar Instructora:", list(opciones_inst.keys()) if opciones_inst else ["Primero registra una instructora"], key="mas_inst")
+                                tipo_serv_agenda = st.selectbox("Tipo de Sesión:", ["Grupal", "Privado"], key="mas_tipo")
+                                if tipo_serv_agenda == "Grupal":
+                                    aforo_agenda = st.number_input("Aforo Máximo Camillas:", min_value=4, max_value=10, value=4, key="mas_aforo")
+                                else: aforo_agenda = 1
+                                            
+                            dias_seleccionados = []
+                            col_d1, col_d2, col_d3, col_d4, col_d5 = st.columns(5)
+                            with col_d1: 
+                                if st.checkbox("Lunes", value=True): dias_seleccionados.append(0)
+                            with col_d2: 
+                                if st.checkbox("Martes", value=True): dias_seleccionados.append(1)
+                            with col_d3: 
+                                if st.checkbox("Miércoles", value=True): dias_seleccionados.append(2)
+                            with col_d4: 
+                                if st.checkbox("Jueves", value=True): dias_seleccionados.append(3)
+                            with col_d5: 
+                                if st.checkbox("Viernes", value=True): dias_seleccionados.append(4)
+                                            
+                            if st.button("⚡ Calcular fechas elegibles"):
+                                if not opciones_locales or not opciones_inst: st.error("❌ Se requieren locales e instructoras.")
+                                elif fecha_inicio > fecha_fin: st.error("❌ Rango inválido.")
+                                elif not dias_seleccionados: st.error("❌ Selecciona al menos un día.")
+                                else:
+                                    feriados_db = supabase.table("feriados").select("fecha").execute()
+                                    lista_feriados = [f['fecha'] for f in feriados_db.data] if feriados_db.data else []
+                                    total_creadas = 0
+                                    fecha_actual = fecha_inicio
+                                    while fecha_actual <= fecha_fin:
+                                        num_dia = fecha_actual.weekday()
+                                        if num_dia in dias_seleccionados and dias_habilitados.get(num_dia, False) and (fecha_actual.isoformat() not in lista_feriados):
+                                            total_creadas += 1
+                                        fecha_actual += timedelta(days=1)
+                                    st.info(f"Se encontraron **{total_creadas} fechas elegibles**. Este cálculo no crea ni publica clases en la base de datos.")
                         except Exception as e: st.error(f"Error: {e}")
 
-            # --- CONSULTA PREDICTIVA DE ALUMNOS Y KÁRDEX ---
-            with paneles_admin["alumnos"]:
-                st.subheader(":material/clinical_notes: Kárdex e historial de clases")
+                    with sub_agenda3:
+                        st.markdown("#### Configuración de Días Laborales del Estudio")
+                        try:
+                            dias_consulta = supabase.table("dias_operativos").select("*").order("numero_dia").execute()
+                            if dias_consulta.data:
+                                import pandas as pd
+                                df_dias = pd.DataFrame(dias_consulta.data)
+                                df_dias_amigable = df_dias[["id", "nombre_dia", "habilitado"]].rename(columns={"nombre_dia": "Día de la Semana", "habilitado": "Estudio Abierto"})
+                                cambios_dias = st.data_editor(df_dias_amigable, hide_index=True, disabled=["id", "Día de la Semana"], use_container_width=True, key="editor_dias_operativos")
+                                if st.session_state.get("editor_dias_operativos") and "edited_rows" in st.session_state.editor_dias_operativos:
+                                    filas_edit_dias = st.session_state.editor_dias_operativos["edited_rows"]
+                                    for idx_fila, cambio_dia in filas_edit_dias.items():
+                                        if "Estudio Abierto" in cambio_dia:
+                                            supabase.table("dias_operativos").update({"habilitado": cambio_dia["Estudio Abierto"]}).eq("id", int(df_dias_amigable.iloc[idx_fila]["id"])).execute()
+                                            st.success("🔄 ¡Calendario laboral actualizado!")
+                                            st.rerun()
+                        except Exception as e: st.error(f"Error: {e}")
 
-                if "kardex_alumno_id" not in st.session_state:
-                    st.session_state.kardex_alumno_id = None
+                    with sub_agenda4:
+                        st.markdown("#### Registro y Eliminación Interactiva de Días Festivos")
+                        col_f1, col_f2 = st.columns(2)
+                        with col_f1:
+                            fecha_f = st.date_input("Fecha del Feriado:", key="input_fecha_feriado")
+                            desc_f = st.text_input("Descripción del Festivo:", key="input_desc_feriado")
+                            if st.button("Habilitar Feriado"):
+                                if desc_f:
+                                    try:
+                                        supabase.table("feriados").insert({"fecha": fecha_f.isoformat(), "descripcion": desc_f}).execute()
+                                        st.success(f"🌴 ¡Fecha {fecha_f} bloqueada!")
+                                        st.rerun()
+                                    except Exception as e: st.error(f"❌ Ya registrado o error: {e}")
+                                else: st.error("Agrega una descripción.")
+                        with col_f2:
+                            try:
+                                feriados_res = supabase.table("feriados").select("*").order("fecha").execute()
+                                if feriados_res.data:
+                                    import pandas as pd
+                                    df_fer = pd.DataFrame(feriados_res.data)
+                                    df_fer["Eliminar"] = False
+                                    df_fer_amigable = df_fer[["id", "fecha", "descripcion", "Eliminar"]].rename(columns={"fecha": "Fecha Bloqueada", "descripcion": "Festivo / Motivo"})
+                                    cambios_feriados = st.data_editor(df_fer_amigable, hide_index=True, disabled=["id", "Fecha Bloqueada", "Festivo / Motivo"], use_container_width=True, key="editor_tabla_feriados")
+                                    if st.session_state.get("editor_tabla_feriados") and "edited_rows" in st.session_state.editor_tabla_feriados:
+                                        filas_edit_fer = st.session_state.editor_tabla_feriados["edited_rows"]
+                                        for idx_f, cambio_f in filas_edit_fer.items():
+                                            if "Eliminar" in cambio_f and cambio_f["Eliminar"] == True:
+                                                id_fer_borrar = int(df_fer_amigable.iloc[idx_f]["id"])
+                                                supabase.table("feriados").delete().eq("id", id_fer_borrar).execute()
+                                                st.success("🗑️ ¡Feriado eliminado!")
+                                                st.rerun()
+                                else: st.info("No hay feriados agendados.")
+                            except Exception as e: st.error(f"Error: {e}")
 
-                try:
-                    todos_al_res = supabase.table("alumnos").select("id,nombre,apellido,telefono").order("nombre").execute()
-                    lista_alumnos_all = todos_al_res.data or []
-                except Exception:
-                    lista_alumnos_all = []
-                    st.error("No se pudo cargar el directorio de alumnos. Revisa la conexión y los permisos.")
+                # --- CONSULTA PREDICTIVA DE ALUMNOS Y KÁRDEX ---
+            if "alumnos" in paneles_admin:
+                with paneles_admin["alumnos"]:
+                    st.subheader(":material/clinical_notes: Kárdex e historial de clases")
 
-                if not lista_alumnos_all:
-                    st.info("💡 Aún no registras ningún alumno en el sistema.")
-                    st.session_state.kardex_alumno_id = None
-                    st.session_state.pop("selector_predictivo_kardex", None)
-                elif st.session_state.kardex_alumno_id is None:
-                    # El selectbox permite escribir para filtrar sugerencias por nombre, apellido o teléfono.
-                    etiquetas_por_id = {
-                        al["id"]: f"{al['nombre']} {al['apellido']} — {al['telefono']}"
-                        for al in lista_alumnos_all
-                    }
-                    ids_por_etiqueta = {etiqueta: alumno_id for alumno_id, etiqueta in etiquetas_por_id.items()}
-                    opciones_kardex = [""] + list(ids_por_etiqueta.keys())
-                    alumno_elegido = st.selectbox(
-                        "Busca y selecciona un alumno:",
-                        opciones_kardex,
-                        index=0,
-                        key="selector_predictivo_kardex",
-                        placeholder="Escribe nombre, apellido o teléfono..."
-                    )
-                    if alumno_elegido:
-                        st.session_state.kardex_alumno_id = ids_por_etiqueta[alumno_elegido]
-                        st.rerun()
-                else:
-                    col_ficha, col_accion = st.columns([5, 1])
-                    with col_ficha:
-                        st.caption("FICHA DEL ALUMNO SELECCIONADO")
-                    with col_accion:
-                        if st.button("← Directorio", key="volver_directorio_kardex", use_container_width=True):
-                            st.session_state.kardex_alumno_id = None
-                            st.session_state.pop("selector_predictivo_kardex", None)
-                            st.rerun()
+                    if "kardex_alumno_id" not in st.session_state:
+                        st.session_state.kardex_alumno_id = None
 
                     try:
-                        al_res = (
-                            supabase.table("alumnos")
-                            .select("id,nombre,apellido,telefono")
-                            .eq("id", st.session_state.kardex_alumno_id)
-                            .limit(1)
-                            .execute()
-                        )
-                        if not al_res.data:
-                            st.warning("El alumno seleccionado ya no aparece en el directorio.")
-                            st.session_state.kardex_alumno_id = None
-                            st.session_state.pop("selector_predictivo_kardex", None)
-                        else:
-                            import pandas as pd
-                            data_al = al_res.data[0]
-                            st.markdown(f"### 📊 {data_al['nombre']} {data_al['apellido']}")
-                            st.caption(f"📱 Contacto: {data_al['telefono']}")
-
-                            paq_res = (
-                                supabase.table("paquetes")
-                                .select("tipo_paquete,modalidad_plan,clases_totales,clases_restantes,fecha_vencimiento,estado")
-                                .eq("alumno_id", data_al["id"])
-                                .order("fecha_compra", desc=True)
-                                .execute()
-                            )
-                            if paq_res.data:
-                                st.markdown("#### :material/loyalty: Historial de paquetes y membresías")
-                                df_paq = pd.DataFrame(paq_res.data)
-                                df_paq["Clases Consumidas"] = df_paq["clases_totales"] - df_paq["clases_restantes"]
-                                df_reporte_paq = df_paq[[
-                                    "tipo_paquete", "modalidad_plan", "clases_totales", "Clases Consumidas",
-                                    "clases_restantes", "fecha_vencimiento", "estado"
-                                ]].rename(columns={
-                                    "tipo_paquete": "Paquete Contratado",
-                                    "modalidad_plan": "Tipo Plan",
-                                    "clases_totales": "Clases Totales",
-                                    "clases_restantes": "Clases Pendientes (Saldo)",
-                                    "fecha_vencimiento": "Caduca El",
-                                    "estado": "Estado Plan"
-                                })
-                                st.dataframe(df_reporte_paq, use_container_width=True, hide_index=True)
-                            else:
-                                st.info("Este alumno aún no tiene paquetes registrados.")
-
-                            res_res = (
-                                supabase.table("reservas")
-                                .select("fecha_clase,hora_clase,tipo_servicio,estado")
-                                .eq("alumno_id", data_al["id"])
-                                .order("fecha_clase", desc=True)
-                                .execute()
-                            )
-                            st.markdown("#### :material/event_note: Historial de clases y asistencia")
-                            if res_res.data:
-                                df_res = pd.DataFrame(res_res.data).rename(columns={
-                                    "fecha_clase": "Fecha de Clase",
-                                    "hora_clase": "Horario",
-                                    "tipo_servicio": "Modalidad",
-                                    "estado": "Asistencia"
-                                })
-                                st.dataframe(df_res, use_container_width=True, hide_index=True)
-                            else:
-                                st.info("💡 El alumno aún no tiene historial de clases en la agenda.")
+                        todos_al_res = supabase.table("alumnos").select("id,nombre,apellido,telefono").order("nombre").execute()
+                        lista_alumnos_all = todos_al_res.data or []
                     except Exception:
-                        st.error("No se pudo cargar la ficha del alumno. Revisa la conexión y los permisos.")
+                        lista_alumnos_all = []
+                        st.error("No se pudo cargar el directorio de alumnos. Revisa la conexión y los permisos.")
+
+                    if not lista_alumnos_all:
+                        st.info("💡 Aún no registras ningún alumno en el sistema.")
+                        st.session_state.kardex_alumno_id = None
+                        st.session_state.pop("selector_predictivo_kardex", None)
+                    elif st.session_state.kardex_alumno_id is None:
+                        # El selectbox permite escribir para filtrar sugerencias por nombre, apellido o teléfono.
+                        etiquetas_por_id = {
+                            al["id"]: f"{al['nombre']} {al['apellido']} — {al['telefono']}"
+                            for al in lista_alumnos_all
+                        }
+                        ids_por_etiqueta = {etiqueta: alumno_id for alumno_id, etiqueta in etiquetas_por_id.items()}
+                        opciones_kardex = [""] + list(ids_por_etiqueta.keys())
+                        alumno_elegido = st.selectbox(
+                            "Busca y selecciona un alumno:",
+                            opciones_kardex,
+                            index=0,
+                            key="selector_predictivo_kardex",
+                            placeholder="Escribe nombre, apellido o teléfono..."
+                        )
+                        if alumno_elegido:
+                            st.session_state.kardex_alumno_id = ids_por_etiqueta[alumno_elegido]
+                            st.rerun()
+                    else:
+                        col_ficha, col_accion = st.columns([5, 1])
+                        with col_ficha:
+                            st.caption("FICHA DEL ALUMNO SELECCIONADO")
+                        with col_accion:
+                            if st.button("← Directorio", key="volver_directorio_kardex", use_container_width=True):
+                                st.session_state.kardex_alumno_id = None
+                                st.session_state.pop("selector_predictivo_kardex", None)
+                                st.rerun()
+
+                        try:
+                            al_res = (
+                                supabase.table("alumnos")
+                                .select("id,nombre,apellido,telefono")
+                                .eq("id", st.session_state.kardex_alumno_id)
+                                .limit(1)
+                                .execute()
+                            )
+                            if not al_res.data:
+                                st.warning("El alumno seleccionado ya no aparece en el directorio.")
+                                st.session_state.kardex_alumno_id = None
+                                st.session_state.pop("selector_predictivo_kardex", None)
+                            else:
+                                import pandas as pd
+                                data_al = al_res.data[0]
+                                st.markdown(f"### 📊 {data_al['nombre']} {data_al['apellido']}")
+                                st.caption(f"📱 Contacto: {data_al['telefono']}")
+
+                                paq_res = (
+                                    supabase.table("paquetes")
+                                    .select("tipo_paquete,modalidad_plan,clases_totales,clases_restantes,fecha_vencimiento,estado")
+                                    .eq("alumno_id", data_al["id"])
+                                    .order("fecha_compra", desc=True)
+                                    .execute()
+                                )
+                                if paq_res.data:
+                                    st.markdown("#### :material/loyalty: Historial de paquetes y membresías")
+                                    df_paq = pd.DataFrame(paq_res.data)
+                                    df_paq["Clases Consumidas"] = df_paq["clases_totales"] - df_paq["clases_restantes"]
+                                    df_reporte_paq = df_paq[[
+                                        "tipo_paquete", "modalidad_plan", "clases_totales", "Clases Consumidas",
+                                        "clases_restantes", "fecha_vencimiento", "estado"
+                                    ]].rename(columns={
+                                        "tipo_paquete": "Paquete Contratado",
+                                        "modalidad_plan": "Tipo Plan",
+                                        "clases_totales": "Clases Totales",
+                                        "clases_restantes": "Clases Pendientes (Saldo)",
+                                        "fecha_vencimiento": "Caduca El",
+                                        "estado": "Estado Plan"
+                                    })
+                                    st.dataframe(df_reporte_paq, use_container_width=True, hide_index=True)
+                                else:
+                                    st.info("Este alumno aún no tiene paquetes registrados.")
+
+                                res_res = (
+                                    supabase.table("reservas")
+                                    .select("fecha_clase,hora_clase,tipo_servicio,estado")
+                                    .eq("alumno_id", data_al["id"])
+                                    .order("fecha_clase", desc=True)
+                                    .execute()
+                                )
+                                st.markdown("#### :material/event_note: Historial de clases y asistencia")
+                                if res_res.data:
+                                    df_res = pd.DataFrame(res_res.data).rename(columns={
+                                        "fecha_clase": "Fecha de Clase",
+                                        "hora_clase": "Horario",
+                                        "tipo_servicio": "Modalidad",
+                                        "estado": "Asistencia"
+                                    })
+                                    st.dataframe(df_res, use_container_width=True, hide_index=True)
+                                else:
+                                    st.info("💡 El alumno aún no tiene historial de clases en la agenda.")
+                        except Exception:
+                            st.error("No se pudo cargar la ficha del alumno. Revisa la conexión y los permisos.")
+
+            with paneles_admin["mi_cuenta"]:
+                st.subheader(":material/key: Cambiar mi contraseña")
+                st.caption(f"Sesión iniciada como **{st.session_state.admin_usuario}**")
+                with st.form("form_cambiar_clave_admin"):
+                    clave_actual = st.text_input("Contraseña actual", type="password", key="cuenta_clave_actual")
+                    clave_nueva = st.text_input("Nueva contraseña (mínimo 12 caracteres)", type="password", key="cuenta_clave_nueva")
+                    clave_confirmacion = st.text_input("Confirmar nueva contraseña", type="password", key="cuenta_clave_confirmacion")
+                    guardar_clave = st.form_submit_button("Actualizar contraseña", type="primary")
+                if guardar_clave:
+                    if len(clave_nueva) < 12:
+                        st.error("La nueva contraseña debe tener al menos 12 caracteres.")
+                    elif clave_nueva != clave_confirmacion:
+                        st.error("Las contraseñas nuevas no coinciden.")
+                    else:
+                        try:
+                            actual_res = supabase.table("usuarios_admin").select("contrasena_encriptada").eq(
+                                "id", st.session_state.admin_id
+                            ).limit(1).execute()
+                            if not actual_res.data or not verificar_contrasena(
+                                clave_actual, actual_res.data[0]["contrasena_encriptada"]
+                            )[0]:
+                                st.error("La contraseña actual no es correcta.")
+                            else:
+                                supabase.table("usuarios_admin").update({
+                                    "contrasena_encriptada": encriptar_contrasena(clave_nueva)
+                                }).eq("id", st.session_state.admin_id).execute()
+                                st.success("Contraseña actualizada correctamente.")
+                        except Exception:
+                            st.error("No se pudo actualizar la contraseña. Revisa la conexión y los permisos de Supabase.")
+
+            if st.session_state.admin_es_superadmin and "usuarios" in paneles_admin:
+                with paneles_admin["usuarios"]:
+                    st.subheader(":material/manage_accounts: Usuarios y permisos de acceso")
+                    st.caption("Cada usuario solo verá las ventanas asignadas. Todos pueden cambiar su contraseña desde Mi cuenta.")
+
+                    with st.form("form_crear_usuario_admin"):
+                        nuevo_usuario_admin = st.text_input("Nombre de usuario", key="nuevo_usuario_admin")
+                        nueva_clave_admin = st.text_input("Contraseña inicial (mínimo 12 caracteres)", type="password", key="nueva_clave_admin")
+                        confirmar_clave_admin = st.text_input("Confirmar contraseña", type="password", key="confirmar_clave_admin")
+                        permisos_nuevos = st.multiselect(
+                            "Ventanas que podrá administrar",
+                            options=list(VENTANAS_ADMIN.keys()),
+                            format_func=lambda permiso: VENTANAS_ADMIN[permiso],
+                            key="permisos_nuevo_admin"
+                        )
+                        crear_usuario = st.form_submit_button("Crear usuario administrador", type="primary")
+                    if crear_usuario:
+                        if not nuevo_usuario_admin.strip():
+                            st.error("Escribe un nombre de usuario.")
+                        elif len(nueva_clave_admin) < 12:
+                            st.error("La contraseña debe tener al menos 12 caracteres.")
+                        elif nueva_clave_admin != confirmar_clave_admin:
+                            st.error("Las contraseñas no coinciden.")
+                        else:
+                            try:
+                                supabase.table("usuarios_admin").insert({
+                                    "usuario": nuevo_usuario_admin.strip(),
+                                    "contrasena_encriptada": encriptar_contrasena(nueva_clave_admin),
+                                    "es_superadmin": False,
+                                    "permisos": permisos_nuevos
+                                }).execute()
+                                st.success(f"Usuario {nuevo_usuario_admin.strip()} creado.")
+                                st.rerun()
+                            except Exception as e:
+                                if "23505" in str(e) or "already exists" in str(e).lower():
+                                    st.error("Ese nombre de usuario ya existe.")
+                                elif "42703" in str(e):
+                                    st.error("Ejecuta primero supabase_admin_users_migration.sql en Supabase para habilitar los permisos.")
+                                else:
+                                    st.error("No se pudo crear el usuario. Revisa la conexión y los permisos de Supabase.")
+
+                    st.divider()
+                    st.markdown("#### Editar permisos de un usuario existente")
+                    try:
+                        usuarios_res = supabase.table("usuarios_admin").select(
+                            "id,usuario,es_superadmin,permisos"
+                        ).order("usuario").execute()
+                        usuarios_db = usuarios_res.data or []
+                        usuarios_normales = [u for u in usuarios_db if not u.get("es_superadmin", False)]
+                        if usuarios_normales:
+                            etiqueta_a_id = {u["usuario"]: u["id"] for u in usuarios_normales}
+                            usuario_editar = st.selectbox("Usuario", list(etiqueta_a_id.keys()), key="usuario_permisos_editar")
+                            usuario_obj = next(u for u in usuarios_normales if u["id"] == etiqueta_a_id[usuario_editar])
+                            permisos_actuales = usuario_obj.get("permisos") or []
+                            permisos_editados = st.multiselect(
+                                "Ventanas asignadas",
+                                options=list(VENTANAS_ADMIN.keys()),
+                                default=[p for p in permisos_actuales if p in VENTANAS_ADMIN],
+                                format_func=lambda permiso: VENTANAS_ADMIN[permiso],
+                                key=f"permisos_editar_{usuario_obj['id']}"
+                            )
+                            if st.button("Guardar permisos", key="guardar_permisos_usuario", type="primary"):
+                                supabase.table("usuarios_admin").update({
+                                    "permisos": permisos_editados
+                                }).eq("id", usuario_obj["id"]).execute()
+                                st.success(f"Permisos de {usuario_editar} actualizados.")
+                                st.rerun()
+                        else:
+                            st.info("Aún no hay otros usuarios administradores para editar.")
+                    except Exception:
+                        st.error("No se pudieron cargar los usuarios. Ejecuta la migración SQL y revisa los permisos de Supabase.")
