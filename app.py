@@ -452,10 +452,16 @@ else:
     elif rol_acceso == "Administrador":
         if not st.session_state.logged_in:
             st.title(":material/lock: Panel Administrativo Privado")
-            user_input = st.text_input("Usuario:", key=f"login_usuario_{st.session_state.clear_login}")
-            pass_input = st.text_input("Contraseña:", type="password", key=f"login_clave_{st.session_state.clear_login}")
-            
-            if st.button("Ingresar"):
+            with st.form(f"form_login_{st.session_state.clear_login}"):
+                user_input = st.text_input("Usuario:", key=f"login_usuario_{st.session_state.clear_login}")
+                pass_input = st.text_input("Contraseña:", type="password", key=f"login_clave_{st.session_state.clear_login}")
+                ingresar = st.form_submit_button("Ingresar", type="primary")
+                limpiar_login = st.form_submit_button("Limpiar campos")
+
+            if limpiar_login:
+                st.session_state.clear_login += 1
+                st.rerun()
+            if ingresar:
                 try:
                     esquema_antiguo = False
                     try:
@@ -504,18 +510,17 @@ else:
                         )
                         st.session_state.admin_migracion_pendiente = esquema_antiguo
                         st.session_state.logged_in = True
+                        st.session_state.clear_login += 1
                         st.rerun()
                     else:
                         st.error("❌ Credenciales incorrectas.")
                 except Exception as e:
                     st.error(f"❌ Error al validar credenciales: {e}")
-            if st.button("Limpiar campos", key="limpiar_login"):
-                st.session_state.clear_login += 1
-                st.rerun()
         else:
             st.title(":material/dashboard: Panel de Control")
             if st.sidebar.button("Cerrar sesión", icon=":material/logout:", type="primary"):
                 st.session_state.logged_in = False
+                st.session_state.clear_login += 1
                 st.session_state.admin_id = None
                 st.session_state.admin_usuario = ""
                 st.session_state.admin_es_superadmin = False
@@ -529,7 +534,7 @@ else:
             if "clear_ren" not in st.session_state: st.session_state.clear_ren = 0
             if "clear_search" not in st.session_state: st.session_state.clear_search = 0
             if "clear_plan" not in st.session_state: st.session_state.clear_plan = 0
-            for llave_limpieza in ("clear_instructora", "clear_agenda", "clear_feriado", "clear_usuario", "clear_tarifa", "clear_cuenta", "clear_reset_clave", "clear_configuracion", "clear_editar_alumno"):
+            for llave_limpieza in ("clear_instructora", "clear_agenda", "clear_feriado", "clear_usuario", "clear_tarifa", "clear_cuenta", "clear_reset_clave", "clear_configuracion", "clear_editar_alumno", "clear_permisos", "clear_eliminar_usuario", "clear_catalogo", "clear_dias_operativos", "clear_feriados_tabla"):
                 if llave_limpieza not in st.session_state:
                     st.session_state[llave_limpieza] = 0
 
@@ -613,12 +618,17 @@ else:
                             f"{local['nombre']} {'(Inactiva)' if not local.get('activo', True) else ''}".strip(): local
                             for local in lista_locales_admin
                         }
+                        opciones_locales_editar = [""] + list(etiquetas_locales.keys())
                         local_seleccionado_label = st.selectbox(
                             "Sede",
-                            list(etiquetas_locales.keys()),
-                            key="local_seleccionado_editar"
+                            opciones_locales_editar,
+                            index=0,
+                            key=f"local_seleccionado_editar_{st.session_state.clear_local}",
+                            placeholder="Selecciona una sede..."
                         )
-                        local_seleccionado = etiquetas_locales[local_seleccionado_label]
+                        local_seleccionado = etiquetas_locales.get(local_seleccionado_label) or {
+                            "id": "", "nombre": "", "direccion": "", "activo": False
+                        }
                         local_id = local_seleccionado["id"]
                         nombre_local_editado = st.text_input(
                             "Nombre",
@@ -632,7 +642,7 @@ else:
                         )
                         col_local_guardar, col_local_baja = st.columns(2)
                         with col_local_guardar:
-                            if st.button("Guardar cambios", key=f"guardar_local_{local_id}", type="primary"):
+                            if st.button("Guardar cambios", key=f"guardar_local_{local_id}_{st.session_state.clear_local}", type="primary", disabled=not local_id):
                                 if not nombre_local_editado.strip():
                                     st.error("El nombre de la sede es obligatorio.")
                                 else:
@@ -649,10 +659,10 @@ else:
                                         else:
                                             st.error(f"No se pudieron guardar los cambios: {e}")
                         with col_local_baja:
-                            if local_seleccionado.get("activo", True):
+                            if local_id and local_seleccionado.get("activo", True):
                                 confirmar_baja_local = st.checkbox(
                                     "Confirmo dar de baja esta sede",
-                                    key=f"confirmar_baja_local_{local_id}"
+                                    key=f"confirmar_baja_local_{local_id}_{st.session_state.clear_local}"
                                 )
                                 if st.button("Dar de baja", key=f"baja_local_{local_id}", disabled=not confirmar_baja_local):
                                     if not locales_tiene_baja:
@@ -664,20 +674,25 @@ else:
                                             st.rerun()
                                         except Exception as e:
                                             st.error(f"No se pudo dar de baja la sede: {e}")
-                            else:
-                                if st.button("Reactivar sede", key=f"reactivar_local_{local_id}"):
+                            elif local_id:
+                                if st.button("Reactivar sede", key=f"reactivar_local_{local_id}_{st.session_state.clear_local}"):
                                     try:
                                         supabase.table("locales").update({"activo": True}).eq("id", local_id).execute()
                                         st.session_state.clear_local += 1
                                         st.rerun()
                                     except Exception as e:
                                         st.error(f"No se pudo reactivar la sede: {e}")
+                            else:
+                                st.info("Selecciona una sede para editarla.")
                     else:
                         st.info("Registra una sede para habilitar su edición.")
 
             if "inscripciones" in paneles_admin:
                 with paneles_admin["inscripciones"]:
                     st.subheader("Formulario de Inscripción y Venta de Paquete")
+                    aviso_inscripcion = st.session_state.pop("aviso_inscripcion", None)
+                    if aviso_inscripcion:
+                        st.success(aviso_inscripcion)
                         
                     col1, col2 = st.columns(2)
                     with col1:
@@ -685,12 +700,12 @@ else:
                         a_apellido = st.text_input("Apellido del Alumno:", key=f"ins_ape_{st.session_state.clear_ins}")
                         a_telefono = st.text_input("Teléfono (único para acceso móvil):", key=f"ins_tel_{st.session_state.clear_ins}")
                     with col2:
-                        tipo_p = st.selectbox("Selecciona el Paquete:", list(opciones_planes.keys()) if opciones_planes else ["Configura planes en la pestaña Tarifas"], key=f"ins_paq_{st.session_state.clear_ins}")
-                        modalidad = st.selectbox("Modalidad de Acceso:", ["Fixed", "Flex"], key=f"ins_mod_{st.session_state.clear_ins}")
-                            
+                        tipo_p = st.selectbox("Selecciona el Paquete:", [""] + list(opciones_planes.keys()), key=f"ins_paq_{st.session_state.clear_ins}", placeholder="Selecciona un plan...")
+                        modalidad = st.selectbox("Modalidad de Acceso:", ["", "Fixed", "Flex"], key=f"ins_mod_{st.session_state.clear_ins}", placeholder="Selecciona una modalidad...")
+                        sede_assigned = ""
                         if modalidad == "Fixed":
-                            sede_assigned = st.selectbox("Sede Base / Asignada:", list(opciones_locales.keys()) if opciones_locales else ["Primero registra un local"], key=f"ins_sed_{st.session_state.clear_ins}")
-                        else:
+                            sede_assigned = st.selectbox("Sede Base / Asignada:", [""] + list(opciones_locales.keys()), key=f"ins_sed_{st.session_state.clear_ins}", placeholder="Selecciona una sede...")
+                        elif modalidad == "Flex":
                             st.write("✨ Plan Flex seleccionado: El alumno tendrá acceso a todas las sedes libres.")
                                 
                     if tipo_p in costos_planes and costos_planes[tipo_p] > 0:
@@ -699,12 +714,12 @@ else:
                     col_i1, col_i2 = st.columns(2)
                     with col_i1:
                         if st.button("Registrar Alumno"):
-                            if not a_nombre.strip() or not a_apellido.strip() or not a_telefono.strip():
-                                st.error("❌ Nombre, apellido y teléfono son campos obligatorios.")
+                            if not a_nombre.strip() or not a_apellido.strip() or not a_telefono.strip() or not tipo_p or not modalidad:
+                                st.error("❌ Completa nombre, apellido, teléfono, plan y modalidad.")
                             elif not opciones_planes:
                                 st.error("❌ No puedes registrar alumnos sin configurar planes vigentes.")
-                            elif modalidad == "Fixed" and not opciones_locales:
-                                st.error("❌ Debes registrar al menos un local antes de inscribir alumnos Fixed.")
+                            elif modalidad == "Fixed" and (not opciones_locales or sede_assigned not in opciones_locales):
+                                st.error("❌ Selecciona una sede válida para la modalidad Fixed.")
                             else:
                                 try:
                                     nuevo_alumno = supabase.table("alumnos").insert({
@@ -733,8 +748,10 @@ else:
                                         # Compensa la primera escritura para no dejar un alumno sin paquete.
                                         supabase.table("alumnos").delete().eq("id", id_alumno).execute()
                                         raise
-                                    st.success(f"🎉 **¡Inscripción Exitosa!** Alumno **{a_nombre.strip()} {a_apellido.strip()}** dado de alta.")
+                                    st.session_state.aviso_inscripcion = f"Inscripción exitosa: {a_nombre.strip()} {a_apellido.strip()} quedó registrado."
+                                    st.session_state.clear_ins += 1
                                     st.balloons()
+                                    st.rerun()
                                 except Exception as e:
                                     error_msg = str(e)
                                     if "23505" in error_msg or "already exists" in error_msg.lower():
@@ -747,6 +764,9 @@ else:
             if "renovaciones" in paneles_admin:
                 with paneles_admin["renovaciones"]:
                     st.subheader(":material/autorenew: Renovar paquete de alumno")
+                    aviso_renovacion = st.session_state.pop("aviso_renovacion", None)
+                    if aviso_renovacion:
+                        st.success(aviso_renovacion)
                     try:
                         alumnos_res = supabase.table("alumnos").select("id", "nombre", "apellido", "telefono").order("nombre").execute()
                         lista_alumnos = alumnos_res.data if alumnos_res.data else []
@@ -779,12 +799,13 @@ else:
                                     
                             col_ren1, col_ren2 = st.columns(2)
                             with col_ren1:
-                                tipo_p_nuevo = st.selectbox("Nuevo Paquete:", list(opciones_planes.keys()) if opciones_planes else ["Sin planes"], key=f"ren_p_{st.session_state.clear_ren}")
-                                modalidad_nueva = st.selectbox("Nueva Modalidad de Acceso:", ["Fixed", "Flex"], key=f"ren_m_{st.session_state.clear_ren}")
+                                tipo_p_nuevo = st.selectbox("Nuevo Paquete:", [""] + list(opciones_planes.keys()), key=f"ren_p_{st.session_state.clear_ren}", placeholder="Selecciona un plan...")
+                                modalidad_nueva = st.selectbox("Nueva Modalidad de Acceso:", ["", "Fixed", "Flex"], key=f"ren_m_{st.session_state.clear_ren}", placeholder="Selecciona una modalidad...")
                             with col_ren2:
+                                sede_assigned_new = ""
                                 if modalidad_nueva == "Fixed":
-                                    sede_assigned_new = st.selectbox("Asignar Sede para este periodo:", list(opciones_locales.keys()) if opciones_locales else ["Primero registra un local"], key=f"ren_s_{st.session_state.clear_ren}")
-                                else: st.write("✨ Plan Flex seleccionado: Acceso global habilitado.")
+                                    sede_assigned_new = st.selectbox("Asignar Sede para este periodo:", [""] + list(opciones_locales.keys()), key=f"ren_s_{st.session_state.clear_ren}", placeholder="Selecciona una sede...")
+                                elif modalidad_nueva == "Flex": st.write("✨ Plan Flex seleccionado: Acceso global habilitado.")
                                     
                             if tipo_p_nuevo in costos_planes and costos_planes[tipo_p_nuevo] > 0:
                                 st.info(f"💵 **Valor comercial de esta renovación:** ${costos_planes[tipo_p_nuevo]:.2f}")
@@ -793,7 +814,9 @@ else:
                             with col_r1:
                                 if st.button("Procesar Renovación"):
                                     try:
-                                        if not opciones_planes or tipo_p_nuevo not in opciones_planes:
+                                        if not tipo_p_nuevo or not modalidad_nueva:
+                                            st.error("❌ Selecciona un plan y una modalidad antes de renovar.")
+                                        elif not opciones_planes or tipo_p_nuevo not in opciones_planes:
                                             st.error("❌ Selecciona un plan vigente antes de renovar.")
                                         elif modalidad_nueva == "Fixed" and (not opciones_locales or sede_assigned_new not in opciones_locales):
                                             st.error("❌ Selecciona una sede válida para el plan Fixed.")
@@ -817,8 +840,10 @@ else:
                                             except Exception:
                                                 supabase.table("paquetes").delete().eq("id", paquete_nuevo.data[0]["id"]).execute()
                                                 raise
-                                            st.success(f"🔄 ¡Renovación Exitosa! **{alumno_sel}** cuenta con **{total_unificado} clases**.")
+                                            st.session_state.aviso_renovacion = f"Renovación exitosa: {alumno_sel} cuenta con {total_unificado} clases."
+                                            st.session_state.clear_ren += 1
                                             st.balloons()
+                                            st.rerun()
                                     except Exception as e: st.error(f"❌ Error al procesar la renovación: {e}")
                             with col_r2:
                                 if st.button("Limpiar Pantalla", key="btn_clear_ren"):
@@ -829,23 +854,28 @@ else:
             if "planes" in paneles_admin:
                 with paneles_admin["planes"]:
                     st.subheader(":material/payments: Catálogo de planes, clases y costos")
+                    aviso_planes = st.session_state.pop("aviso_planes", None)
+                    if aviso_planes:
+                        st.success(aviso_planes)
                     sub_tab1, sub_tab2, sub_tab3 = st.tabs(["Crear plan", "Modificar costos", "Planes vigentes"])
                                 
                     with sub_tab1:
                         st.markdown("#### Registro de Nuevas Ofertas Comerciales")
                         p_nombre = st.text_input("Nombre del nuevo paquete (ej: Plan Black 30 clases):", key=f"p_n_{st.session_state.clear_plan}")
-                        p_clases = st.number_input("Cantidad exacta de clases asignadas:", min_value=1, max_value=200, value=10, key=f"p_c_{st.session_state.clear_plan}")
-                        p_costo = st.number_input("Precio / Costo comercial del plan ($):", min_value=0.0, max_value=5000.0, value=250.0, step=10.0, key=f"p_v_{st.session_state.clear_plan}")
+                        p_clases = st.number_input("Cantidad exacta de clases asignadas:", min_value=1, max_value=200, value=None, placeholder="Escribe la cantidad", key=f"p_c_{st.session_state.clear_plan}")
+                        p_costo = st.number_input("Precio / Costo comercial del plan ($):", min_value=0.0, max_value=5000.0, value=None, step=10.0, placeholder="Escribe el precio", key=f"p_v_{st.session_state.clear_plan}")
                                     
                         col_p1, col_p2 = st.columns(2)
                         with col_p1:
                             if st.button("Dar de Alta Plan"):
-                                if p_nombre:
+                                if p_nombre.strip() and p_clases is not None and p_costo is not None:
                                     try:
                                         supabase.table("tipos_paquetes").insert({"nombre_paquete": p_nombre, "clases_totales": p_clases, "costo": p_costo}).execute()
-                                        st.success(f"🎉 ¡Plan '{p_nombre}' añadido al catálogo con éxito!")
+                                        st.session_state.aviso_planes = f"Plan '{p_nombre.strip()}' añadido al catálogo."
+                                        st.session_state.clear_plan += 1
+                                        st.rerun()
                                     except Exception as e: st.error(f"❌ Error al guardar el plan: {e}")
-                                else: st.error("El nombre del paquete es obligatorio.")
+                                else: st.error("Completa el nombre, la cantidad de clases y el precio.")
                         with col_p2:
                             if st.button("Limpiar Pantalla", key="btn_clear_plan"):
                                 st.session_state.clear_plan += 1
@@ -854,14 +884,19 @@ else:
                     with sub_tab2:
                         st.markdown("#### Actualizar Precios de Planes Existentes")
                         if opciones_planes:
-                            plan_a_modificar = st.selectbox("Selecciona el plan que deseas actualizar:", list(opciones_planes.keys()), key=f"tarifa_plan_{st.session_state.clear_tarifa}")
-                            nuevo_precio = st.number_input("Establecer nuevo precio ($):", min_value=0.0, max_value=5000.0, value=costos_planes.get(plan_a_modificar, 0.0), step=5.0, key=f"tarifa_precio_{st.session_state.clear_tarifa}")
+                            plan_a_modificar = st.selectbox("Selecciona el plan que deseas actualizar:", [""] + list(opciones_planes.keys()), key=f"tarifa_plan_{st.session_state.clear_tarifa}", placeholder="Selecciona un plan...")
+                            if plan_a_modificar:
+                                nuevo_precio = st.number_input("Establecer nuevo precio ($):", min_value=0.0, max_value=5000.0, value=costos_planes.get(plan_a_modificar, 0.0), step=5.0, key=f"tarifa_precio_{st.session_state.clear_tarifa}")
+                            else:
+                                nuevo_precio = None
                             col_tarifa_1, col_tarifa_2 = st.columns(2)
                             with col_tarifa_1:
-                                if st.button("Actualizar Tarifa Comercial", key="actualizar_tarifa_comercial"):
+                                if st.button("Actualizar Tarifa Comercial", key=f"actualizar_tarifa_comercial_{st.session_state.clear_tarifa}", disabled=not plan_a_modificar):
                                     try:
                                         supabase.table("tipos_paquetes").update({"costo": nuevo_precio}).eq("nombre_paquete", plan_a_modificar).execute()
-                                        st.success(f"📈 ¡Precio del plan '{plan_a_modificar}' actualizado correctamente a ${nuevo_precio:.2f}!")
+                                        st.session_state.aviso_planes = f"Precio de '{plan_a_modificar}' actualizado a ${nuevo_precio:.2f}."
+                                        st.session_state.clear_tarifa += 1
+                                        st.rerun()
                                     except Exception as e: st.error(f"❌ Error al actualizar precio: {e}")
                             with col_tarifa_2:
                                 if st.button("Limpiar campos", key="limpiar_tarifa"):
@@ -879,15 +914,16 @@ else:
                                 df_catalogo_amigable = df_catalogo[["id", "nombre_paquete", "clases_totales", "costo", "activo"]].rename(columns={
                                     "nombre_paquete": "Nombre del Paquete", "clases_totales": "Clases que Incluye", "costo": "Precio Comercial ($)", "activo": "Disponible para Venta"
                                 })
-                                cambios_tabla = st.data_editor(df_catalogo_amigable, hide_index=True, disabled=["id", "Nombre del Paquete", "Clases que Incluye", "Precio Comercial ($)"], use_container_width=True, key="editor_catalogo_planes")
-                                if st.session_state.get("editor_catalogo_planes") and "edited_rows" in st.session_state.editor_catalogo_planes:
-                                    filas_editadas = st.session_state.editor_catalogo_planes["edited_rows"]
+                                editor_catalogo_key = f"editor_catalogo_planes_{st.session_state.clear_catalogo}"
+                                cambios_tabla = st.data_editor(df_catalogo_amigable, hide_index=True, disabled=["id", "Nombre del Paquete", "Clases que Incluye", "Precio Comercial ($)"], use_container_width=True, key=editor_catalogo_key)
+                                if st.session_state.get(editor_catalogo_key) and "edited_rows" in st.session_state[editor_catalogo_key]:
+                                    filas_editadas = st.session_state[editor_catalogo_key]["edited_rows"]
                                     for indice_fila, cambios in filas_editadas.items():
                                         if "Disponible para Venta" in cambios:
                                             nuevo_estado = cambios["Disponible para Venta"]
                                             id_registro = int(df_catalogo_amigable.iloc[indice_fila]["id"])
                                             supabase.table("tipos_paquetes").update({"activo": nuevo_estado}).eq("id", id_registro).execute()
-                                            st.success("🔄 ¡Catálogo de ventas actualizado en la nube!")
+                                            st.session_state.clear_catalogo += 1
                                             st.rerun()
                             else: st.info("💡 No se encontraron planes registrados.")
                         except Exception as e: st.error(f"Error: {e}")
@@ -901,18 +937,23 @@ else:
                                     
                     with sub_agenda1:
                         st.markdown("#### Alta de Profesoras y Tarifas por Hora")
+                        aviso_instructora = st.session_state.pop("aviso_instructora", None)
+                        if aviso_instructora:
+                            st.success(aviso_instructora)
                         inst_nombre = st.text_input("Nombre completo de la Instructora:", key=f"inst_nombre_{st.session_state.clear_instructora}")
                         inst_telefono = st.text_input("Teléfono de contacto:", key=f"inst_telefono_{st.session_state.clear_instructora}")
-                        inst_costo = st.number_input("Costo / Tarifa por hora dictada ($):", min_value=0.0, value=50.0, step=5.0, key=f"inst_costo_{st.session_state.clear_instructora}")
+                        inst_costo = st.number_input("Costo / Tarifa por hora dictada ($):", min_value=0.0, value=None, step=5.0, placeholder="Escribe la tarifa", key=f"inst_costo_{st.session_state.clear_instructora}")
                         col_inst_1, col_inst_2 = st.columns(2)
                         with col_inst_1:
                             if st.button("Guardar Instructora"):
-                                if inst_nombre:
+                                if inst_nombre.strip() and inst_costo is not None:
                                     try:
-                                        supabase.table("instructoras").insert({"nombre": inst_nombre, "telefono": inst_telefono, "costo_hora": inst_costo}).execute()
-                                        st.success(f"🎉 Instructora '{inst_nombre}' registrada con éxito.")
+                                        supabase.table("instructoras").insert({"nombre": inst_nombre.strip(), "telefono": inst_telefono.strip(), "costo_hora": inst_costo}).execute()
+                                        st.session_state.aviso_instructora = f"Instructora '{inst_nombre.strip()}' registrada."
+                                        st.session_state.clear_instructora += 1
+                                        st.rerun()
                                     except Exception as e: st.error(f"❌ Error al guardar instructora: {e}")
-                                else: st.error("El nombre es obligatorio.")
+                                else: st.error("Completa el nombre y la tarifa por hora.")
                         with col_inst_2:
                             if st.button("Limpiar campos", key="limpiar_instructora"):
                                 st.session_state.clear_instructora += 1
@@ -920,6 +961,9 @@ else:
                                                 
                     with sub_agenda2:
                         st.markdown("#### 🚀 Generador Automatizado de Calendario Mensual")
+                        aviso_agenda = st.session_state.pop("aviso_agenda", None)
+                        if aviso_agenda:
+                            st.info(aviso_agenda)
                         try:
                             dias_db = supabase.table("dias_operativos").select("nombre_dia", "numero_dia", "habilitado").execute()
                             dias_habilitados = {d['numero_dia']: d['habilitado'] for d in dias_db.data} if dias_db.data else {}
@@ -930,32 +974,34 @@ else:
                                             
                             col_mas1, col_mas2 = st.columns(2)
                             with col_mas1:
-                                sede_agenda = st.selectbox("Selecciona Sede:", list(opciones_locales.keys()) if opciones_locales else ["No hay locales"], key=f"mas_sede_{st.session_state.clear_agenda}")
-                                fecha_inicio = st.date_input("Fecha de Inicio:", min_value=datetime.now().date(), key=f"mas_f_ini_{st.session_state.clear_agenda}")
-                                fecha_fin = st.date_input("Fecha de Fin:", value=datetime.now().date() + timedelta(days=30), key=f"mas_f_fin_{st.session_state.clear_agenda}")
-                                hora_agenda = st.time_input("Hora de Inicio:", key=f"mas_hora_{st.session_state.clear_agenda}")
+                                sede_agenda = st.selectbox("Selecciona Sede:", [""] + list(opciones_locales.keys()), key=f"mas_sede_{st.session_state.clear_agenda}", placeholder="Selecciona una sede...")
+                                fecha_inicio = st.date_input("Fecha de Inicio:", value=None, min_value=datetime.now().date(), key=f"mas_f_ini_{st.session_state.clear_agenda}")
+                                fecha_fin = st.date_input("Fecha de Fin:", value=None, min_value=datetime.now().date(), key=f"mas_f_fin_{st.session_state.clear_agenda}")
+                                hora_agenda = st.time_input("Hora de Inicio:", value=None, key=f"mas_hora_{st.session_state.clear_agenda}")
                             with col_mas2:
-                                inst_agenda = st.selectbox("Asignar Instructora:", list(opciones_inst.keys()) if opciones_inst else ["Primero registra una instructora"], key=f"mas_inst_{st.session_state.clear_agenda}")
-                                tipo_serv_agenda = st.selectbox("Tipo de Sesión:", ["Grupal", "Privado"], key=f"mas_tipo_{st.session_state.clear_agenda}")
+                                inst_agenda = st.selectbox("Asignar Instructora:", [""] + list(opciones_inst.keys()), key=f"mas_inst_{st.session_state.clear_agenda}", placeholder="Selecciona una instructora...")
+                                tipo_serv_agenda = st.selectbox("Tipo de Sesión:", ["", "Grupal", "Privado"], key=f"mas_tipo_{st.session_state.clear_agenda}", placeholder="Selecciona una modalidad...")
                                 if tipo_serv_agenda == "Grupal":
-                                    aforo_agenda = st.number_input("Aforo Máximo Camillas:", min_value=4, max_value=10, value=4, key=f"mas_aforo_{st.session_state.clear_agenda}")
-                                else: aforo_agenda = 1
+                                    aforo_agenda = st.number_input("Aforo Máximo Camillas:", min_value=4, max_value=10, value=None, placeholder="Indica el aforo", key=f"mas_aforo_{st.session_state.clear_agenda}")
+                                elif tipo_serv_agenda == "Privado": aforo_agenda = 1
+                                else: aforo_agenda = None
                                             
                             dias_seleccionados = []
                             col_d1, col_d2, col_d3, col_d4, col_d5 = st.columns(5)
                             with col_d1: 
-                                if st.checkbox("Lunes", value=True, key=f"dia_lunes_{st.session_state.clear_agenda}"): dias_seleccionados.append(0)
+                                if st.checkbox("Lunes", value=False, key=f"dia_lunes_{st.session_state.clear_agenda}"): dias_seleccionados.append(0)
                             with col_d2: 
-                                if st.checkbox("Martes", value=True, key=f"dia_martes_{st.session_state.clear_agenda}"): dias_seleccionados.append(1)
+                                if st.checkbox("Martes", value=False, key=f"dia_martes_{st.session_state.clear_agenda}"): dias_seleccionados.append(1)
                             with col_d3: 
-                                if st.checkbox("Miércoles", value=True, key=f"dia_miercoles_{st.session_state.clear_agenda}"): dias_seleccionados.append(2)
+                                if st.checkbox("Miércoles", value=False, key=f"dia_miercoles_{st.session_state.clear_agenda}"): dias_seleccionados.append(2)
                             with col_d4: 
-                                if st.checkbox("Jueves", value=True, key=f"dia_jueves_{st.session_state.clear_agenda}"): dias_seleccionados.append(3)
+                                if st.checkbox("Jueves", value=False, key=f"dia_jueves_{st.session_state.clear_agenda}"): dias_seleccionados.append(3)
                             with col_d5: 
-                                if st.checkbox("Viernes", value=True, key=f"dia_viernes_{st.session_state.clear_agenda}"): dias_seleccionados.append(4)
+                                if st.checkbox("Viernes", value=False, key=f"dia_viernes_{st.session_state.clear_agenda}"): dias_seleccionados.append(4)
                                             
                             if st.button("⚡ Calcular fechas elegibles"):
-                                if not opciones_locales or not opciones_inst: st.error("❌ Se requieren locales e instructoras.")
+                                if not sede_agenda or not inst_agenda or not tipo_serv_agenda or fecha_inicio is None or fecha_fin is None or hora_agenda is None or (tipo_serv_agenda == "Grupal" and aforo_agenda is None): st.error("Completa sede, fechas, hora, instructora, modalidad y aforo si es grupal.")
+                                elif not opciones_locales or not opciones_inst: st.error("❌ Se requieren locales e instructoras.")
                                 elif fecha_inicio > fecha_fin: st.error("❌ Rango inválido.")
                                 elif not dias_seleccionados: st.error("❌ Selecciona al menos un día.")
                                 else:
@@ -968,7 +1014,9 @@ else:
                                         if num_dia in dias_seleccionados and dias_habilitados.get(num_dia, False) and (fecha_actual.isoformat() not in lista_feriados):
                                             total_creadas += 1
                                         fecha_actual += timedelta(days=1)
-                                    st.info(f"Se encontraron **{total_creadas} fechas elegibles**. Este cálculo no crea ni publica clases en la base de datos.")
+                                    st.session_state.aviso_agenda = f"Se encontraron {total_creadas} fechas elegibles. Este cálculo no crea ni publica clases en la base de datos."
+                                    st.session_state.clear_agenda += 1
+                                    st.rerun()
                             if st.button("Limpiar campos", key="limpiar_generador_agenda"):
                                 st.session_state.clear_agenda += 1
                                 st.rerun()
@@ -982,30 +1030,35 @@ else:
                                 import pandas as pd
                                 df_dias = pd.DataFrame(dias_consulta.data)
                                 df_dias_amigable = df_dias[["id", "nombre_dia", "habilitado"]].rename(columns={"nombre_dia": "Día de la Semana", "habilitado": "Estudio Abierto"})
-                                cambios_dias = st.data_editor(df_dias_amigable, hide_index=True, disabled=["id", "Día de la Semana"], use_container_width=True, key="editor_dias_operativos")
-                                if st.session_state.get("editor_dias_operativos") and "edited_rows" in st.session_state.editor_dias_operativos:
-                                    filas_edit_dias = st.session_state.editor_dias_operativos["edited_rows"]
+                                editor_dias_key = f"editor_dias_operativos_{st.session_state.clear_dias_operativos}"
+                                cambios_dias = st.data_editor(df_dias_amigable, hide_index=True, disabled=["id", "Día de la Semana"], use_container_width=True, key=editor_dias_key)
+                                if st.session_state.get(editor_dias_key) and "edited_rows" in st.session_state[editor_dias_key]:
+                                    filas_edit_dias = st.session_state[editor_dias_key]["edited_rows"]
                                     for idx_fila, cambio_dia in filas_edit_dias.items():
                                         if "Estudio Abierto" in cambio_dia:
                                             supabase.table("dias_operativos").update({"habilitado": cambio_dia["Estudio Abierto"]}).eq("id", int(df_dias_amigable.iloc[idx_fila]["id"])).execute()
-                                            st.success("🔄 ¡Calendario laboral actualizado!")
+                                            st.session_state.clear_dias_operativos += 1
                                             st.rerun()
                         except Exception as e: st.error(f"Error: {e}")
 
                     with sub_agenda4:
                         st.markdown("#### Registro y Eliminación Interactiva de Días Festivos")
+                        aviso_feriado = st.session_state.pop("aviso_feriado", None)
+                        if aviso_feriado:
+                            st.success(aviso_feriado)
                         col_f1, col_f2 = st.columns(2)
                         with col_f1:
-                            fecha_f = st.date_input("Fecha del Feriado:", key=f"input_fecha_feriado_{st.session_state.clear_feriado}")
+                            fecha_f = st.date_input("Fecha del Feriado:", value=None, key=f"input_fecha_feriado_{st.session_state.clear_feriado}")
                             desc_f = st.text_input("Descripción del Festivo:", key=f"input_desc_feriado_{st.session_state.clear_feriado}")
                             if st.button("Habilitar Feriado"):
-                                if desc_f:
+                                if fecha_f is not None and desc_f.strip():
                                     try:
                                         supabase.table("feriados").insert({"fecha": fecha_f.isoformat(), "descripcion": desc_f}).execute()
-                                        st.success(f"🌴 ¡Fecha {fecha_f} bloqueada!")
+                                        st.session_state.aviso_feriado = f"Feriado del {fecha_f} guardado."
+                                        st.session_state.clear_feriado += 1
                                         st.rerun()
                                     except Exception as e: st.error(f"❌ Ya registrado o error: {e}")
-                                else: st.error("Agrega una descripción.")
+                                else: st.error("Selecciona una fecha y escribe una descripción.")
                             if st.button("Limpiar campos", key="limpiar_feriado"):
                                 st.session_state.clear_feriado += 1
                                 st.rerun()
@@ -1017,14 +1070,15 @@ else:
                                     df_fer = pd.DataFrame(feriados_res.data)
                                     df_fer["Eliminar"] = False
                                     df_fer_amigable = df_fer[["id", "fecha", "descripcion", "Eliminar"]].rename(columns={"fecha": "Fecha Bloqueada", "descripcion": "Festivo / Motivo"})
-                                    cambios_feriados = st.data_editor(df_fer_amigable, hide_index=True, disabled=["id", "Fecha Bloqueada", "Festivo / Motivo"], use_container_width=True, key="editor_tabla_feriados")
-                                    if st.session_state.get("editor_tabla_feriados") and "edited_rows" in st.session_state.editor_tabla_feriados:
-                                        filas_edit_fer = st.session_state.editor_tabla_feriados["edited_rows"]
+                                    editor_feriados_key = f"editor_tabla_feriados_{st.session_state.clear_feriados_tabla}"
+                                    cambios_feriados = st.data_editor(df_fer_amigable, hide_index=True, disabled=["id", "Fecha Bloqueada", "Festivo / Motivo"], use_container_width=True, key=editor_feriados_key)
+                                    if st.session_state.get(editor_feriados_key) and "edited_rows" in st.session_state[editor_feriados_key]:
+                                        filas_edit_fer = st.session_state[editor_feriados_key]["edited_rows"]
                                         for idx_f, cambio_f in filas_edit_fer.items():
                                             if "Eliminar" in cambio_f and cambio_f["Eliminar"] == True:
                                                 id_fer_borrar = int(df_fer_amigable.iloc[idx_f]["id"])
                                                 supabase.table("feriados").delete().eq("id", id_fer_borrar).execute()
-                                                st.success("🗑️ ¡Feriado eliminado!")
+                                                st.session_state.clear_feriados_tabla += 1
                                                 st.rerun()
                                 else: st.info("No hay feriados agendados.")
                             except Exception as e: st.error(f"Error: {e}")
@@ -1203,6 +1257,9 @@ else:
             with paneles_admin["mi_cuenta"]:
                 st.subheader(":material/key: Cambiar mi contraseña")
                 st.caption(f"Sesión iniciada como **{st.session_state.admin_usuario}**")
+                aviso_clave_cuenta = st.session_state.pop("aviso_clave_cuenta", None)
+                if aviso_clave_cuenta:
+                    st.success(aviso_clave_cuenta)
                 with st.form(f"form_cambiar_clave_admin_{st.session_state.clear_cuenta}"):
                     clave_actual = st.text_input("Contraseña actual", type="password", key=f"cuenta_clave_actual_{st.session_state.clear_cuenta}")
                     clave_nueva = st.text_input("Nueva contraseña (mínimo 12 caracteres)", type="password", key=f"cuenta_clave_nueva_{st.session_state.clear_cuenta}")
@@ -1230,7 +1287,9 @@ else:
                                 supabase.table("usuarios_admin").update({
                                     "contrasena_encriptada": encriptar_contrasena(clave_nueva)
                                 }).eq("id", st.session_state.admin_id).execute()
-                                st.success("Contraseña actualizada correctamente.")
+                                st.session_state.aviso_clave_cuenta = "Contraseña actualizada correctamente."
+                                st.session_state.clear_cuenta += 1
+                                st.rerun()
                         except Exception:
                             st.error("No se pudo actualizar la contraseña. Revisa la conexión y los permisos de Supabase.")
 
@@ -1282,6 +1341,9 @@ else:
 
                     st.divider()
                     st.markdown("#### Restablecer contraseña de un usuario")
+                    aviso_clave_restablecida = st.session_state.pop("aviso_clave_restablecida", None)
+                    if aviso_clave_restablecida:
+                        st.success(aviso_clave_restablecida)
                     try:
                         usuarios_claves_res = supabase.table("usuarios_admin").select("id,usuario").order("usuario").execute()
                         usuarios_claves = usuarios_claves_res.data or []
@@ -1289,8 +1351,9 @@ else:
                             usuarios_clave_labels = {f"{u['usuario']}" : u["id"] for u in usuarios_claves}
                             usuario_clave_sel = st.selectbox(
                                 "Usuario al que cambiar la contraseña",
-                                list(usuarios_clave_labels.keys()),
-                                key="usuario_restablecer_clave"
+                                [""] + list(usuarios_clave_labels.keys()),
+                                key=f"usuario_restablecer_clave_{st.session_state.clear_reset_clave}",
+                                placeholder="Selecciona un usuario..."
                             )
                             with st.form(f"form_restablecer_clave_{st.session_state.clear_reset_clave}"):
                                 clave_admin_nueva = st.text_input(
@@ -1303,7 +1366,7 @@ else:
                                     type="password",
                                     key=f"reset_clave_confirmar_{st.session_state.clear_reset_clave}"
                                 )
-                                cambiar_clave_usuario = st.form_submit_button("Cambiar contraseña", type="primary")
+                                cambiar_clave_usuario = st.form_submit_button("Cambiar contraseña", type="primary", disabled=not usuario_clave_sel)
                                 limpiar_reset_clave = st.form_submit_button("Limpiar campos")
                             if limpiar_reset_clave:
                                 st.session_state.clear_reset_clave += 1
@@ -1317,7 +1380,7 @@ else:
                                     supabase.table("usuarios_admin").update({
                                         "contrasena_encriptada": encriptar_contrasena(clave_admin_nueva)
                                     }).eq("id", usuarios_clave_labels[usuario_clave_sel]).execute()
-                                    st.success(f"Contraseña de {usuario_clave_sel} cambiada correctamente.")
+                                    st.session_state.aviso_clave_restablecida = f"Contraseña de {usuario_clave_sel} cambiada correctamente."
                                     st.session_state.clear_reset_clave += 1
                                     st.rerun()
                         else:
@@ -1327,6 +1390,9 @@ else:
 
                     st.divider()
                     st.markdown("#### Editar permisos de un usuario existente")
+                    aviso_permisos = st.session_state.pop("aviso_permisos", None)
+                    if aviso_permisos:
+                        st.success(aviso_permisos)
                     try:
                         usuarios_res = supabase.table("usuarios_admin").select(
                             "id,usuario,es_superadmin,permisos"
@@ -1335,22 +1401,31 @@ else:
                         usuarios_normales = [u for u in usuarios_db if not u.get("es_superadmin", False)]
                         if usuarios_normales:
                             etiqueta_a_id = {u["usuario"]: u["id"] for u in usuarios_normales}
-                            usuario_editar = st.selectbox("Usuario", list(etiqueta_a_id.keys()), key="usuario_permisos_editar")
-                            usuario_obj = next(u for u in usuarios_normales if u["id"] == etiqueta_a_id[usuario_editar])
-                            permisos_actuales = usuario_obj.get("permisos") or []
-                            permisos_editados = st.multiselect(
-                                "Ventanas asignadas",
-                                options=list(VENTANAS_ADMIN.keys()),
-                                default=[p for p in permisos_actuales if p in VENTANAS_ADMIN],
-                                format_func=lambda permiso: VENTANAS_ADMIN[permiso],
-                                key=f"permisos_editar_{usuario_obj['id']}"
+                            usuario_editar = st.selectbox(
+                                "Usuario",
+                                [""] + list(etiqueta_a_id.keys()),
+                                key=f"usuario_permisos_editar_{st.session_state.clear_permisos}",
+                                placeholder="Selecciona un usuario..."
                             )
-                            if st.button("Guardar permisos", key="guardar_permisos_usuario", type="primary"):
-                                supabase.table("usuarios_admin").update({
-                                    "permisos": permisos_editados
-                                }).eq("id", usuario_obj["id"]).execute()
-                                st.success(f"Permisos de {usuario_editar} actualizados.")
-                                st.rerun()
+                            if usuario_editar:
+                                usuario_obj = next(u for u in usuarios_normales if u["id"] == etiqueta_a_id[usuario_editar])
+                                permisos_actuales = usuario_obj.get("permisos") or []
+                                permisos_editados = st.multiselect(
+                                    "Ventanas asignadas",
+                                    options=list(VENTANAS_ADMIN.keys()),
+                                    default=[p for p in permisos_actuales if p in VENTANAS_ADMIN],
+                                    format_func=lambda permiso: VENTANAS_ADMIN[permiso],
+                                    key=f"permisos_editar_{usuario_obj['id']}_{st.session_state.clear_permisos}"
+                                )
+                                if st.button("Guardar permisos", key=f"guardar_permisos_usuario_{st.session_state.clear_permisos}", type="primary"):
+                                    supabase.table("usuarios_admin").update({
+                                        "permisos": permisos_editados
+                                    }).eq("id", usuario_obj["id"]).execute()
+                                    st.session_state.aviso_permisos = f"Permisos de {usuario_editar} actualizados."
+                                    st.session_state.clear_permisos += 1
+                                    st.rerun()
+                            else:
+                                st.info("Selecciona un usuario para consultar y editar sus ventanas.")
                         else:
                             st.info("Aún no hay otros usuarios administradores para editar.")
                     except Exception:
@@ -1358,6 +1433,9 @@ else:
 
                     st.divider()
                     st.markdown("#### Eliminar usuario")
+                    aviso_usuario_eliminado = st.session_state.pop("aviso_usuario_eliminado", None)
+                    if aviso_usuario_eliminado:
+                        st.success(aviso_usuario_eliminado)
                     st.caption("La eliminación es permanente. No puedes eliminar la cuenta con la que tienes la sesión abierta ni el último superusuario.")
                     try:
                         usuarios_borrar_res = supabase.table("usuarios_admin").select(
@@ -1375,26 +1453,29 @@ else:
                             }
                             usuario_borrar_etiqueta = st.selectbox(
                                 "Selecciona la cuenta que deseas eliminar",
-                                list(etiquetas_borrar.keys()),
-                                key="usuario_admin_seleccionar_eliminar"
+                                [""] + list(etiquetas_borrar.keys()),
+                                key=f"usuario_admin_seleccionar_eliminar_{st.session_state.clear_eliminar_usuario}",
+                                placeholder="Selecciona un usuario..."
                             )
-                            usuario_borrar = etiquetas_borrar[usuario_borrar_etiqueta]
+                            usuario_borrar = etiquetas_borrar.get(usuario_borrar_etiqueta)
                             confirmar_borrado = st.checkbox(
-                                f"Confirmo que deseo eliminar permanentemente a {usuario_borrar['usuario']}",
-                                key=f"confirmar_eliminar_usuario_{usuario_borrar['id']}"
+                                f"Confirmo que deseo eliminar permanentemente a {usuario_borrar['usuario']}" if usuario_borrar else "Confirmo la eliminación de la cuenta seleccionada",
+                                key=f"confirmar_eliminar_usuario_{st.session_state.clear_eliminar_usuario}",
+                                disabled=not usuario_borrar
                             )
                             if st.button(
                                 "Eliminar usuario",
-                                key="eliminar_usuario_admin",
+                                key=f"eliminar_usuario_admin_{st.session_state.clear_eliminar_usuario}",
                                 type="secondary",
-                                disabled=not confirmar_borrado
+                                disabled=not usuario_borrar or not confirmar_borrado
                             ):
                                 superusuarios = [u for u in usuarios_borrar if u.get("es_superadmin")]
                                 if usuario_borrar.get("es_superadmin") and len(superusuarios) <= 1:
                                     st.error("No se puede eliminar el último superusuario.")
                                 else:
                                     supabase.table("usuarios_admin").delete().eq("id", usuario_borrar["id"]).execute()
-                                    st.success(f"La cuenta {usuario_borrar['usuario']} fue eliminada.")
+                                    st.session_state.aviso_usuario_eliminado = f"La cuenta {usuario_borrar['usuario']} fue eliminada."
+                                    st.session_state.clear_eliminar_usuario += 1
                                     st.rerun()
                         else:
                             st.info("No hay otras cuentas que puedas eliminar.")
