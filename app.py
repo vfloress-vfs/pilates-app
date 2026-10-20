@@ -36,6 +36,20 @@ h1 { color: var(--pilates-forest); font-weight: 700; letter-spacing: -.035em; li
 h2, h3 { color: var(--pilates-forest); font-weight: 650; letter-spacing: -.02em; }
 [data-testid="stCaptionContainer"] { color: var(--pilates-muted); }
 
+/* Contraste explícito para etiquetas y textos del contenido principal. */
+.block-container { color: var(--pilates-ink); }
+.block-container label,
+.block-container [data-testid="stWidgetLabel"],
+.block-container [data-testid="stWidgetLabel"] *,
+.block-container [data-testid="stMarkdownContainer"],
+.block-container [data-testid="stMarkdownContainer"] p {
+    color: var(--pilates-ink) !important;
+}
+.block-container [data-testid="stCaptionContainer"],
+.block-container [data-testid="stCaptionContainer"] * {
+    color: var(--pilates-muted) !important;
+}
+
 /* Cabecera de marca */
 .pilates-brand {
     display: flex; align-items: center; gap: 1rem;
