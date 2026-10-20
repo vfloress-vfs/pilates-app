@@ -88,9 +88,19 @@ h2, h3 { color: var(--pilates-forest); font-weight: 650; letter-spacing: -.02em;
 [data-testid="stSelectbox"] [data-baseweb="select"] > div,
 [data-testid="stTextArea"] textarea {
     border-radius: 10px; background: var(--pilates-paper); border-color: var(--pilates-border);
+    color: var(--pilates-ink) !important; -webkit-text-fill-color: var(--pilates-ink) !important;
+}
+[data-testid="stTextInput"] input::placeholder, [data-testid="stTextArea"] textarea::placeholder {
+    color: #78857e !important; -webkit-text-fill-color: #78857e !important; opacity: 1;
+}
+[data-testid="stSelectbox"] [data-baseweb="select"] *,
+[data-baseweb="popover"] [role="option"] {
+    color: var(--pilates-ink) !important; -webkit-text-fill-color: var(--pilates-ink) !important;
 }
 [data-testid="stTextInput"] input:focus, [data-testid="stNumberInput"] input:focus,
-[data-testid="stTextArea"] textarea:focus { border-color: var(--pilates-sage); box-shadow: 0 0 0 1px var(--pilates-sage); }
+[data-testid="stTextArea"] textarea:focus {
+    border-color: var(--pilates-sage); box-shadow: 0 0 0 1px var(--pilates-sage);
+}
 [data-testid="stTabs"] [role="tablist"] { gap: .35rem; border-bottom: 1px solid var(--pilates-border); }
 [data-testid="stTabs"] button[role="tab"] { color: var(--pilates-muted); font-weight: 600; padding: .7rem .85rem; }
 [data-testid="stTabs"] button[role="tab"][aria-selected="true"] { color: var(--pilates-forest); border-bottom: 3px solid var(--pilates-sage); }
