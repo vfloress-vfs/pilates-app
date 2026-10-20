@@ -6,7 +6,110 @@ from datetime import datetime, timedelta
 from supabase import create_client, Client
 
 # 1. CONFIGURACIÓN DE LA PÁGINA (Debe ser la primera línea de Streamlit)
-st.set_page_config(page_title="Pilates Studio Cloud", page_icon="🧘", layout="wide")
+st.set_page_config(page_title="Pilates Studio | Gestión", page_icon="🧘", layout="wide")
+
+# Identidad visual: calma, movimiento y claridad para una escuela profesional de Pilates.
+st.markdown("""
+<style>
+:root {
+    --pilates-forest: #23443b;
+    --pilates-forest-dark: #19362f;
+    --pilates-sage: #8da99a;
+    --pilates-sage-light: #e7eee8;
+    --pilates-cream: #f7f5f0;
+    --pilates-paper: #fffefa;
+    --pilates-ink: #26352f;
+    --pilates-muted: #718078;
+    --pilates-clay: #c88f68;
+    --pilates-border: #e5e7df;
+}
+
+.stApp { background: var(--pilates-cream); color: var(--pilates-ink); }
+[data-testid="stHeader"] { background: rgba(247,245,240,.92); }
+[data-testid="stToolbar"] { right: 1rem; }
+.block-container { padding-top: 2rem; padding-bottom: 3rem; max-width: 1500px; }
+
+h1, h2, h3, h4, p, label, [data-testid="stMarkdownContainer"] {
+    font-family: "Aptos", "Segoe UI", sans-serif;
+}
+h1 { color: var(--pilates-forest); font-weight: 700; letter-spacing: -.035em; line-height: 1.15; }
+h2, h3 { color: var(--pilates-forest); font-weight: 650; letter-spacing: -.02em; }
+[data-testid="stCaptionContainer"] { color: var(--pilates-muted); }
+
+/* Cabecera de marca */
+.pilates-brand {
+    display: flex; align-items: center; gap: 1rem;
+    padding: 1.2rem 1.5rem; margin: 0 0 1.8rem;
+    border: 1px solid rgba(35,68,59,.08); border-radius: 20px;
+    background: linear-gradient(110deg, #fffefa 0%, #edf2ec 100%);
+    box-shadow: 0 8px 24px rgba(34,57,47,.055);
+}
+.pilates-mark {
+    width: 54px; height: 54px; flex: 0 0 54px; border-radius: 17px;
+    display: grid; place-items: center; background: var(--pilates-forest); color: #fffefa;
+    font: 700 1.45rem Georgia, serif; letter-spacing: -.08em;
+}
+.pilates-brand-copy { display: flex; flex-direction: column; gap: .12rem; }
+.pilates-kicker { color: var(--pilates-clay); text-transform: uppercase; letter-spacing: .16em; font-size: .67rem; font-weight: 750; }
+.pilates-brand-title { color: var(--pilates-forest); font: 650 1.3rem "Aptos", "Segoe UI", sans-serif; letter-spacing: -.035em; }
+.pilates-brand-subtitle { color: var(--pilates-muted); font-size: .87rem; }
+
+/* Navegación */
+[data-testid="stSidebar"] { background: var(--pilates-forest-dark); border-right: 1px solid rgba(255,255,255,.08); }
+[data-testid="stSidebar"] [data-testid="stMarkdownContainer"],
+[data-testid="stSidebar"] label,
+[data-testid="stSidebar"] p { color: #edf3ee; }
+[data-testid="stSidebar"] [data-testid="stRadio"] > label { color: #c3d4ca; font-size: .77rem; font-weight: 700; text-transform: uppercase; letter-spacing: .1em; }
+[data-testid="stSidebar"] [role="radiogroup"] { gap: .4rem; }
+[data-testid="stSidebar"] [role="radiogroup"] label {
+    padding: .58rem .72rem; border-radius: 11px; color: #e5eee8;
+    transition: background .18s ease, transform .18s ease;
+}
+[data-testid="stSidebar"] [role="radiogroup"] label:hover { background: rgba(255,255,255,.09); transform: translateX(2px); }
+[data-testid="stSidebar"] [data-testid="stButton"] button {
+    color: var(--pilates-forest-dark); background: #e8efe8; border: 0; font-weight: 700;
+}
+.pilates-sidebar-brand { padding: .45rem .25rem 1rem; margin-bottom: 1.2rem; border-bottom: 1px solid rgba(255,255,255,.15); }
+.pilates-sidebar-brand strong { display: block; color: #fffefa; font: 650 1.16rem Georgia, serif; }
+.pilates-sidebar-brand span { color: #b9cfc2; font-size: .73rem; letter-spacing: .09em; text-transform: uppercase; }
+
+/* Componentes de Streamlit */
+.stButton > button, .stFormSubmitButton > button {
+    min-height: 2.7rem; border: 1px solid var(--pilates-forest); border-radius: 11px;
+    background: var(--pilates-forest); color: #fffefa; font-weight: 650;
+    box-shadow: 0 3px 8px rgba(35,68,59,.12); transition: all .18s ease;
+}
+.stButton > button:hover, .stFormSubmitButton > button:hover {
+    border-color: var(--pilates-forest-dark); background: var(--pilates-forest-dark);
+    color: #fffefa; transform: translateY(-1px); box-shadow: 0 6px 14px rgba(35,68,59,.18);
+}
+[data-testid="stTextInput"] input, [data-testid="stNumberInput"] input,
+[data-testid="stDateInput"] input, [data-testid="stTimeInput"] input,
+[data-testid="stSelectbox"] [data-baseweb="select"] > div,
+[data-testid="stTextArea"] textarea {
+    border-radius: 10px; background: var(--pilates-paper); border-color: var(--pilates-border);
+}
+[data-testid="stTextInput"] input:focus, [data-testid="stNumberInput"] input:focus,
+[data-testid="stTextArea"] textarea:focus { border-color: var(--pilates-sage); box-shadow: 0 0 0 1px var(--pilates-sage); }
+[data-testid="stTabs"] [role="tablist"] { gap: .35rem; border-bottom: 1px solid var(--pilates-border); }
+[data-testid="stTabs"] button[role="tab"] { color: var(--pilates-muted); font-weight: 600; padding: .7rem .85rem; }
+[data-testid="stTabs"] button[role="tab"][aria-selected="true"] { color: var(--pilates-forest); border-bottom: 3px solid var(--pilates-sage); }
+[data-testid="stAlert"] { border-radius: 12px; border: 1px solid var(--pilates-border); }
+[data-testid="stMetric"] { padding: 1rem 1.1rem; border: 1px solid var(--pilates-border); border-radius: 15px; background: var(--pilates-paper); box-shadow: 0 4px 14px rgba(34,57,47,.04); }
+[data-testid="stMetricLabel"] { color: var(--pilates-muted); }
+[data-testid="stMetricValue"] { color: var(--pilates-forest); font-weight: 700; }
+[data-testid="stDataFrame"], [data-testid="stTable"] { border: 1px solid var(--pilates-border); border-radius: 12px; overflow: hidden; }
+hr { border-color: var(--pilates-border); }
+
+@media (max-width: 700px) {
+    .block-container { padding: 1rem 1rem 2rem; }
+    .pilates-brand { padding: 1rem; border-radius: 16px; }
+    .pilates-mark { width: 46px; height: 46px; flex-basis: 46px; }
+    .pilates-brand-title { font-size: 1.1rem; }
+    [data-testid="stTabs"] [role="tablist"] { overflow-x: auto; }
+}
+</style>
+""", unsafe_allow_html=True)
 
 # 2. CONEXIÓN SEGURA A SUPABASE
 @st.cache_resource
@@ -56,6 +159,18 @@ def verificar_primer_inicio():
         raise RuntimeError("Supabase no devolvió el conteo de administradores.")
     return respuesta.count == 0
 
+# Cabecera compartida para que cada sección se sienta parte de la misma escuela.
+st.markdown("""
+<div class="pilates-brand">
+    <div class="pilates-mark">P.</div>
+    <div class="pilates-brand-copy">
+        <span class="pilates-kicker">Movimiento · Equilibrio · Bienestar</span>
+        <span class="pilates-brand-title">Pilates Studio</span>
+        <span class="pilates-brand-subtitle">Escuela de Pilates · Gestión del estudio</span>
+    </div>
+</div>
+""", unsafe_allow_html=True)
+
 # --- ESTADOS DE LA SESIÓN ---
 if "logged_in" not in st.session_state:
     st.session_state.logged_in = False
@@ -102,7 +217,12 @@ if primer_inicio:
 
 # CASO 2: EL SISTEMA YA TIENE ENLACE SEGURO (Flujo de Operación Normal)
 else:
-    st.sidebar.title("🧘 Pilates Studio")
+    st.sidebar.markdown("""
+    <div class="pilates-sidebar-brand">
+        <strong>Pilates Studio</strong>
+        <span>Gestión del estudio</span>
+    </div>
+    """, unsafe_allow_html=True)
     rol_acceso = st.sidebar.radio("Menú de Perfiles:", ["👤 Alumnos", "📲 Tablet Check-in", "💼 Administrador"])
     
     # --- VISTA ALUMNOS ---
