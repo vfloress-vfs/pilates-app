@@ -114,9 +114,13 @@ h2, h3 { color: var(--pilates-forest); font-weight: 650; letter-spacing: -.02em;
 [data-testid="stTextInput"] input, [data-testid="stNumberInput"] input,
 [data-testid="stDateInput"] input, [data-testid="stTimeInput"] input,
 [data-testid="stSelectbox"] [data-baseweb="select"] > div,
+[data-testid="stMultiSelect"] [data-baseweb="select"] > div,
+[data-testid="stColorPicker"] input,
 [data-testid="stTextArea"] textarea {
-    border-radius: 10px; background: var(--pilates-paper); border-color: var(--pilates-border);
+    border: 1px solid var(--pilates-input-border) !important;
+    border-radius: 10px; background: var(--pilates-paper);
     color: var(--pilates-ink) !important; -webkit-text-fill-color: var(--pilates-ink) !important;
+    box-shadow: inset 0 0 0 1px rgba(255,255,255,.025);
 }
 [data-testid="stTextInput"] input::placeholder, [data-testid="stTextArea"] textarea::placeholder {
     color: var(--pilates-muted) !important; -webkit-text-fill-color: var(--pilates-muted) !important; opacity: 1;
@@ -127,8 +131,12 @@ h2, h3 { color: var(--pilates-forest); font-weight: 650; letter-spacing: -.02em;
     background: var(--pilates-paper) !important;
 }
 [data-testid="stTextInput"] input:focus, [data-testid="stNumberInput"] input:focus,
+[data-testid="stDateInput"] input:focus, [data-testid="stTimeInput"] input:focus,
+[data-testid="stSelectbox"] [data-baseweb="select"] > div:focus-within,
+[data-testid="stMultiSelect"] [data-baseweb="select"] > div:focus-within,
 [data-testid="stTextArea"] textarea:focus {
-    border-color: var(--pilates-sage); box-shadow: 0 0 0 1px var(--pilates-sage);
+    border-color: var(--pilates-sage) !important;
+    box-shadow: 0 0 0 2px var(--pilates-sage);
 }
 [data-testid="stTabs"] [role="tablist"] {
     display: flex; flex-wrap: wrap; gap: .55rem; padding: .45rem;
@@ -223,6 +231,7 @@ color_papel_app = "#f1f4f2" if fondo_claro else "#1b2923"
 color_borde_app = "#c7d0ca" if fondo_claro else "#35463d"
 color_muted_app = "#52605a" if fondo_claro else "#a9b8ae"
 color_barra_pestanas = "#e5ebe7" if fondo_claro else "#111b17"
+color_borde_input = "#8c9a91" if fondo_claro else "#64746b"
 st.markdown(f"""
 <style>
 :root {{
@@ -236,6 +245,7 @@ st.markdown(f"""
   --pilates-paper: {color_papel_app};
   --pilates-border: {color_borde_app};
   --pilates-muted: {color_muted_app};
+  --pilates-input-border: {color_borde_input};
 }}
 .stButton > button, .stFormSubmitButton > button {{
   background: var(--pilates-button) !important;
@@ -278,7 +288,7 @@ VENTANAS_ADMIN = {
     "renovaciones": "Renovaciones",
     "planes": "Planes y tarifas",
     "agenda": "Agenda",
-    "alumnos": "Consulta de alumnos",
+    "alumnos": "Gestión de Alumnos",
     "configuracion": "Configuración",
 }
 
@@ -519,15 +529,25 @@ else:
             if "clear_ren" not in st.session_state: st.session_state.clear_ren = 0
             if "clear_search" not in st.session_state: st.session_state.clear_search = 0
             if "clear_plan" not in st.session_state: st.session_state.clear_plan = 0
-            for llave_limpieza in ("clear_instructora", "clear_agenda", "clear_feriado", "clear_usuario", "clear_tarifa", "clear_cuenta", "clear_reset_clave", "clear_configuracion"):
+            for llave_limpieza in ("clear_instructora", "clear_agenda", "clear_feriado", "clear_usuario", "clear_tarifa", "clear_cuenta", "clear_reset_clave", "clear_configuracion", "clear_editar_alumno"):
                 if llave_limpieza not in st.session_state:
                     st.session_state[llave_limpieza] = 0
 
             # LECTURA GLOBAL DE CATÁLOGOS COLECTIVOS (Variables seguras en memoria)
+            lista_locales_admin = []
+            locales_tiene_baja = True
             try:
-                locales_res = supabase.table("locales").select("id", "nombre").execute()
-                lista_locales = locales_res.data if locales_res.data else []
-                opciones_locales = {l['nombre']: l['id'] for l in lista_locales}
+                try:
+                    locales_res = supabase.table("locales").select("id,nombre,direccion,activo").order("nombre").execute()
+                    lista_locales_admin = locales_res.data or []
+                except Exception as error_columna_local:
+                    if "42703" not in str(error_columna_local) and getattr(error_columna_local, "code", None) != "42703":
+                        raise
+                    locales_tiene_baja = False
+                    locales_res = supabase.table("locales").select("id,nombre,direccion").order("nombre").execute()
+                    lista_locales_admin = [{**local, "activo": True} for local in (locales_res.data or [])]
+                lista_locales = [local for local in lista_locales_admin if local.get("activo", True)]
+                opciones_locales = {local['nombre']: local['id'] for local in lista_locales}
                 
                 planes_res = supabase.table("tipos_paquetes").select("nombre_paquete", "clases_totales", "costo").eq("activo", True).execute()
                 lista_p_db = planes_res.data if planes_res.data else []
@@ -558,7 +578,11 @@ else:
 
             if "sucursales" in paneles_admin:
                 with paneles_admin["sucursales"]:
-                    st.subheader("Alta de Locales")
+                    st.subheader("Gestión de Locales")
+                    st.caption("Modifica los datos de una sede o dale de baja para retirarla de los formularios. Las referencias históricas se conservan.")
+                    if not locales_tiene_baja:
+                        st.warning("Para habilitar bajas de sedes, ejecuta supabase_locales_migration.sql en Supabase.")
+                    st.markdown("#### Registrar una sede")
                     nombre_local = st.text_input("Nombre de la sede (ej: Barranco):", key=f"loc_name_{st.session_state.clear_local}")
                     direccion_local = st.text_input("Dirección:", key=f"loc_dir_{st.session_state.clear_local}")
                     
@@ -568,15 +592,88 @@ else:
                             if nombre_local:
                                 try:
                                     supabase.table("locales").insert({"nombre": nombre_local, "direccion": direccion_local}).execute()
-                                    st.success(f"¡Sede {nombre_local} registrada exitosamente!")
+                                    st.session_state.clear_local += 1
+                                    st.rerun()
                                 except Exception as e:
-                                    st.error(f"❌ Error al guardar el local: {e}")
+                                    if "23505" in str(e):
+                                        st.error("Ya existe una sede con ese nombre.")
+                                    else:
+                                        st.error(f"❌ Error al guardar el local: {e}")
                             else:
                                 st.error("❌ El nombre del local es obligatorio.")
                     with col_btn2:
                         if st.button("Limpiar Pantalla", key="btn_clear_loc"):
                             st.session_state.clear_local += 1
                             st.rerun()
+
+                    st.divider()
+                    st.markdown("#### Modificar o dar de baja una sede")
+                    if lista_locales_admin:
+                        etiquetas_locales = {
+                            f"{local['nombre']} {'(Inactiva)' if not local.get('activo', True) else ''}".strip(): local
+                            for local in lista_locales_admin
+                        }
+                        local_seleccionado_label = st.selectbox(
+                            "Sede",
+                            list(etiquetas_locales.keys()),
+                            key="local_seleccionado_editar"
+                        )
+                        local_seleccionado = etiquetas_locales[local_seleccionado_label]
+                        local_id = local_seleccionado["id"]
+                        nombre_local_editado = st.text_input(
+                            "Nombre",
+                            value=local_seleccionado["nombre"],
+                            key=f"local_nombre_editar_{local_id}_{st.session_state.clear_local}"
+                        )
+                        direccion_local_editada = st.text_input(
+                            "Dirección",
+                            value=local_seleccionado.get("direccion") or "",
+                            key=f"local_direccion_editar_{local_id}_{st.session_state.clear_local}"
+                        )
+                        col_local_guardar, col_local_baja = st.columns(2)
+                        with col_local_guardar:
+                            if st.button("Guardar cambios", key=f"guardar_local_{local_id}", type="primary"):
+                                if not nombre_local_editado.strip():
+                                    st.error("El nombre de la sede es obligatorio.")
+                                else:
+                                    try:
+                                        supabase.table("locales").update({
+                                            "nombre": nombre_local_editado.strip(),
+                                            "direccion": direccion_local_editada.strip()
+                                        }).eq("id", local_id).execute()
+                                        st.session_state.clear_local += 1
+                                        st.rerun()
+                                    except Exception as e:
+                                        if "23505" in str(e):
+                                            st.error("Ya existe otra sede con ese nombre.")
+                                        else:
+                                            st.error(f"No se pudieron guardar los cambios: {e}")
+                        with col_local_baja:
+                            if local_seleccionado.get("activo", True):
+                                confirmar_baja_local = st.checkbox(
+                                    "Confirmo dar de baja esta sede",
+                                    key=f"confirmar_baja_local_{local_id}"
+                                )
+                                if st.button("Dar de baja", key=f"baja_local_{local_id}", disabled=not confirmar_baja_local):
+                                    if not locales_tiene_baja:
+                                        st.error("Ejecuta primero supabase_locales_migration.sql en Supabase.")
+                                    else:
+                                        try:
+                                            supabase.table("locales").update({"activo": False}).eq("id", local_id).execute()
+                                            st.session_state.clear_local += 1
+                                            st.rerun()
+                                        except Exception as e:
+                                            st.error(f"No se pudo dar de baja la sede: {e}")
+                            else:
+                                if st.button("Reactivar sede", key=f"reactivar_local_{local_id}"):
+                                    try:
+                                        supabase.table("locales").update({"activo": True}).eq("id", local_id).execute()
+                                        st.session_state.clear_local += 1
+                                        st.rerun()
+                                    except Exception as e:
+                                        st.error(f"No se pudo reactivar la sede: {e}")
+                    else:
+                        st.info("Registra una sede para habilitar su edición.")
 
             if "inscripciones" in paneles_admin:
                 with paneles_admin["inscripciones"]:
@@ -935,7 +1032,11 @@ else:
                 # --- CONSULTA PREDICTIVA DE ALUMNOS Y KÁRDEX ---
             if "alumnos" in paneles_admin:
                 with paneles_admin["alumnos"]:
-                    st.subheader(":material/clinical_notes: Kárdex e historial de clases")
+                    st.subheader(":material/clinical_notes: Gestión de Alumnos")
+                    st.caption("Consulta el kárdex y actualiza los datos de contacto del alumno.")
+                    mensaje_gestion_alumno = st.session_state.pop("mensaje_gestion_alumno", None)
+                    if mensaje_gestion_alumno:
+                        st.success(mensaje_gestion_alumno)
 
                     if "kardex_alumno_id" not in st.session_state:
                         st.session_state.kardex_alumno_id = None
@@ -996,6 +1097,61 @@ else:
                                 data_al = al_res.data[0]
                                 st.markdown(f"### 📊 {data_al['nombre']} {data_al['apellido']}")
                                 st.caption(f"📱 Contacto: {data_al['telefono']}")
+
+                                if st.session_state.get("alumno_en_edicion_id") != data_al["id"]:
+                                    if st.button("Editar datos del alumno", key=f"abrir_edicion_alumno_{data_al['id']}"):
+                                        st.session_state.alumno_en_edicion_id = data_al["id"]
+                                        st.rerun()
+                                else:
+                                    with st.form(f"form_editar_alumno_{data_al['id']}_{st.session_state.clear_editar_alumno}"):
+                                        nombre_alumno_editado = st.text_input(
+                                            "Nombre",
+                                            value=data_al["nombre"],
+                                            key=f"editar_alumno_nombre_{data_al['id']}_{st.session_state.clear_editar_alumno}"
+                                        )
+                                        apellido_alumno_editado = st.text_input(
+                                            "Apellido",
+                                            value=data_al["apellido"],
+                                            key=f"editar_alumno_apellido_{data_al['id']}_{st.session_state.clear_editar_alumno}"
+                                        )
+                                        telefono_alumno_editado = st.text_input(
+                                            "Teléfono",
+                                            value=data_al["telefono"],
+                                            key=f"editar_alumno_telefono_{data_al['id']}_{st.session_state.clear_editar_alumno}"
+                                        )
+                                        col_guardar_alumno, col_limpiar_alumno, col_cancelar_alumno = st.columns(3)
+                                        with col_guardar_alumno:
+                                            guardar_datos_alumno = st.form_submit_button("Guardar cambios", type="primary")
+                                        with col_limpiar_alumno:
+                                            limpiar_datos_alumno = st.form_submit_button("Restaurar datos")
+                                        with col_cancelar_alumno:
+                                            cancelar_edicion_alumno = st.form_submit_button("Cancelar")
+
+                                    if limpiar_datos_alumno:
+                                        st.session_state.clear_editar_alumno += 1
+                                        st.rerun()
+                                    elif cancelar_edicion_alumno:
+                                        st.session_state.alumno_en_edicion_id = None
+                                        st.rerun()
+                                    elif guardar_datos_alumno:
+                                        if not nombre_alumno_editado.strip() or not apellido_alumno_editado.strip() or not telefono_alumno_editado.strip():
+                                            st.error("Nombre, apellido y teléfono son obligatorios.")
+                                        else:
+                                            try:
+                                                supabase.table("alumnos").update({
+                                                    "nombre": nombre_alumno_editado.strip(),
+                                                    "apellido": apellido_alumno_editado.strip(),
+                                                    "telefono": telefono_alumno_editado.strip()
+                                                }).eq("id", data_al["id"]).execute()
+                                                st.session_state.mensaje_gestion_alumno = "Datos del alumno actualizados correctamente."
+                                                st.session_state.alumno_en_edicion_id = None
+                                                st.session_state.clear_editar_alumno += 1
+                                                st.rerun()
+                                            except Exception as e:
+                                                if "23505" in str(e):
+                                                    st.error("Ese teléfono ya está registrado para otro alumno.")
+                                                else:
+                                                    st.error(f"No se pudieron actualizar los datos: {e}")
 
                                 paq_res = (
                                     supabase.table("paquetes")
