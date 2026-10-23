@@ -1651,7 +1651,7 @@ else:
 
             if st.session_state.admin_es_superadmin and "usuarios" in paneles_admin:
                 with paneles_admin["usuarios"]:
-                    st.subheader(":material/manage_accounts: Usuarios y permisos de acceso")
+                    st.subheader(":material/manage_accounts: Crear Usuario y permisos de acceso")
                     st.caption("Cada usuario solo verá las ventanas asignadas. Todos pueden cambiar su contraseña desde Mi cuenta.")
 
                     with st.form(f"form_crear_usuario_admin_{st.session_state.clear_usuario}"):
