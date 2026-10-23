@@ -570,12 +570,24 @@ else:
                             for plan, sesion in opciones_reserva:
                                 planes_por_sesion.setdefault(int(sesion["id"]), []).append(plan)
 
-                            st.caption("Explora los horarios y elige una clase. Verás la sede, el instructor, los cupos y el plan que usarás.")
+                            sesiones_con_plan = [s for s in sesiones_disponibles if int(s["id"]) in planes_por_sesion]
+                            fechas_con_clases = sorted({sesion["_inicio_dt"].date() for sesion in sesiones_con_plan})
+                            st.caption("Elige un día en el calendario para ver sus clases disponibles. La lista conserva el detalle de horarios, sede, instructor y cupos.")
+                            fecha_reserva = st.date_input(
+                                "Día de la clase",
+                                value=fechas_con_clases[0],
+                                min_value=ahora_portal.date(),
+                                max_value=limite_agenda,
+                                key=f"filtro_fecha_reserva_portal_{id_alumno_portal}_{st.session_state.clear_portal_reserva}",
+                            )
+                            sesiones_del_dia = [s for s in sesiones_con_plan if s["_inicio_dt"].date() == fecha_reserva]
+                            st.caption(f"Hay horarios reservables en {len(fechas_con_clases)} días dentro del periodo disponible.")
+                            if not sesiones_del_dia:
+                                st.info("No hay clases disponibles para este día. Elige otra fecha en el calendario.")
                             sesion_portal_key = f"portal_sesion_seleccionada_{id_alumno_portal}"
                             columnas_clases = st.columns(2)
                             dias_semana_portal = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado", "Domingo"]
-                            sesiones_con_plan = [s for s in sesiones_disponibles if int(s["id"]) in planes_por_sesion]
-                            for idx_sesion, sesion in enumerate(sesiones_con_plan):
+                            for idx_sesion, sesion in enumerate(sesiones_del_dia):
                                 fecha_sesion_card = sesion["_inicio_dt"].date()
                                 cupos_sesion = int(sesion.get("capacidad") or 0) - ocupacion.get(sesion["id"], 0)
                                 with columnas_clases[idx_sesion % 2]:
@@ -596,7 +608,7 @@ else:
                                             st.rerun()
 
                             sesion_seleccionada = next(
-                                (s for s in sesiones_con_plan if int(s["id"]) == st.session_state.get(sesion_portal_key)),
+                                (s for s in sesiones_del_dia if int(s["id"]) == st.session_state.get(sesion_portal_key)),
                                 None,
                             )
                             if sesion_seleccionada:
