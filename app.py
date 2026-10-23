@@ -490,7 +490,7 @@ else:
                     .execute()
                 )
                 paquetes_portal = paquetes_res.data or []
-                tab_plan_portal, tab_reserva_portal, tab_historial_portal = st.tabs(["1. Mi plan", "2. Reservar clase", "3. Mis clases"])
+                tab_plan_portal, tab_reserva_portal, tab_historial_portal = st.tabs(["1. Mi plan", "2. Reservar clase", "3. Mis clases"], key="tabs_portal_alumno", on_change="rerun")
                 with tab_plan_portal:
                     st.subheader("Tu plan")
                     if paquetes_portal:
@@ -852,7 +852,7 @@ else:
                 historial_clases_instructor = [s for s in sesiones_instructor_portal if str(s["fecha_clase"]) < fecha_hoy_instructor or s.get("estado") in {"Realizada", "Cancelada"}]
                 tab_agenda_instructor, tab_historial_instructor, tab_pagos_instructor = st.tabs([
                     "1. Mi agenda", "2. Clases realizadas", "3. Pagos recibidos"
-                ])
+                ], key="tabs_portal_instructor", on_change="rerun")
 
                 def mostrar_clases_instructor(filas_sesiones):
                     if not filas_sesiones:
@@ -1085,7 +1085,7 @@ else:
             if st.session_state.admin_es_superadmin:
                 claves_pestanas.append("usuarios")
             nombres_pestanas = {**VENTANAS_ADMIN, "mi_cuenta": "Mi cuenta", "usuarios": "Usuarios y permisos"}
-            pestanas = st.tabs([nombres_pestanas[clave] for clave in claves_pestanas])
+            pestanas = st.tabs([nombres_pestanas[clave] for clave in claves_pestanas], key="tabs_admin_principales", on_change="rerun")
             paneles_admin = dict(zip(claves_pestanas, pestanas))
             # Conserva las cuentas antiguas que tenían un permiso separado llamado "Agenda".
             if "instructoras" in paneles_admin:
@@ -1097,7 +1097,7 @@ else:
                         "1. Inscribir alumno",
                         "2. Renovar o cambiar plan",
                         "3. Buscar y gestionar alumnos",
-                    ])
+                    ], key="tabs_gestion_alumnos", on_change="rerun")
                     paneles_admin["inscripciones"] = tab_alta_alumno
                     paneles_admin["renovaciones"] = tab_renovar_alumno
                     paneles_admin["alumnos"] = tab_directorio_alumno
@@ -1111,7 +1111,7 @@ else:
                     st.caption("Modifica los datos de una sede o dale de baja para retirarla de los formularios. Las referencias históricas se conservan.")
                     if not locales_tiene_baja:
                         st.warning("Para habilitar bajas de sedes, ejecuta supabase_locales_migration.sql en Supabase.")
-                    tab_nueva_sede, tab_gestion_sede = st.tabs(["1. Registrar sede", "2. Buscar y gestionar sedes"])
+                    tab_nueva_sede, tab_gestion_sede = st.tabs(["1. Registrar sede", "2. Buscar y gestionar sedes"], key="tabs_gestion_sedes", on_change="rerun")
                     with tab_nueva_sede:
                         st.markdown("#### Registrar una sede")
                         nombre_local = st.text_input("Nombre de la sede (ej: Barranco):", key=f"loc_name_{st.session_state.clear_local}")
@@ -1506,7 +1506,7 @@ else:
                         "1. Crear plan",
                         "2. Actualizar precios",
                         "3. Consultar planes",
-                    ])
+                    ], key="tabs_planes", on_change="rerun")
                                 
                     with sub_tab1:
                         st.markdown("#### Registro de Nuevas Ofertas Comerciales")
@@ -1591,7 +1591,7 @@ else:
                         "2. Buscar y gestionar",
                         "3. Agenda de clases",
                         "4. Pagos realizados",
-                    ])
+                    ], key="tabs_gestion_instructores", on_change="rerun")
                     try:
                         instructoras_res = supabase.table("instructoras").select("id,nombre,telefono,pago_por_clase,activo").order("nombre").execute()
                         instructoras_db = instructoras_res.data or []
@@ -1921,7 +1921,7 @@ else:
                     sub_agenda1, sub_agenda2 = st.tabs([
                         "1. Programar clases",
                         "2. Consultar por sede",
-                    ])
+                    ], key="tabs_agenda_clases", on_change="rerun")
 
                     with sub_agenda1:
                         st.markdown("#### Programar clases")
@@ -2567,7 +2567,7 @@ else:
                 with paneles_admin["usuarios"]:
                     st.subheader(":material/manage_accounts: Crear Usuario y permisos de acceso")
                     st.caption("Cada usuario solo verá las secciones asignadas. Todos pueden cambiar su contraseña desde Mi cuenta.")
-                    tab_crear_usuario, tab_clave_usuario, tab_permisos_usuario, tab_eliminar_usuario = st.tabs(["1. Crear usuario", "2. Cambiar contraseña", "3. Asignar permisos", "4. Eliminar usuario"])
+                    tab_crear_usuario, tab_clave_usuario, tab_permisos_usuario, tab_eliminar_usuario = st.tabs(["1. Crear usuario", "2. Cambiar contraseña", "3. Asignar permisos", "4. Eliminar usuario"], key="tabs_usuarios_admin", on_change="rerun")
 
                     with tab_crear_usuario:
                         with st.form(f"form_crear_usuario_admin_{st.session_state.clear_usuario}"):
@@ -2836,7 +2836,7 @@ else:
     
             if "configuracion" in paneles_admin:
                 with paneles_admin["configuracion"]:
-                    tab_identidad_configuracion, calendario_dias, calendario_feriados, calendario_capacidad, calendario_horarios = st.tabs(["1. Identidad y apariencia", "2. Días laborales", "3. Feriados y festivos", "4. Aforo por sede", "5. Horarios y reservas"])
+                    tab_identidad_configuracion, calendario_dias, calendario_feriados, calendario_capacidad, calendario_horarios = st.tabs(["1. Identidad y apariencia", "2. Días laborales", "3. Feriados y festivos", "4. Aforo por sede", "5. Horarios y reservas"], key="tabs_configuracion", on_change="rerun")
                     with tab_identidad_configuracion:
                         st.subheader(":material/palette: Identidad visual del estudio")
                         st.caption("El nombre y la apariencia se aplican a todos los perfiles de la aplicación.")
@@ -2983,6 +2983,8 @@ else:
                             except Exception as e:
                                 st.error(f"No se pudo cargar la lista de feriados: {e}")
                     with calendario_horarios:
+                        if st.session_state.pop("aviso_horarios_restaurados", False):
+                            st.success("Se descartaron los cambios sin guardar. Se muestran los valores actuales de la configuración.")
                         st.caption("Define el horario de atención y las reglas de programación y reserva. Agenda y el portal del alumno tomarán estos valores automáticamente.")
                         with st.form(f"form_config_horarios_{st.session_state.clear_configuracion}"):
                             col_h1, col_h2, col_h3 = st.columns(3)
@@ -2992,13 +2994,14 @@ else:
                                 limite_manana_nuevo = st.time_input("Reserva/cancelación de mañana hasta", value=limite_reserva_manana, key=f"config_limite_manana_{st.session_state.clear_configuracion}", help="Se aplica el día anterior a la clase.")
                             with col_h2:
                                 hora_cierre_nueva = st.time_input("Cierre del estudio", value=hora_cierre_estudio, key=f"config_hora_cierre_{st.session_state.clear_configuracion}")
-                                duracion_clase_nueva = st.number_input("Duración predeterminada de clase (minutos)", min_value=15, max_value=240, value=duracion_clase_default, step=5, key=f"config_duracion_clase_{st.session_state.clear_configuracion}")
+                                duracion_clase_nueva = st.number_input("Duración de clase (minutos)", min_value=15, max_value=240, value=duracion_clase_default, step=5, key=f"config_duracion_clase_{st.session_state.clear_configuracion}")
                                 limite_tarde_nuevo = st.number_input("Anticipación para reservar/cancelar clases de tarde (horas)", min_value=1, max_value=24, value=limite_reserva_tarde_horas, step=1, key=f"config_limite_tarde_{st.session_state.clear_configuracion}")
                             with col_h3:
                                 dias_agenda_nuevos = st.number_input("Programar y mostrar agenda hasta (días)", min_value=1, max_value=180, value=dias_agenda_anticipacion, step=1, key=f"config_dias_agenda_{st.session_state.clear_configuracion}")
                             guardar_horario_config = st.form_submit_button("Guardar configuración de horarios", type="primary")
                             limpiar_horario_config = st.form_submit_button("Restaurar valores guardados")
                         if limpiar_horario_config:
+                            st.session_state.aviso_horarios_restaurados = True
                             st.session_state.clear_configuracion += 1
                             st.rerun()
                         if guardar_horario_config:
