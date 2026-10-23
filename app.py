@@ -290,7 +290,7 @@ VENTANAS_ADMIN = {
     "sucursales": "Sedes",
     "alumnos_operacion": "Gestión de alumnos",
     "planes": "Planes y precios",
-    "instructoras": "Instructoras y agenda",
+    "instructoras": "Gestión de instructores",
     "configuracion": "Configuración",
 }
 
@@ -1303,19 +1303,24 @@ else:
                                     
             if "instructoras" in paneles_admin:
                 with paneles_admin["instructoras"]:
-                    st.subheader(":material/groups: Instructoras y agenda")
-                    st.caption("Administra al equipo, organiza las clases y registra los pagos desde esta misma sección.")
+                    st.subheader(":material/groups: Gestión de instructores")
+                    st.caption("Registra al equipo, organiza las clases, consulta sus fichas y lleva el control de pagos.")
                     aviso_instructora = st.session_state.pop("aviso_instructora", None)
                     if aviso_instructora:
                         st.success(aviso_instructora)
 
-                    tab_directorio_inst, tab_alta_inst, tab_pagos_inst = st.tabs(["Buscar instructora", "Agregar instructora", "Pagos"])
+                    tab_alta_inst, tab_directorio_inst, tab_agenda_inst, tab_pagos_inst = st.tabs([
+                        "1. Registrar instructor",
+                        "2. Equipo y fichas",
+                        "3. Agenda de clases",
+                        "4. Pagos realizados",
+                    ])
                     try:
                         instructoras_res = supabase.table("instructoras").select("id,nombre,telefono,pago_por_clase,activo").order("nombre").execute()
                         instructoras_db = instructoras_res.data or []
                     except Exception as e:
                         instructoras_db = []
-                        st.error(f"No se pudo cargar el directorio de instructoras: {e}")
+                        st.error(f"No se pudo cargar el directorio de instructores: {e}")
 
                     with tab_directorio_inst:
                         if instructoras_db:
@@ -1324,7 +1329,7 @@ else:
                                 for i in instructoras_db
                             }
                             etiqueta_instructora = st.selectbox(
-                                "Busca y selecciona una instructora:",
+                                "Busca y selecciona un instructor:",
                                 [""] + list(opciones_instructoras),
                                 key=f"buscar_instructora_{st.session_state.clear_gestion_instructoras}",
                                 placeholder="Escribe su nombre..."
@@ -1332,7 +1337,7 @@ else:
                             instructora_actual = opciones_instructoras.get(etiqueta_instructora)
                             if instructora_actual:
                                 st.markdown(f"### {instructora_actual['nombre']}")
-                                estado_instructora = "Activa" if instructora_actual.get("activo", True) else "Inactiva"
+                                estado_instructora = "Activo" if instructora_actual.get("activo", True) else "Inactivo"
                                 st.caption(f"Estado: {estado_instructora} · Teléfono: {instructora_actual.get('telefono') or 'No registrado'} · Pago acordado por clase: S/ {float(instructora_actual.get('pago_por_clase') or 0):.2f}")
 
                                 with st.expander("Modificar datos personales y tarifa", expanded=False):
@@ -1347,7 +1352,7 @@ else:
                                         st.rerun()
                                     elif guardar_inst_editada:
                                         if not nombre_inst_editado.strip():
-                                            st.error("El nombre de la instructora es obligatorio.")
+                                            st.error("El nombre de la persona es obligatorio.")
                                         else:
                                             try:
                                                 supabase.table("instructoras").update({
@@ -1355,7 +1360,7 @@ else:
                                                     "telefono": telefono_inst_editado.strip() or None,
                                                     "pago_por_clase": tarifa_inst_editada
                                                 }).eq("id", instructora_actual["id"]).execute()
-                                                st.session_state.aviso_instructora = "Datos de la instructora actualizados. Las sesiones existentes conservan su tarifa histórica."
+                                                st.session_state.aviso_instructora = "Datos del instructor actualizados. Las sesiones existentes conservan el pago acordado al programarlas."
                                                 st.session_state.clear_gestion_instructoras += 1
                                                 st.rerun()
                                             except Exception as e:
@@ -1365,22 +1370,22 @@ else:
                                 with col_estado_inst:
                                     if instructora_actual.get("activo", True):
                                         confirmar_baja_inst = st.checkbox(
-                                            "Confirmo dar de baja a esta instructora",
+                                            "Confirmo dar de baja a este instructor",
                                             key=f"confirmar_baja_inst_{instructora_actual['id']}_{st.session_state.clear_gestion_instructoras}"
                                         )
                                         if st.button("Dar de baja", key=f"baja_inst_{instructora_actual['id']}_{st.session_state.clear_gestion_instructoras}", disabled=not confirmar_baja_inst):
                                             try:
                                                 supabase.table("instructoras").update({"activo": False}).eq("id", instructora_actual["id"]).execute()
-                                                st.session_state.aviso_instructora = f"{instructora_actual['nombre']} quedó inactiva. Su historial se conserva."
+                                                st.session_state.aviso_instructora = f"{instructora_actual['nombre']} quedó inactivo. Su historial se conserva."
                                                 st.session_state.clear_gestion_instructoras += 1
                                                 st.rerun()
                                             except Exception as e:
                                                 st.error(f"No se pudo dar de baja: {e}")
                                     else:
-                                        if st.button("Reactivar instructora", key=f"reactivar_inst_{instructora_actual['id']}_{st.session_state.clear_gestion_instructoras}"):
+                                        if st.button("Reactivar instructor", key=f"reactivar_inst_{instructora_actual['id']}_{st.session_state.clear_gestion_instructoras}"):
                                             try:
                                                 supabase.table("instructoras").update({"activo": True}).eq("id", instructora_actual["id"]).execute()
-                                                st.session_state.aviso_instructora = f"{instructora_actual['nombre']} volvió a estar activa."
+                                                st.session_state.aviso_instructora = f"{instructora_actual['nombre']} volvió a estar activo."
                                                 st.session_state.clear_gestion_instructoras += 1
                                                 st.rerun()
                                             except Exception as e:
@@ -1467,11 +1472,11 @@ else:
                                             })
                                         st.dataframe(pd.DataFrame(filas_sesiones_inst), use_container_width=True, hide_index=True)
                                     else:
-                                        st.info("Aún no hay sesiones programadas para esta instructora.")
+                                        st.info("Aún no hay clases programadas para este instructor.")
 
                                     if sesiones_por_pagar:
                                         st.markdown("#### Registrar pago de una clase con asistencia validada")
-                                        st.caption("El importe por clase es fijo y corresponde a la tarifa registrada para la instructora; no se multiplica ni se prorratea según la duración.")
+                                        st.caption("El importe por clase es fijo y corresponde al monto acordado para esta persona; no se multiplica ni se prorratea según la duración.")
                                         pagos_opciones = {
                                             f"{s['fecha_clase']} · {str(s['hora_inicio'])[:5]} · {locales_por_id_inst.get(s['local_id'], 'Sede')} · S/ {monto_fijo_sesion(s):.2f}": s
                                             for s in sesiones_por_pagar
@@ -1549,16 +1554,16 @@ else:
                                 except Exception as e:
                                     st.warning(f"Para consultar clases y pagos, ejecuta supabase_gestion_instructoras_migration.sql en Supabase. Detalle: {e}")
                         else:
-                            st.info("Registra una instructora para abrir su ficha y llevar su historial.")
+                        st.info("Registra a una persona del equipo para abrir su ficha y llevar su historial.")
 
                     with tab_alta_inst:
-                        st.markdown("#### Registrar instructora")
+                        st.markdown("#### Registrar instructor")
                         nombre_inst_nueva = st.text_input("Nombre completo", key=f"alta_inst_nombre_{st.session_state.clear_gestion_instructoras}")
                         telefono_inst_nueva = st.text_input("Teléfono de contacto", key=f"alta_inst_telefono_{st.session_state.clear_gestion_instructoras}")
                         tarifa_inst_nueva = st.number_input("Pago fijo por clase (S/)", min_value=0.0, value=None, step=5.0, placeholder="Escribe el importe", key=f"alta_inst_tarifa_{st.session_state.clear_gestion_instructoras}")
                         col_guardar_inst_nueva, col_limpiar_inst_nueva = st.columns(2)
                         with col_guardar_inst_nueva:
-                            if st.button("Guardar instructora", key=f"guardar_inst_nueva_{st.session_state.clear_gestion_instructoras}"):
+                            if st.button("Guardar instructor", key=f"guardar_inst_nueva_{st.session_state.clear_gestion_instructoras}"):
                                 if not nombre_inst_nueva.strip() or tarifa_inst_nueva is None:
                                     st.error("Completa el nombre y el pago fijo por clase.")
                                 else:
@@ -1569,20 +1574,20 @@ else:
                                             "pago_por_clase": tarifa_inst_nueva,
                                             "activo": True
                                         }).execute()
-                                        st.session_state.aviso_instructora = f"Instructora '{nombre_inst_nueva.strip()}' registrada."
+                                        st.session_state.aviso_instructora = f"Instructor '{nombre_inst_nueva.strip()}' registrado."
                                         st.session_state.clear_gestion_instructoras += 1
                                         st.rerun()
                                     except Exception as e:
-                                        st.error(f"No se pudo registrar la instructora: {e}")
+                                        st.error(f"No se pudo registrar al instructor: {e}")
                         with col_limpiar_inst_nueva:
                             if st.button("Limpiar campos", key=f"limpiar_inst_nueva_{st.session_state.clear_gestion_instructoras}"):
                                 st.session_state.clear_gestion_instructoras += 1
                                 st.rerun()
 
                     with tab_pagos_inst:
-                        st.markdown("#### Historial de pagos a instructoras")
+                        st.markdown("#### Historial de pagos realizados")
                         st.caption("Cada fila muestra la clase, sede, duración, importe pagado y referencia.")
-                        st.info("En la sección Agenda, marca la clase como realizada. Luego, en la ficha de la instructora, registra el pago disponible.")
+                        st.info("En Agenda de clases, las sesiones se cierran automáticamente al terminar si tuvieron reservas. Luego, en Equipo y fichas, podrás registrar el pago correspondiente.")
                         try:
                             pagos_globales = supabase.table("pagos_instructoras").select("*").order("fecha_pago", desc=True).limit(1000).execute().data or []
                             if pagos_globales:
@@ -1596,7 +1601,7 @@ else:
                                     sesion_pago_global = sesion_global_por_id.get(int(pago["sesion_id"]), {})
                                     detalle_pagos_global.append({
                                         "Fecha de pago": pago.get("fecha_pago", "—"),
-                                        "Instructora": instructora_global.get(int(pago["instructora_id"]), "—"),
+                                    "Instructor": instructora_global.get(int(pago["instructora_id"]), "—"),
                                         "Fecha de clase": sesion_pago_global.get("fecha_clase", "—"),
                                         "Horario": f"{str(sesion_pago_global.get('hora_inicio', ''))[:5]}–{str(sesion_pago_global.get('hora_fin', ''))[:5]}",
                                         "Sede": local_global.get(int(sesion_pago_global["local_id"]), "—") if sesion_pago_global.get("local_id") is not None else "—",
@@ -1614,12 +1619,10 @@ else:
                             st.warning(f"No se pudo cargar el historial. Verifica que ejecutaste supabase_gestion_instructoras_migration.sql en Supabase. Detalle: {e}")
 
             if "agenda" in paneles_admin:
-                with paneles_admin["agenda"]:
+                with tab_agenda_inst:
                     st.subheader(":material/calendar_month: Agenda de clases")
-                    sub_agenda1, sub_agenda2 = st.tabs(["Programar clases", "Ver clases por sede"])
+                    sub_agenda1, sub_agenda2 = st.tabs(["Programar clases", "Consultar clases por sede"])
 
-                    st.divider()
-                    st.subheader(":material/calendar_month: Agenda de clases")
                     with sub_agenda1:
                         st.markdown("#### Programar clases")
                         aviso_agenda = st.session_state.pop("aviso_agenda", None)
@@ -1642,7 +1645,7 @@ else:
                                 hora_agenda = st.time_input("Hora de inicio:", value=datetime_time(8, 0), key=f"mas_hora_{st.session_state.clear_agenda}")
                                 duracion_agenda = st.number_input("Duración (minutos):", min_value=15, max_value=240, value=50, step=5, key=f"mas_duracion_{st.session_state.clear_agenda}")
                             with col_mas2:
-                                inst_agenda = st.selectbox("Asignar instructora:", [""] + list(opciones_inst.keys()), key=f"mas_inst_{st.session_state.clear_agenda}", placeholder="Selecciona una instructora...")
+                            inst_agenda = st.selectbox("Asignar instructor:", [""] + list(opciones_inst.keys()), key=f"mas_inst_{st.session_state.clear_agenda}", placeholder="Selecciona un instructor...")
                                 tipo_serv_agenda = st.selectbox("Tipo de Sesión:", ["", "Grupal", "Privado"], key=f"mas_tipo_{st.session_state.clear_agenda}", placeholder="Selecciona una modalidad...")
                                 if tipo_serv_agenda == "Grupal":
                                     aforo_agenda = int(sede_objeto_agenda.get("max_camillas") or 8) if sede_objeto_agenda else None
@@ -1660,8 +1663,8 @@ else:
                                         dias_seleccionados.append(numero_dia)
                                             
                             if st.button("Programar clases", type="primary", key=f"guardar_agenda_{st.session_state.clear_agenda}"):
-                                if not sede_agenda or not inst_agenda or not tipo_serv_agenda or fecha_inicio is None or fecha_fin is None or hora_agenda is None or (tipo_serv_agenda == "Grupal" and aforo_agenda is None): st.error("Completa sede, fechas, hora, instructora, modalidad y aforo si es grupal.")
-                                elif not opciones_locales or not opciones_inst: st.error("Se requieren sedes e instructoras para programar clases.")
+                                if not sede_agenda or not inst_agenda or not tipo_serv_agenda or fecha_inicio is None or fecha_fin is None or hora_agenda is None or (tipo_serv_agenda == "Grupal" and aforo_agenda is None): st.error("Completa sede, fechas, hora, instructor, modalidad y aforo si es grupal.")
+                                elif not opciones_locales or not opciones_inst: st.error("Se requieren sedes e instructores para programar clases.")
                                 elif fecha_inicio > fecha_fin: st.error("❌ Rango inválido.")
                                 elif not dias_seleccionados: st.error("❌ Selecciona al menos un día.")
                                 else:
@@ -1724,7 +1727,7 @@ else:
                                 nombres_instructoras = {int(i["id"]): i["nombre"] for i in (supabase.table("instructoras").select("id,nombre").execute().data or [])}
                                 for sesion in sesiones_reporte:
                                     sesion["Sede"] = locales_nombres.get(int(sesion["local_id"]), "Sede")
-                                    sesion["Instructora"] = nombres_instructoras.get(int(sesion["instructora_id"]), "—")
+                                    sesion["Instructor"] = nombres_instructoras.get(int(sesion["instructora_id"]), "—")
                                     sesion["Turno"] = "Mañana" if str(sesion["hora_inicio"]) < "12:00" else "Tarde"
                                 for sede in sorted({s["Sede"] for s in sesiones_reporte}):
                                     st.markdown(f"##### {sede}")
@@ -1734,16 +1737,16 @@ else:
                                             filas = [s for s in sesiones_reporte if s["Sede"] == sede and s["Turno"] == turno]
                                             filas.sort(key=lambda s: (s["fecha_clase"], str(s["hora_inicio"])))
                                             if filas:
-                                                st.dataframe(pd.DataFrame([{"Fecha": s["fecha_clase"], "Hora": f"{str(s['hora_inicio'])[:5]}–{str(s['hora_fin'])[:5]}", "Clase": s["tipo_servicio"], "Instructora": s["Instructora"], "Aforo": s["capacidad"], "Estado": s["estado"]} for s in filas]), hide_index=True, use_container_width=True)
+                                                st.dataframe(pd.DataFrame([{"Fecha": s["fecha_clase"], "Hora": f"{str(s['hora_inicio'])[:5]}–{str(s['hora_fin'])[:5]}", "Clase": s["tipo_servicio"], "Instructor": s["Instructor"], "Aforo": s["capacidad"], "Estado": s["estado"]} for s in filas]), hide_index=True, use_container_width=True)
                                             else:
                                                 st.caption("Sin clases para este turno.")
                                 st.divider()
                                 st.markdown("#### Actualizar estado de una clase")
-                                sesion_etiquetas = {f"{s['fecha_clase']} · {str(s['hora_inicio'])[:5]} · {s['Sede']} · {s['Instructora']} ({s['estado']})": s for s in sesiones_reporte}
+                                sesion_etiquetas = {f"{s['fecha_clase']} · {str(s['hora_inicio'])[:5]} · {s['Sede']} · {s['Instructor']} ({s['estado']})": s for s in sesiones_reporte}
                                 etiqueta_sesion = st.selectbox("Selecciona una clase", [""] + list(sesion_etiquetas), key=f"estado_sesion_sel_{st.session_state.clear_estado_sesion}")
                                 sesion_estado = sesion_etiquetas.get(etiqueta_sesion)
                                 estado_nuevo = st.selectbox("Estado", ["Programada", "Realizada", "Cancelada"], key=f"estado_sesion_val_{st.session_state.clear_estado_sesion}")
-                                st.caption("Una clase solo puede marcarse como realizada después de su hora de fin y si tuvo al menos una reserva con asistencia o inasistencia. Las inasistencias se registran automáticamente.")
+                                st.caption("Una clase se marca como realizada al terminar si tuvo reservas con asistencia o inasistencia. Las clases realizadas o canceladas son estados finales: la aplicación no permite reabrirlas.")
                                 if st.button("Guardar estado", key=f"guardar_estado_sesion_{st.session_state.clear_estado_sesion}", disabled=sesion_estado is None):
                                     try:
                                         estado_actual = str(sesion_estado.get("estado") or "")
@@ -1767,7 +1770,7 @@ else:
                                         elif estado_nuevo == "Realizada" and not hay_registro:
                                             st.error("No se puede marcar como realizada: la clase necesita al menos una reserva con asistencia o inasistencia registrada.")
                                         elif estado_actual in {"Realizada", "Cancelada"} and estado_nuevo != estado_actual:
-                                            st.error("Una clase realizada o cancelada no puede reabrirse desde esta pantalla.")
+                                            st.error("No se puede cambiar el estado de una clase realizada o cancelada. La aplicación no tiene una opción para reabrirla; si se registró por error, un administrador técnico debe corregirlo en Supabase.")
                                         elif pago_existente and estado_nuevo != "Realizada":
                                             st.error("No se puede cambiar una clase cuyo pago ya fue registrado.")
                                         else:
