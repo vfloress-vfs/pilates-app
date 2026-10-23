@@ -675,7 +675,7 @@ else:
                 with tab_historial_portal:
                     reservas_alumno = supabase.table("reservas").select(
                         "id,sesion_id,paquete_id,local_id,instructora_id,fecha_clase,hora_clase,tipo_servicio,estado,qr_token"
-                    ).eq("alumno_id", id_alumno_portal).order("fecha_clase", desc=True).limit(200).execute().data or []
+                    ).eq("alumno_id", id_alumno_portal).order("fecha_clase", desc=False).limit(200).execute().data or []
                     st.divider()
                     st.subheader("Mis clases")
                     if reservas_alumno:
@@ -688,20 +688,25 @@ else:
                             datos_sesion_historial = {s["id"]: s for s in filas_sesion_historial}
                         filas_historial = []
                         ids_reservas_historial = []
+                        orden_filas_historial = []
                         for reserva in reservas_alumno:
                             sesion_hist = datos_sesion_historial.get(reserva.get("sesion_id"), {})
                             fecha_hist = sesion_hist.get("fecha_clase") or reserva.get("fecha_clase", "")
                             hora_hist = sesion_hist.get("hora_inicio") or reserva.get("hora_clase", "")
                             filas_historial.append({
-                                "Seleccionar": False,
                                 "Fecha": fecha_visible(fecha_hist),
                                 "Hora": str(hora_hist)[:5] if hora_hist else "—",
                                 "Sede": nombre_local_portal.get(sesion_hist.get("local_id", reserva.get("local_id")), "—"),
                                 "Clase": sesion_hist.get("tipo_servicio") or reserva.get("tipo_servicio", "—"),
                                 "Instructora": nombre_instructora_portal.get(sesion_hist.get("instructora_id", reserva.get("instructora_id")), "—"),
                                 "Estado": reserva.get("estado", "—"),
+                                "Seleccionar": False,
                             })
                             ids_reservas_historial.append(reserva.get("id"))
+                            orden_filas_historial.append((str(fecha_hist or ""), str(hora_hist or ""), len(filas_historial) - 1))
+                        orden_indices_historial = [item[2] for item in sorted(orden_filas_historial)]
+                        filas_historial = [filas_historial[i] for i in orden_indices_historial]
+                        ids_reservas_historial = [ids_reservas_historial[i] for i in orden_indices_historial]
                         selector_mis_clases_key = f"seleccionar_reserva_mis_clases_{id_alumno_portal}_{st.session_state.clear_portal_reserva}"
                         historial_editado = st.data_editor(
                             pd.DataFrame(filas_historial),
@@ -793,17 +798,6 @@ else:
                                                     st.error(f"No se pudo cancelar la reserva: {error_cancelacion}")
                                     else:
                                         st.caption(f"Ya venció el plazo para cancelar; era hasta el {fecha_cancelable}. La clase se mantiene reservada.")
-                        reservas_reagendables = []
-                        for reserva_reagenda in proximas_reservas:
-                            sesion_reagenda = datos_sesion_historial[reserva_reagenda["sesion_id"]]
-                            hora_reagenda = datetime_time.fromisoformat(str(sesion_reagenda["hora_inicio"]))
-                            inicio_reagenda = datetime.combine(
-                                datetime.fromisoformat(str(sesion_reagenda["fecha_clase"])).date(), hora_reagenda
-                            ).replace(tzinfo=ZoneInfo("America/Lima"))
-                            limite_reagenda_ui = limite_reserva_cancelacion(inicio_reagenda)
-                            if ahora_portal <= limite_reagenda_ui:
-                                reserva_reagenda["_limite_reagenda"] = limite_reagenda_ui
-                                reservas_reagendables.append(reserva_reagenda)
                         if proximas_reservas:
                             with st.expander("Pases QR para tus próximas clases", expanded=False):
                                 for reserva_qr in proximas_reservas:
@@ -821,44 +815,6 @@ else:
                                             st.warning(f"No se pudo generar el QR. Verifica la dependencia qrcode[pil]: {error_qr}")
                                     else:
                                         st.caption("El QR ya fue utilizado o la reserva no tiene pase disponible.")
-        
-
-                        if reservas_reagendables and sesiones_con_cupo:
-                            with st.expander("Cambiar horario de una reserva", expanded=False):
-                                st.markdown("**Cambiar de horario**")
-                                opciones_reagenda = []
-                                for reserva_r in reservas_reagendables:
-                                    for sesion_r in sesiones_con_cupo:
-                                        if sesion_r["id"] == reserva_r.get("sesion_id"):
-                                            continue
-                                        if ahora_portal > limite_reserva_cancelacion(sesion_r["_inicio_dt"]):
-                                            continue
-                                        plan_r = next((p for p in paquetes_portal if p["id"] == reserva_r.get("paquete_id")), None)
-                                        if plan_r and (plan_r.get("modalidad_plan") != "Fixed" or plan_r.get("local_id_fijo") == sesion_r.get("local_id")):
-                                            opciones_reagenda.append((reserva_r, sesion_r))
-                                if opciones_reagenda:
-                                    opcion_reagenda = st.selectbox(
-                                        "Clase que deseas cambiar", opciones_reagenda,
-                                        format_func=lambda x: f"{fecha_visible(datos_sesion_historial[x[0]['sesion_id']]['fecha_clase'])} {str(datos_sesion_historial[x[0]['sesion_id']]['hora_inicio'])[:5]} → {etiqueta_sesion(x[1])}",
-                                        key=f"portal_reagenda_{id_alumno_portal}_{st.session_state.clear_portal_reserva}"
-                                    )
-                                    vieja = datos_sesion_historial[opcion_reagenda[0]["sesion_id"]]
-                                    limite_viejo = opcion_reagenda[0]["_limite_reagenda"]
-                                    st.caption(f"Plazo para reagendar: hasta {limite_viejo.strftime('%d-%m-%Y %H:%M')}. Al vencer, la reserva se mantiene y no se recupera esa clase.")
-                                    if st.button("Confirmar cambio de horario", key=f"confirmar_reagenda_{id_alumno_portal}"):
-                                        try:
-                                            supabase.rpc("reagendar_clase_portal", {
-                                                "p_telefono": telefono_alumno.strip(),
-                                                "p_reserva_id": int(opcion_reagenda[0]["id"]),
-                                                "p_nueva_sesion_id": int(opcion_reagenda[1]["id"]),
-                                            }).execute()
-                                            st.session_state["aviso_portal_mensaje"] = "Clase reagendada. Usa el nuevo QR que aparece en tu portal."
-                                            st.session_state["aviso_portal"] = True
-                                            st.session_state.clear_portal_reserva += 1
-                                            st.rerun()
-                                        except Exception as error_reagenda:
-                                            st.error(f"No se pudo reagendar: {error_reagenda}")
-
                     else:
                         st.info("Aún no tienes clases reservadas.")
             except Exception as e:
