@@ -519,6 +519,61 @@ else:
                     else:
                         st.warning("No tienes planes pagados y vigentes con clases disponibles.")
 
+                    st.markdown("#### Asistencia de hoy")
+                    st.info("Presenta el QR correspondiente a tu clase de hoy al llegar para marcar tu asistencia. El lector lo acepta desde 30 minutos antes del inicio y hasta el fin de la clase.")
+                    try:
+                        fecha_hoy_portal = ahora_portal.date().isoformat()
+                        reservas_hoy_portal = (supabase.table("reservas")
+                            .select("id,sesion_id,fecha_clase,hora_clase,tipo_servicio,local_id,instructora_id,estado,qr_token")
+                            .eq("alumno_id", id_alumno_portal)
+                            .eq("fecha_clase", fecha_hoy_portal)
+                            .eq("estado", "Programada")
+                            .order("hora_clase")
+                            .execute().data or [])
+                        ids_sesiones_hoy = list({r.get("sesion_id") for r in reservas_hoy_portal if r.get("sesion_id")})
+                        sesiones_hoy_portal = []
+                        if ids_sesiones_hoy:
+                            sesiones_hoy_portal = (supabase.table("sesiones_clase")
+                                .select("id,local_id,instructora_id,fecha_clase,hora_inicio,hora_fin,tipo_servicio,estado")
+                                .in_("id", ids_sesiones_hoy)
+                                .eq("fecha_clase", fecha_hoy_portal)
+                                .eq("estado", "Programada")
+                                .execute().data or [])
+                        sesiones_hoy_por_id = {int(s["id"]): s for s in sesiones_hoy_portal}
+                        reservas_qr_hoy = [r for r in reservas_hoy_portal if r.get("sesion_id") and int(r["sesion_id"]) in sesiones_hoy_por_id]
+                        if reservas_qr_hoy:
+                            locales_qr_hoy = supabase.table("locales").select("id,nombre").execute().data or []
+                            instructores_qr_hoy = supabase.table("instructoras").select("id,nombre").execute().data or []
+                            nombres_sedes_qr_hoy = {int(x["id"]): x.get("nombre", "Sede") for x in locales_qr_hoy}
+                            nombres_instructores_qr_hoy = {int(x["id"]): x.get("nombre", "Instructor") for x in instructores_qr_hoy}
+                            columnas_qr_hoy = st.columns(2)
+                            for indice_qr_hoy, reserva_qr_hoy in enumerate(reservas_qr_hoy):
+                                sesion_qr_hoy = sesiones_hoy_por_id[int(reserva_qr_hoy["sesion_id"])]
+                                with columnas_qr_hoy[indice_qr_hoy % 2]:
+                                    with st.container(border=True):
+                                        st.markdown(f"### {fecha_visible(sesion_qr_hoy['fecha_clase'])}")
+                                        st.markdown(f"**{str(sesion_qr_hoy['hora_inicio'])[:5]}–{str(sesion_qr_hoy['hora_fin'])[:5]} · {sesion_qr_hoy.get('tipo_servicio', 'Clase')}**")
+                                        st.write(
+                                            f"📍 {nombres_sedes_qr_hoy.get(int(sesion_qr_hoy.get('local_id') or 0), 'Sede')} · "
+                                            f"👤 {nombres_instructores_qr_hoy.get(int(sesion_qr_hoy.get('instructora_id') or 0), 'Instructor')}"
+                                        )
+                                        if reserva_qr_hoy.get("qr_token"):
+                                            try:
+                                                import qrcode
+                                                imagen_qr_hoy = qrcode.make(f"PILATES-CHECKIN:{reserva_qr_hoy['qr_token']}")
+                                                salida_qr_hoy = io.BytesIO()
+                                                imagen_qr_hoy.save(salida_qr_hoy, format="PNG")
+                                                st.image(salida_qr_hoy.getvalue(), width=220)
+                                                st.caption("Este es el QR de esta clase de hoy.")
+                                            except Exception as error_qr_hoy:
+                                                st.warning(f"No se pudo generar el QR. Verifica la dependencia qrcode[pil]: {error_qr_hoy}")
+                                        else:
+                                            st.warning("Esta reserva no tiene un pase QR vigente. Consulta con el estudio antes de la clase.")
+                        else:
+                            st.caption("No tienes clases programadas para hoy.")
+                    except Exception as error_carga_qr_hoy:
+                        st.error(f"No se pudieron cargar los pases de hoy: {error_carga_qr_hoy}")
+
                 limite_agenda = ahora_portal.date() + timedelta(days=dias_agenda_anticipacion)
                 sesiones_portal = supabase.table("sesiones_clase").select(
                     "id,local_id,instructora_id,fecha_clase,hora_inicio,hora_fin,tipo_servicio,capacidad,estado"
@@ -914,23 +969,6 @@ else:
                                                     st.error(f"No se pudo reagendar: {error_reagenda}")
                                 except Exception as error_carga_reagenda:
                                     st.error(f"No se pudieron cargar los horarios para reagendar: {error_carga_reagenda}")
-                        if proximas_reservas:
-                            with st.expander("Pases QR para tus próximas clases", expanded=False):
-                                for reserva_qr in proximas_reservas:
-                                    token_qr = reserva_qr.get("qr_token")
-                                    sesion_qr = datos_sesion_historial[reserva_qr["sesion_id"]]
-                                    st.caption(f"{fecha_visible(sesion_qr['fecha_clase'])} · {str(sesion_qr['hora_inicio'])[:5]} · {nombre_local_portal.get(sesion_qr.get('local_id'), 'Sede')}")
-                                    if token_qr:
-                                        try:
-                                            import qrcode
-                                            imagen_qr = qrcode.make(f"PILATES-CHECKIN:{token_qr}")
-                                            salida_qr = io.BytesIO()
-                                            imagen_qr.save(salida_qr, format="PNG")
-                                            st.image(salida_qr.getvalue(), width=180)
-                                        except Exception as error_qr:
-                                            st.warning(f"No se pudo generar el QR. Verifica la dependencia qrcode[pil]: {error_qr}")
-                                    else:
-                                        st.caption("El QR ya fue utilizado o la reserva no tiene pase disponible.")
                     else:
                         st.info("Aún no tienes clases reservadas.")
             except Exception as e:
