@@ -1136,8 +1136,8 @@ else:
                                         supabase.table("sesiones_clase")
                                         .select("id,local_id,fecha_clase,hora_inicio,hora_fin,tipo_servicio,capacidad,estado,tarifa_hora_aplicada")
                                         .eq("instructora_id", instructora_actual["id"])
-                                        .order("hora_inicio")
                                         .order("fecha_clase")
+                                        .order("hora_inicio")
                                         .limit(500)
                                         .execute()
                                     )
@@ -1477,7 +1477,7 @@ else:
                                     for turno, pestaña_turno in (("Mañana", tab_manana), ("Tarde", tab_tarde)):
                                         with pestaña_turno:
                                             filas = [s for s in sesiones_reporte if s["Sede"] == sede and s["Turno"] == turno]
-                                            filas.sort(key=lambda s: (s["fecha_clase"], str(s["hora_inicio"]), s["tipo_servicio"], s["Instructora"]))
+                                            filas.sort(key=lambda s: (s["fecha_clase"], str(s["hora_inicio"])))
                                             if filas:
                                                 st.dataframe(pd.DataFrame([{"Fecha": s["fecha_clase"], "Hora": f"{str(s['hora_inicio'])[:5]}–{str(s['hora_fin'])[:5]}", "Clase": s["tipo_servicio"], "Instructora": s["Instructora"], "Aforo": s["capacidad"], "Estado": s["estado"]} for s in filas]), hide_index=True, use_container_width=True)
                                             else:
