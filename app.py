@@ -5,6 +5,7 @@ import secrets
 import base64
 import html
 import re
+import unicodedata
 import pandas as pd
 from datetime import datetime, timedelta, time as datetime_time
 from supabase import create_client, Client
@@ -1003,7 +1004,7 @@ else:
                         if opciones_planes:
                             plan_a_modificar = st.selectbox("Selecciona el plan que deseas actualizar:", [""] + list(opciones_planes.keys()), key=f"tarifa_plan_{st.session_state.clear_tarifa}", placeholder="Selecciona un plan...")
                             if plan_a_modificar:
-                                nuevo_precio = st.number_input("Establecer nuevo precio ($):", min_value=0.0, max_value=5000.0, value=costos_planes.get(plan_a_modificar, 0.0), step=5.0, key=f"tarifa_precio_{st.session_state.clear_tarifa}")
+                                nuevo_precio = st.number_input("Establecer nuevo precio (S/):", min_value=0.0, max_value=5000.0, value=costos_planes.get(plan_a_modificar, 0.0), step=5.0, key=f"tarifa_precio_{st.session_state.clear_tarifa}_{plan_a_modificar}")
                             else:
                                 nuevo_precio = None
                             col_tarifa_1, col_tarifa_2 = st.columns(2)
@@ -1011,7 +1012,7 @@ else:
                                 if st.button("Actualizar Tarifa Comercial", key=f"actualizar_tarifa_comercial_{st.session_state.clear_tarifa}", disabled=not plan_a_modificar):
                                     try:
                                         supabase.table("tipos_paquetes").update({"costo": nuevo_precio}).eq("nombre_paquete", plan_a_modificar).execute()
-                                        st.session_state.aviso_planes = f"Precio de '{plan_a_modificar}' actualizado a ${nuevo_precio:.2f}."
+                                        st.session_state.aviso_planes = f"Precio de '{plan_a_modificar}' actualizado a S/ {nuevo_precio:.2f}."
                                         st.session_state.clear_tarifa += 1
                                         st.rerun()
                                     except Exception as e: st.error(f"❌ Error al actualizar precio: {e}")
@@ -1028,17 +1029,17 @@ else:
                             if todos_planes_res.data and len(todos_planes_res.data) > 0:
                                 import pandas as pd
                                 df_catalogo = pd.DataFrame(todos_planes_res.data)
-                                df_catalogo_amigable = df_catalogo[["id", "nombre_paquete", "clases_totales", "costo", "activo"]].rename(columns={
-                                    "nombre_paquete": "Nombre del Paquete", "clases_totales": "Clases que Incluye", "costo": "Precio Comercial ($)", "activo": "Disponible para Venta"
+                                df_catalogo_amigable = df_catalogo[["nombre_paquete", "clases_totales", "costo", "activo"]].rename(columns={
+                                    "nombre_paquete": "Nombre del Paquete", "clases_totales": "Clases que Incluye", "costo": "Precio Comercial (S/)", "activo": "Disponible para Venta"
                                 })
                                 editor_catalogo_key = f"editor_catalogo_planes_{st.session_state.clear_catalogo}"
-                                cambios_tabla = st.data_editor(df_catalogo_amigable, hide_index=True, disabled=["id", "Nombre del Paquete", "Clases que Incluye", "Precio Comercial ($)"], use_container_width=True, key=editor_catalogo_key)
+                                cambios_tabla = st.data_editor(df_catalogo_amigable, hide_index=True, disabled=["Nombre del Paquete", "Clases que Incluye", "Precio Comercial (S/)"], use_container_width=True, key=editor_catalogo_key)
                                 if st.session_state.get(editor_catalogo_key) and "edited_rows" in st.session_state[editor_catalogo_key]:
                                     filas_editadas = st.session_state[editor_catalogo_key]["edited_rows"]
                                     for indice_fila, cambios in filas_editadas.items():
                                         if "Disponible para Venta" in cambios:
                                             nuevo_estado = cambios["Disponible para Venta"]
-                                            id_registro = int(df_catalogo_amigable.iloc[indice_fila]["id"])
+                                            id_registro = int(df_catalogo.iloc[indice_fila]["id"])
                                             supabase.table("tipos_paquetes").update({"activo": nuevo_estado}).eq("id", id_registro).execute()
                                             st.session_state.clear_catalogo += 1
                                             st.rerun()
@@ -1077,13 +1078,13 @@ else:
                             if instructora_actual:
                                 st.markdown(f"### {instructora_actual['nombre']}")
                                 estado_instructora = "Activa" if instructora_actual.get("activo", True) else "Inactiva"
-                                st.caption(f"Estado: {estado_instructora} · Teléfono: {instructora_actual.get('telefono') or 'No registrado'} · Tarifa: ${float(instructora_actual.get('costo_hora') or 0):.2f} por hora")
+                                st.caption(f"Estado: {estado_instructora} · Teléfono: {instructora_actual.get('telefono') or 'No registrado'} · Tarifa: S/ {float(instructora_actual.get('costo_hora') or 0):.2f} por hora")
 
                                 with st.expander("Modificar datos personales y tarifa", expanded=False):
                                     with st.form(f"form_editar_instructora_{instructora_actual['id']}_{st.session_state.clear_gestion_instructoras}"):
                                         nombre_inst_editado = st.text_input("Nombre completo", value=instructora_actual["nombre"], key=f"nombre_inst_edit_{instructora_actual['id']}_{st.session_state.clear_gestion_instructoras}")
                                         telefono_inst_editado = st.text_input("Teléfono", value=instructora_actual.get("telefono") or "", key=f"telefono_inst_edit_{instructora_actual['id']}_{st.session_state.clear_gestion_instructoras}")
-                                        tarifa_inst_editada = st.number_input("Tarifa por hora ($)", min_value=0.0, value=float(instructora_actual.get("costo_hora") or 0), step=5.0, key=f"tarifa_inst_edit_{instructora_actual['id']}_{st.session_state.clear_gestion_instructoras}")
+                                        tarifa_inst_editada = st.number_input("Tarifa por hora (S/)", min_value=0.0, value=float(instructora_actual.get("costo_hora") or 0), step=5.0, key=f"tarifa_inst_edit_{instructora_actual['id']}_{st.session_state.clear_gestion_instructoras}")
                                         guardar_inst_editada = st.form_submit_button("Guardar cambios", type="primary")
                                         limpiar_inst_editada = st.form_submit_button("Restaurar datos")
                                     if limpiar_inst_editada:
@@ -1135,7 +1136,8 @@ else:
                                         supabase.table("sesiones_clase")
                                         .select("id,local_id,fecha_clase,hora_inicio,hora_fin,tipo_servicio,capacidad,estado,tarifa_hora_aplicada")
                                         .eq("instructora_id", instructora_actual["id"])
-                                        .order("fecha_clase", desc=True)
+                                        .order("fecha_clase")
+                                        .order("hora_inicio")
                                         .limit(500)
                                         .execute()
                                     )
@@ -1152,6 +1154,28 @@ else:
                                     pagos_por_sesion = {p["sesion_id"]: p for p in pagos_inst}
                                     completadas_inst = [s for s in sesiones_inst if s["estado"] == "Realizada"]
 
+                                    # Un pago solo procede si hay al menos un alumno marcado con asistencia o inasistencia.
+                                    ids_sesiones_inst = [s["id"] for s in completadas_inst]
+                                    reservas_por_sesion = {}
+                                    if ids_sesiones_inst:
+                                        reservas_inst = (
+                                            supabase.table("reservas")
+                                            .select("id,sesion_id,alumno_id,estado")
+                                            .in_("sesion_id", ids_sesiones_inst)
+                                            .execute()
+                                        ).data or []
+                                        estados_asistencia = {"asistencia", "asistio", "presente"}
+                                        estados_inasistencia = {"inasistencia", "no asistio", "ausente", "falta", "no show", "no-show"}
+                                        for reserva in reservas_inst:
+                                            if reserva.get("alumno_id") is None:
+                                                continue
+                                            estado_reserva = unicodedata.normalize("NFKD", str(reserva.get("estado") or "").lower())
+                                            estado_reserva = "".join(c for c in estado_reserva if not unicodedata.combining(c)).strip()
+                                            if estado_reserva in estados_asistencia or estado_reserva in estados_inasistencia:
+                                                reservas_por_sesion.setdefault(reserva["sesion_id"], []).append({
+                                                    "estado": "Asistencia" if estado_reserva in estados_asistencia else "Inasistencia"
+                                                })
+
                                     def minutos_sesion(sesion):
                                         inicio = datetime_time.fromisoformat(str(sesion["hora_inicio"]))
                                         fin = datetime_time.fromisoformat(str(sesion["hora_fin"]))
@@ -1160,14 +1184,16 @@ else:
                                     def importe_sesion(sesion):
                                         return (minutos_sesion(sesion) / 60) * float(sesion.get("tarifa_hora_aplicada") or 0)
 
-                                    por_pagar_inst = sum(importe_sesion(s) for s in completadas_inst if s["id"] not in pagos_por_sesion)
+                                    sesiones_con_evidencia = [s for s in completadas_inst if reservas_por_sesion.get(s["id"])]
+                                    sesiones_por_pagar = [s for s in sesiones_con_evidencia if s["id"] not in pagos_por_sesion]
+                                    por_pagar_inst = sum(importe_sesion(s) for s in sesiones_por_pagar)
                                     pagado_inst = sum(float(p.get("importe") or 0) for p in pagos_inst)
                                     horas_inst = sum(minutos_sesion(s) for s in completadas_inst) / 60
                                     met1, met2, met3, met4 = st.columns(4)
-                                    met1.metric("Clases dictadas", len(completadas_inst))
+                                    met1.metric("Clases realizadas", len(completadas_inst))
                                     met2.metric("Horas dictadas", f"{horas_inst:.1f}")
-                                    met3.metric("Pendiente de pago", f"${por_pagar_inst:.2f}")
-                                    met4.metric("Pagos registrados", f"${pagado_inst:.2f}")
+                                    met3.metric("Pendiente de pago", f"S/ {por_pagar_inst:.2f}")
+                                    met4.metric("Pagos registrados", f"S/ {pagado_inst:.2f}")
 
                                     if sesiones_inst:
                                         st.markdown("#### Horarios, sedes y clases")
@@ -1180,17 +1206,17 @@ else:
                                                 "Sede": locales_por_id_inst.get(sesion["local_id"], "Sede"),
                                                 "Clase": sesion["tipo_servicio"],
                                                 "Estado": sesion["estado"],
-                                                "Pago": f"${float(pagos_por_sesion[sesion['id']]['importe']):.2f}" if sesion["id"] in pagos_por_sesion else (f"Pendiente · ${importe_sesion(sesion):.2f}" if sesion["estado"] == "Realizada" else "—")
+                                                "Asistencia / inasistencia": ", ".join(sorted({r["estado"] for r in reservas_por_sesion.get(sesion["id"], [])})) or "Sin registro",
+                                                "Pago": f"S/ {float(pagos_por_sesion[sesion['id']]['importe']):.2f}" if sesion["id"] in pagos_por_sesion else (f"Pendiente · S/ {importe_sesion(sesion):.2f}" if sesion in sesiones_por_pagar else ("Requiere asistencia o inasistencia" if sesion["estado"] == "Realizada" else "—"))
                                             })
                                         st.dataframe(pd.DataFrame(filas_sesiones_inst), use_container_width=True, hide_index=True)
                                     else:
                                         st.info("Aún no hay sesiones programadas para esta instructora.")
 
-                                    sesiones_por_pagar = [s for s in completadas_inst if s["id"] not in pagos_por_sesion]
                                     if sesiones_por_pagar:
-                                        st.markdown("#### Registrar pago de una clase dictada")
+                                        st.markdown("#### Registrar pago de una clase con asistencia validada")
                                         pagos_opciones = {
-                                            f"{s['fecha_clase']} · {str(s['hora_inicio'])[:5]} · {locales_por_id_inst.get(s['local_id'], 'Sede')} · ${importe_sesion(s):.2f}": s
+                                            f"{s['fecha_clase']} · {str(s['hora_inicio'])[:5]} · {locales_por_id_inst.get(s['local_id'], 'Sede')} · S/ {importe_sesion(s):.2f}": s
                                             for s in sesiones_por_pagar
                                         }
                                         pago_sesion_label = st.selectbox(
@@ -1201,10 +1227,23 @@ else:
                                         )
                                         pago_referencia = st.text_input("Referencia o nota del pago", key=f"referencia_pago_inst_{instructora_actual['id']}_{st.session_state.clear_pago_instructora}")
                                         if pago_sesion_label:
-                                            st.info(f"Importe a registrar: **${importe_sesion(pagos_opciones[pago_sesion_label]):.2f}**")
+                                            st.info(f"Importe a registrar: **S/ {importe_sesion(pagos_opciones[pago_sesion_label]):.2f}**")
                                         if st.button("Registrar pago realizado", key=f"guardar_pago_inst_{instructora_actual['id']}_{st.session_state.clear_pago_instructora}", type="primary", disabled=not pago_sesion_label):
                                             sesion_pagada = pagos_opciones[pago_sesion_label]
                                             try:
+                                                # Revalidar inmediatamente antes de registrar el pago.
+                                                verificacion_asistencia = supabase.table("reservas").select("id,alumno_id,estado").eq("sesion_id", sesion_pagada["id"]).execute().data or []
+                                                estados_validos = {"asistencia", "asistio", "presente", "inasistencia", "no asistio", "ausente", "falta", "no show", "no-show"}
+                                                existe_evidencia = False
+                                                for reserva in verificacion_asistencia:
+                                                    estado_reserva = unicodedata.normalize("NFKD", str(reserva.get("estado") or "").lower())
+                                                    estado_reserva = "".join(c for c in estado_reserva if not unicodedata.combining(c)).strip()
+                                                    if reserva.get("alumno_id") is not None and estado_reserva in estados_validos:
+                                                        existe_evidencia = True
+                                                        break
+                                                if not existe_evidencia:
+                                                    st.error("No se registró el pago: la clase no tiene alumnos con asistencia o inasistencia marcada.")
+                                                    st.stop()
                                                 supabase.table("pagos_instructoras").insert({
                                                     "sesion_id": sesion_pagada["id"],
                                                     "instructora_id": instructora_actual["id"],
@@ -1215,7 +1254,7 @@ else:
                                                     "referencia": pago_referencia.strip() or None,
                                                     "registrado_por": st.session_state.admin_id
                                                 }).execute()
-                                                st.session_state.aviso_instructora = f"Pago de ${importe_sesion(sesion_pagada):.2f} registrado para {instructora_actual['nombre']}."
+                                                st.session_state.aviso_instructora = f"Pago de S/ {importe_sesion(sesion_pagada):.2f} registrado para {instructora_actual['nombre']}."
                                                 st.session_state.clear_pago_instructora += 1
                                                 st.rerun()
                                             except Exception as e:
@@ -1399,8 +1438,11 @@ else:
                         st.markdown("#### Clases programadas por sede y turno")
                         st.caption("El turno mañana se considera antes de las 12:00; desde las 12:00 se muestra como tarde.")
                         try:
-                            desde = st.date_input("Desde", value=datetime.now().date(), key="agenda_reporte_desde")
-                            hasta = st.date_input("Hasta", value=datetime.now().date() + timedelta(days=6), key="agenda_reporte_hasta")
+                            col_desde, col_hasta = st.columns(2)
+                            with col_desde:
+                                desde = st.date_input("Desde", value=datetime.now().date(), key="agenda_reporte_desde")
+                            with col_hasta:
+                                hasta = st.date_input("Hasta", value=datetime.now().date() + timedelta(days=6), key="agenda_reporte_hasta")
                             sesiones_reporte = supabase.table("sesiones_clase").select("*").gte("fecha_clase", desde.isoformat()).lte("fecha_clase", hasta.isoformat()).order("fecha_clase").order("hora_inicio").execute().data or []
                             if desde > hasta:
                                 st.warning("El rango de fechas no es válido.")
@@ -1413,15 +1455,15 @@ else:
                                     sesion["Turno"] = "Mañana" if str(sesion["hora_inicio"]) < "12:00" else "Tarde"
                                 for sede in sorted({s["Sede"] for s in sesiones_reporte}):
                                     st.markdown(f"##### {sede}")
-                                    manana, tarde = st.columns(2)
-                                    for turno, contenedor in (("Mañana", manana), ("Tarde", tarde)):
-                                        with contenedor:
-                                            st.markdown(f"**{turno}**")
+                                    tab_manana, tab_tarde = st.tabs(["Turno mañana", "Turno tarde"])
+                                    for turno, pestaña_turno in (("Mañana", tab_manana), ("Tarde", tab_tarde)):
+                                        with pestaña_turno:
                                             filas = [s for s in sesiones_reporte if s["Sede"] == sede and s["Turno"] == turno]
+                                            filas.sort(key=lambda s: (s["fecha_clase"], str(s["hora_inicio"]), s["tipo_servicio"], s["Instructora"]))
                                             if filas:
                                                 st.dataframe(pd.DataFrame([{"Fecha": s["fecha_clase"], "Hora": f"{str(s['hora_inicio'])[:5]}–{str(s['hora_fin'])[:5]}", "Clase": s["tipo_servicio"], "Instructora": s["Instructora"], "Aforo": s["capacidad"], "Estado": s["estado"]} for s in filas]), hide_index=True, use_container_width=True)
                                             else:
-                                                st.caption("Sin clases")
+                                                st.caption("Sin clases para este turno.")
                                 st.divider()
                                 st.markdown("#### Actualizar estado de una clase")
                                 sesion_etiquetas = {f"{s['fecha_clase']} · {str(s['hora_inicio'])[:5]} · {s['Sede']} · {s['Instructora']} ({s['estado']})": s for s in sesiones_reporte}
@@ -1732,7 +1774,7 @@ else:
                                     for paquete_historial in paq_res.data:
                                         if paquete_historial.get("pagado") and not paquete_historial.get("pago_revertido_en"):
                                             if st.button(
-                                                f"Revertir pago confirmado · {paquete_historial['tipo_paquete']} (paquete #{paquete_historial['id']})",
+                                                f"Revertir pago confirmado · {paquete_historial['tipo_paquete']}",
                                                 key=f"revertir_pago_{paquete_historial['id']}_{st.session_state.clear_paquete_alumno}"
                                             ):
                                                 try:
@@ -2188,13 +2230,13 @@ else:
                             dias_consulta = supabase.table("dias_operativos").select("*").order("numero_dia").execute()
                             if dias_consulta.data:
                                 df_dias = pd.DataFrame(dias_consulta.data)
-                                df_dias_amigable = df_dias[["id", "nombre_dia", "habilitado"]].rename(columns={"nombre_dia": "Día de la semana", "habilitado": "Estudio abierto"})
+                                df_dias_amigable = df_dias[["nombre_dia", "habilitado"]].rename(columns={"nombre_dia": "Día de la semana", "habilitado": "Estudio abierto"})
                                 editor_dias_key = f"editor_dias_operativos_{st.session_state.clear_dias_operativos}"
-                                st.data_editor(df_dias_amigable, hide_index=True, disabled=["id", "Día de la semana"], use_container_width=True, key=editor_dias_key)
+                                st.data_editor(df_dias_amigable, hide_index=True, disabled=["Día de la semana"], use_container_width=True, key=editor_dias_key)
                                 cambios_dias = st.session_state.get(editor_dias_key, {}).get("edited_rows", {})
                                 for idx_fila, cambio_dia in cambios_dias.items():
                                     if "Estudio abierto" in cambio_dia:
-                                        supabase.table("dias_operativos").update({"habilitado": cambio_dia["Estudio abierto"]}).eq("id", int(df_dias_amigable.iloc[idx_fila]["id"])).execute()
+                                        supabase.table("dias_operativos").update({"habilitado": cambio_dia["Estudio abierto"]}).eq("id", int(df_dias.iloc[idx_fila]["id"])).execute()
                                         st.session_state.clear_dias_operativos += 1
                                         st.rerun()
                             else:
@@ -2227,13 +2269,13 @@ else:
                                 if feriados_res.data:
                                     df_fer = pd.DataFrame(feriados_res.data)
                                     df_fer["Eliminar"] = False
-                                    df_fer_amigable = df_fer[["id", "fecha", "descripcion", "Eliminar"]].rename(columns={"fecha": "Fecha bloqueada", "descripcion": "Motivo"})
+                                    df_fer_amigable = df_fer[["fecha", "descripcion", "Eliminar"]].rename(columns={"fecha": "Fecha bloqueada", "descripcion": "Motivo"})
                                     editor_feriados_key = f"editor_tabla_feriados_{st.session_state.clear_feriados_tabla}"
-                                    st.data_editor(df_fer_amigable, hide_index=True, disabled=["id", "Fecha bloqueada", "Motivo"], use_container_width=True, key=editor_feriados_key)
+                                    st.data_editor(df_fer_amigable, hide_index=True, disabled=["Fecha bloqueada", "Motivo"], use_container_width=True, key=editor_feriados_key)
                                     filas_edit_fer = st.session_state.get(editor_feriados_key, {}).get("edited_rows", {})
                                     for idx_f, cambio_f in filas_edit_fer.items():
                                         if cambio_f.get("Eliminar") is True:
-                                            supabase.table("feriados").delete().eq("id", int(df_fer_amigable.iloc[idx_f]["id"])).execute()
+                                            supabase.table("feriados").delete().eq("id", int(df_fer.iloc[idx_f]["id"])).execute()
                                             st.session_state.clear_feriados_tabla += 1
                                             st.rerun()
                                 else:
