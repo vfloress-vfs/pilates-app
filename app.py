@@ -708,28 +708,59 @@ else:
                         filas_historial = [filas_historial[i] for i in orden_indices_historial]
                         ids_reservas_historial = [ids_reservas_historial[i] for i in orden_indices_historial]
                         selector_mis_clases_key = f"seleccionar_reserva_mis_clases_{id_alumno_portal}_{st.session_state.clear_portal_reserva}"
-                        historial_editado = st.data_editor(
-                            pd.DataFrame(filas_historial),
-                            hide_index=True,
-                            use_container_width=True,
-                            disabled=[col for col in filas_historial[0] if col != "Seleccionar"],
-                            column_config={
-                                "Seleccionar": st.column_config.CheckboxColumn(
-                                    "Cancelar",
-                                    help="Marca una reserva para ver sus opciones de cancelación.",
-                                )
-                            },
-                            key=selector_mis_clases_key,
-                        )
-                        indices_seleccionados = [
-                            idx for idx, marcado in enumerate(historial_editado["Seleccionar"].tolist())
-                            if bool(marcado)
-                        ]
-                        id_reserva_seleccionada = (
-                            ids_reservas_historial[indices_seleccionados[0]]
-                            if len(indices_seleccionados) == 1 else None
-                        )
-                        if len(indices_seleccionados) > 1:
+                        anchos_columnas_historial = [1.0, 0.62, 1.25, 1.1, 1.2, 0.9, 0.82]
+                        encabezados_historial = ["Fecha", "Hora", "Sede", "Clase", "Instructor/a", "Estado", "Gestionar"]
+                        campos_historial = ["Fecha", "Hora", "Sede", "Clase", "Instructora", "Estado"]
+                        columnas_encabezado = st.columns(anchos_columnas_historial)
+                        for columna, titulo in zip(columnas_encabezado, encabezados_historial):
+                            columna.markdown(f"**{titulo}**")
+
+                        ids_seleccionados = []
+                        for indice_historial, (fila_historial, id_reserva_historial) in enumerate(zip(filas_historial, ids_reservas_historial)):
+                            reserva_fila = next((r for r in reservas_alumno if str(r.get("id")) == str(id_reserva_historial)), {})
+                            sesion_fila = datos_sesion_historial.get(reserva_fila.get("sesion_id"), {})
+                            puede_gestionar = False
+                            motivo_no_gestion = ""
+                            if reserva_fila.get("estado") != "Programada":
+                                estado_reserva = str(reserva_fila.get("estado") or "sin estado").lower()
+                                motivo_no_gestion = f"La reserva está {estado_reserva}."
+                            elif sesion_fila.get("estado") != "Programada":
+                                motivo_no_gestion = "La clase ya no está programada."
+                            else:
+                                try:
+                                    inicio_fila = datetime.combine(
+                                        datetime.fromisoformat(str(sesion_fila["fecha_clase"])).date(),
+                                        datetime_time.fromisoformat(str(sesion_fila["hora_inicio"])),
+                                    ).replace(tzinfo=ZoneInfo("America/Lima"))
+                                    if inicio_fila <= ahora_portal:
+                                        motivo_no_gestion = "La clase ya pasó."
+                                    elif ahora_portal > limite_reserva_cancelacion(inicio_fila):
+                                        motivo_no_gestion = "Venció el plazo para cancelar o reagendar."
+                                    else:
+                                        puede_gestionar = True
+                                except (KeyError, TypeError, ValueError):
+                                    motivo_no_gestion = "No se pudo validar la fecha de la clase."
+
+                            clave_checkbox_gestion = f"{selector_mis_clases_key}_{id_reserva_historial}"
+                            if not puede_gestionar:
+                                st.session_state.pop(clave_checkbox_gestion, None)
+                            columnas_fila = st.columns(anchos_columnas_historial)
+                            for columna, campo in zip(columnas_fila[:6], campos_historial):
+                                columna.write(fila_historial.get(campo, "—"))
+                            if motivo_no_gestion:
+                                columnas_fila[5].caption(motivo_no_gestion)
+                            marcado = columnas_fila[6].checkbox(
+                                "Gestionar",
+                                key=clave_checkbox_gestion,
+                                disabled=not puede_gestionar,
+                                label_visibility="collapsed",
+                                help=motivo_no_gestion or "Marca para cancelar o reagendar esta reserva.",
+                            )
+                            if marcado:
+                                ids_seleccionados.append(id_reserva_historial)
+
+                        id_reserva_seleccionada = ids_seleccionados[0] if len(ids_seleccionados) == 1 else None
+                        if len(ids_seleccionados) > 1:
                             st.warning("Marca solo una reserva a la vez para ver sus opciones.")
                         proximas_reservas = [
                             r for r in reservas_alumno
