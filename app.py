@@ -1078,7 +1078,7 @@ else:
                             if instructora_actual:
                                 st.markdown(f"### {instructora_actual['nombre']}")
                                 estado_instructora = "Activa" if instructora_actual.get("activo", True) else "Inactiva"
-                                st.caption(f"Estado: {estado_instructora} · Teléfono: {instructora_actual.get('telefono') or 'No registrado'} · Tarifa: S/ {float(instructora_actual.get('costo_hora') or 0):.2f} por hora")
+                                st.caption(f"Estado: {estado_instructora} · Teléfono: {instructora_actual.get('telefono') or 'No registrado'} · Tarifa registrada (importe fijo por clase): S/ {float(instructora_actual.get('costo_hora') or 0):.2f}")
 
                                 with st.expander("Modificar datos personales y tarifa", expanded=False):
                                     with st.form(f"form_editar_instructora_{instructora_actual['id']}_{st.session_state.clear_gestion_instructoras}"):
@@ -1136,8 +1136,8 @@ else:
                                         supabase.table("sesiones_clase")
                                         .select("id,local_id,fecha_clase,hora_inicio,hora_fin,tipo_servicio,capacidad,estado,tarifa_hora_aplicada")
                                         .eq("instructora_id", instructora_actual["id"])
-                                        .order("fecha_clase")
                                         .order("hora_inicio")
+                                        .order("fecha_clase")
                                         .limit(500)
                                         .execute()
                                     )
@@ -1181,12 +1181,13 @@ else:
                                         fin = datetime_time.fromisoformat(str(sesion["hora_fin"]))
                                         return int((datetime.combine(datetime.now().date(), fin) - datetime.combine(datetime.now().date(), inicio)).total_seconds() // 60)
 
-                                    def importe_sesion(sesion):
-                                        return (minutos_sesion(sesion) / 60) * float(sesion.get("tarifa_hora_aplicada") or 0)
+                                    def monto_fijo_sesion(sesion):
+                                        # El monto fijo por clase usa la tarifa congelada al programarla.
+                                        return float(sesion.get("tarifa_hora_aplicada") or 0)
 
                                     sesiones_con_evidencia = [s for s in completadas_inst if reservas_por_sesion.get(s["id"])]
                                     sesiones_por_pagar = [s for s in sesiones_con_evidencia if s["id"] not in pagos_por_sesion]
-                                    por_pagar_inst = sum(importe_sesion(s) for s in sesiones_por_pagar)
+                                    por_pagar_inst = sum(monto_fijo_sesion(s) for s in sesiones_por_pagar)
                                     pagado_inst = sum(float(p.get("importe") or 0) for p in pagos_inst)
                                     horas_inst = sum(minutos_sesion(s) for s in completadas_inst) / 60
                                     met1, met2, met3, met4 = st.columns(4)
@@ -1201,13 +1202,13 @@ else:
                                         filas_sesiones_inst = []
                                         for sesion in sesiones_inst:
                                             filas_sesiones_inst.append({
-                                                "Fecha": sesion["fecha_clase"],
                                                 "Horario": f"{str(sesion['hora_inicio'])[:5]}–{str(sesion['hora_fin'])[:5]}",
+                                                "Fecha": sesion["fecha_clase"],
                                                 "Sede": locales_por_id_inst.get(sesion["local_id"], "Sede"),
                                                 "Clase": sesion["tipo_servicio"],
                                                 "Estado": sesion["estado"],
                                                 "Asistencia / inasistencia": ", ".join(sorted({r["estado"] for r in reservas_por_sesion.get(sesion["id"], [])})) or "Sin registro",
-                                                "Pago": f"S/ {float(pagos_por_sesion[sesion['id']]['importe']):.2f}" if sesion["id"] in pagos_por_sesion else (f"Pendiente · S/ {importe_sesion(sesion):.2f}" if sesion in sesiones_por_pagar else ("Requiere asistencia o inasistencia" if sesion["estado"] == "Realizada" else "—"))
+                                                "Pago": f"S/ {float(pagos_por_sesion[sesion['id']]['importe']):.2f}" if sesion["id"] in pagos_por_sesion else (f"Pendiente · S/ {monto_fijo_sesion(sesion):.2f}" if sesion in sesiones_por_pagar else ("Requiere asistencia o inasistencia" if sesion["estado"] == "Realizada" else "—"))
                                             })
                                         st.dataframe(pd.DataFrame(filas_sesiones_inst), use_container_width=True, hide_index=True)
                                     else:
@@ -1215,8 +1216,9 @@ else:
 
                                     if sesiones_por_pagar:
                                         st.markdown("#### Registrar pago de una clase con asistencia validada")
+                                        st.caption("El importe por clase es fijo y corresponde a la tarifa registrada para la instructora; no se multiplica ni se prorratea según la duración.")
                                         pagos_opciones = {
-                                            f"{s['fecha_clase']} · {str(s['hora_inicio'])[:5]} · {locales_por_id_inst.get(s['local_id'], 'Sede')} · S/ {importe_sesion(s):.2f}": s
+                                            f"{s['fecha_clase']} · {str(s['hora_inicio'])[:5]} · {locales_por_id_inst.get(s['local_id'], 'Sede')} · S/ {monto_fijo_sesion(s):.2f}": s
                                             for s in sesiones_por_pagar
                                         }
                                         pago_sesion_label = st.selectbox(
@@ -1227,7 +1229,7 @@ else:
                                         )
                                         pago_referencia = st.text_input("Referencia o nota del pago", key=f"referencia_pago_inst_{instructora_actual['id']}_{st.session_state.clear_pago_instructora}")
                                         if pago_sesion_label:
-                                            st.info(f"Importe a registrar: **S/ {importe_sesion(pagos_opciones[pago_sesion_label]):.2f}**")
+                                            st.info(f"Importe a registrar: **S/ {monto_fijo_sesion(pagos_opciones[pago_sesion_label]):.2f}**")
                                         if st.button("Registrar pago realizado", key=f"guardar_pago_inst_{instructora_actual['id']}_{st.session_state.clear_pago_instructora}", type="primary", disabled=not pago_sesion_label):
                                             sesion_pagada = pagos_opciones[pago_sesion_label]
                                             try:
@@ -1250,11 +1252,11 @@ else:
                                                     "fecha_pago": datetime.now().date().isoformat(),
                                                     "tarifa_hora_aplicada": sesion_pagada["tarifa_hora_aplicada"],
                                                     "duracion_minutos": minutos_sesion(sesion_pagada),
-                                                    "importe": round(importe_sesion(sesion_pagada), 2),
+                                                    "importe": round(monto_fijo_sesion(sesion_pagada), 2),
                                                     "referencia": pago_referencia.strip() or None,
                                                     "registrado_por": st.session_state.admin_id
                                                 }).execute()
-                                                st.session_state.aviso_instructora = f"Pago de S/ {importe_sesion(sesion_pagada):.2f} registrado para {instructora_actual['nombre']}."
+                                                st.session_state.aviso_instructora = f"Pago de S/ {monto_fijo_sesion(sesion_pagada):.2f} registrado para {instructora_actual['nombre']}."
                                                 st.session_state.clear_pago_instructora += 1
                                                 st.rerun()
                                             except Exception as e:
@@ -1283,7 +1285,8 @@ else:
                         st.markdown("#### Registrar instructora")
                         nombre_inst_nueva = st.text_input("Nombre completo", key=f"alta_inst_nombre_{st.session_state.clear_gestion_instructoras}")
                         telefono_inst_nueva = st.text_input("Teléfono de contacto", key=f"alta_inst_telefono_{st.session_state.clear_gestion_instructoras}")
-                        tarifa_inst_nueva = st.number_input("Tarifa por hora ($)", min_value=0.0, value=None, step=5.0, placeholder="Escribe la tarifa", key=f"alta_inst_tarifa_{st.session_state.clear_gestion_instructoras}")
+                        tarifa_inst_nueva = st.number_input("Tarifa por hora (S/)", min_value=0.0, value=None, step=5.0, placeholder="Escribe la tarifa", key=f"alta_inst_tarifa_{st.session_state.clear_gestion_instructoras}")
+                        st.caption("Para los pagos de clases, este importe se toma como monto fijo por clase; no se prorratea por duración.")
                         col_guardar_inst_nueva, col_limpiar_inst_nueva = st.columns(2)
                         with col_guardar_inst_nueva:
                             if st.button("Guardar instructora", key=f"guardar_inst_nueva_{st.session_state.clear_gestion_instructoras}"):
@@ -1443,7 +1446,7 @@ else:
                                 desde = st.date_input("Desde", value=datetime.now().date(), key="agenda_reporte_desde")
                             with col_hasta:
                                 hasta = st.date_input("Hasta", value=datetime.now().date() + timedelta(days=6), key="agenda_reporte_hasta")
-                            sesiones_reporte = supabase.table("sesiones_clase").select("*").gte("fecha_clase", desde.isoformat()).lte("fecha_clase", hasta.isoformat()).order("fecha_clase").order("hora_inicio").execute().data or []
+                            sesiones_reporte = supabase.table("sesiones_clase").select("*").gte("fecha_clase", desde.isoformat()).lte("fecha_clase", hasta.isoformat()).order("hora_inicio").order("fecha_clase").execute().data or []
                             if desde > hasta:
                                 st.warning("El rango de fechas no es válido.")
                             elif sesiones_reporte:
@@ -1459,9 +1462,9 @@ else:
                                     for turno, pestaña_turno in (("Mañana", tab_manana), ("Tarde", tab_tarde)):
                                         with pestaña_turno:
                                             filas = [s for s in sesiones_reporte if s["Sede"] == sede and s["Turno"] == turno]
-                                            filas.sort(key=lambda s: (s["fecha_clase"], str(s["hora_inicio"]), s["tipo_servicio"], s["Instructora"]))
+                                            filas.sort(key=lambda s: (str(s["hora_inicio"]), s["fecha_clase"], s["tipo_servicio"], s["Instructora"]))
                                             if filas:
-                                                st.dataframe(pd.DataFrame([{"Fecha": s["fecha_clase"], "Hora": f"{str(s['hora_inicio'])[:5]}–{str(s['hora_fin'])[:5]}", "Clase": s["tipo_servicio"], "Instructora": s["Instructora"], "Aforo": s["capacidad"], "Estado": s["estado"]} for s in filas]), hide_index=True, use_container_width=True)
+                                                st.dataframe(pd.DataFrame([{"Hora": f"{str(s['hora_inicio'])[:5]}–{str(s['hora_fin'])[:5]}", "Fecha": s["fecha_clase"], "Clase": s["tipo_servicio"], "Instructora": s["Instructora"], "Aforo": s["capacidad"], "Estado": s["estado"]} for s in filas]), hide_index=True, use_container_width=True)
                                             else:
                                                 st.caption("Sin clases para este turno.")
                                 st.divider()
