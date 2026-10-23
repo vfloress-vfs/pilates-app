@@ -1,3 +1,4 @@
 streamlit
 supabase
 opencv-python-headless
+qrcode[pil]
