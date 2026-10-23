@@ -1,4 +1,3 @@
-
 import streamlit as st
 import hashlib
 import hmac
@@ -975,7 +974,7 @@ else:
     
             if "inscripciones" in paneles_admin:
                 with paneles_admin["inscripciones"]:
-                    st.subheader("1. Inscribir alumno")
+                    st.subheader("Inscribir alumno")
                     st.caption("Registra sus datos y confirma el pago del plan para activar su inscripción.")
                     aviso_inscripcion = st.session_state.pop("aviso_inscripcion", None)
                     if aviso_inscripcion:
@@ -1099,7 +1098,7 @@ else:
             if "renovaciones" in paneles_admin:
                 with paneles_admin["renovaciones"]:
                     st.divider()
-                    st.subheader("2. Renovar o cambiar plan")
+                    st.subheader("Renovar o cambiar plan")
                     st.caption("Busca al alumno, revisa el plan actual y confirma el pago antes de aplicar la renovación o mejora.")
                     aviso_renovacion = st.session_state.pop("aviso_renovacion", None)
                     if aviso_renovacion:
@@ -1832,7 +1831,7 @@ else:
             if "alumnos" in paneles_admin:
                 with paneles_admin["alumnos"]:
                     st.divider()
-                    st.subheader("3. Buscar y gestionar alumnos")
+                    st.subheader("Buscar y gestionar alumnos")
                     st.caption("Consulta su historial y actualiza sus datos de contacto o plan.")
                     mensaje_gestion_alumno = st.session_state.pop("mensaje_gestion_alumno", None)
                     if mensaje_gestion_alumno:
