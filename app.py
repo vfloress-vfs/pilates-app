@@ -995,7 +995,7 @@ else:
                             st.write("✨ Plan Flex seleccionado: El alumno tendrá acceso a todas las sedes libres.")
                                 
                     if tipo_p in costos_planes and costos_planes[tipo_p] > 0:
-                        st.info(f"💵 **Valor comercial del paquete seleccionado:** ${costos_planes[tipo_p]:.2f}")
+                        st.info(f"💵 **Valor comercial del paquete seleccionado:** S/ {costos_planes[tipo_p]:.2f}")
 
                     inscripcion_completa = bool(
                         a_nombre.strip() and a_apellido.strip() and a_telefono.strip()
@@ -1003,14 +1003,14 @@ else:
                         and (modalidad != "Fixed" or sede_assigned in opciones_locales)
                     )
                     if inscripcion_completa:
-                        fecha_vencimiento_inscripcion = datetime.now().date() + timedelta(days=30)
+                        fecha_vencimiento_inscripcion = datetime.now(ZoneInfo("America/Lima")).date() + timedelta(days=30)
                         sede_resumen = f" · Sede: {sede_assigned}" if modalidad == "Fixed" else ""
                         st.info(
                             f"**Resumen de inscripción**  \n"
                             f"Alumno: {a_nombre.strip()} {a_apellido.strip()} · Paquete: {tipo_p} "
                             f"({opciones_planes[tipo_p]} clases) · Acceso: {modalidad}{sede_resumen} · "
                             f"Vencimiento: {fecha_vencimiento_inscripcion.strftime('%d/%m/%Y')} · "
-                            f"Total a pagar: ${costos_planes.get(tipo_p, 0):.2f}"
+                            f"Total a pagar: S/ {costos_planes.get(tipo_p, 0):.2f}"
                         )
                         confirmar_pago_inscripcion = st.checkbox(
                             "Confirmo que el alumno ya pagó el plan indicado.",
@@ -1040,11 +1040,11 @@ else:
                                         raise RuntimeError("No se recibió el identificador del alumno.")
                                     id_alumno = nuevo_alumno.data[0]["id"]
                                     total_c = opciones_planes[tipo_p]
-                                    fecha_vence = (datetime.now().date() + timedelta(days=30)).isoformat()
+                                    fecha_vence = (datetime.now(ZoneInfo("America/Lima")).date() + timedelta(days=30)).isoformat()
                                     id_local_fijo = opciones_locales[sede_assigned] if modalidad == "Fixed" else None
                                     id_paquete_creado = None
                                     try:
-                                        fecha_pago = datetime.now().astimezone().isoformat()
+                                        fecha_pago = datetime.now(ZoneInfo("America/Lima")).isoformat()
                                         nuevo_paquete = supabase.table("paquetes").insert({
                                             "alumno_id": id_alumno,
                                             "tipo_paquete": tipo_p,
@@ -1119,7 +1119,7 @@ else:
                             st.info("💡 Por favor, busca y selecciona un alumno en el menú superior para procesar su renovación.")
                         else:
                             id_alumno_sel = dicc_alumnos[alumno_sel]
-                            hoy = datetime.now().date().isoformat()
+                            hoy = datetime.now(ZoneInfo("America/Lima")).date().isoformat()
                             paquete_previo = (
                                 supabase.table("paquetes")
                                 .select("id,clases_restantes,fecha_vencimiento,estado")
@@ -1144,13 +1144,13 @@ else:
                                 elif modalidad_nueva == "Flex": st.write("✨ Plan Flex seleccionado: Acceso global habilitado.")
                                     
                             if tipo_p_nuevo in costos_planes and costos_planes[tipo_p_nuevo] > 0:
-                                st.info(f"💵 **Valor comercial de esta renovación:** ${costos_planes[tipo_p_nuevo]:.2f}")
+                                st.info(f"💵 **Valor comercial de esta renovación:** S/ {costos_planes[tipo_p_nuevo]:.2f}")
 
                             renovacion_completa = bool(
                                 tipo_p_nuevo in opciones_planes and modalidad_nueva
                                 and (modalidad_nueva != "Fixed" or sede_assigned_new in opciones_locales)
                             )
-                            fecha_vencimiento_renovacion = datetime.now().date() + timedelta(days=30)
+                            fecha_vencimiento_renovacion = datetime.now(ZoneInfo("America/Lima")).date() + timedelta(days=30)
                             if renovacion_completa:
                                 base_resumen_renovacion = opciones_planes[tipo_p_nuevo]
                                 total_resumen_renovacion = base_resumen_renovacion + clases_flotantes
@@ -1161,7 +1161,7 @@ else:
                                     f"Clases del plan: {base_resumen_renovacion} · Saldo anterior: {clases_flotantes} · "
                                     f"Saldo total: {total_resumen_renovacion} · Acceso: {modalidad_nueva}{sede_resumen_renovacion} · "
                                     f"Vencimiento: {fecha_vencimiento_renovacion.strftime('%d/%m/%Y')} · "
-                                    f"Total a pagar: ${costos_planes.get(tipo_p_nuevo, 0):.2f}"
+                                    f"Total a pagar: S/ {costos_planes.get(tipo_p_nuevo, 0):.2f}"
                                 )
                                 confirmar_pago_renovacion = st.checkbox(
                                     "Confirmo que el alumno ya pagó la renovación.",
@@ -1184,9 +1184,9 @@ else:
                                         else:
                                             base_nuevas = opciones_planes[tipo_p_nuevo]
                                             total_unificado = base_nuevas + clases_flotantes
-                                            fecha_vence_nueva = (datetime.now().date() + timedelta(days=30)).isoformat()
+                                            fecha_vence_nueva = (datetime.now(ZoneInfo("America/Lima")).date() + timedelta(days=30)).isoformat()
                                             id_local_fijo_nuevo = opciones_locales[sede_assigned_new] if modalidad_nueva == "Fixed" else None
-                                            fecha_pago_renovacion = datetime.now().astimezone().isoformat()
+                                            fecha_pago_renovacion = datetime.now(ZoneInfo("America/Lima")).isoformat()
                                             paquete_nuevo = supabase.table("paquetes").insert({
                                                 "alumno_id": id_alumno_sel, "tipo_paquete": tipo_p_nuevo, "modalidad_plan": modalidad_nueva,
                                                 "local_id_fijo": id_local_fijo_nuevo, "clases_totales": total_unificado, "clases_restantes": total_unificado,
@@ -1250,7 +1250,7 @@ else:
                         st.markdown("#### Registro de Nuevas Ofertas Comerciales")
                         p_nombre = st.text_input("Nombre del nuevo paquete (ej: Plan Black 30 clases):", key=f"p_n_{st.session_state.clear_plan}")
                         p_clases = st.number_input("Cantidad exacta de clases asignadas:", min_value=1, max_value=200, value=None, placeholder="Escribe la cantidad", key=f"p_c_{st.session_state.clear_plan}")
-                        p_costo = st.number_input("Precio / Costo comercial del plan ($):", min_value=0.0, max_value=5000.0, value=None, step=10.0, placeholder="Escribe el precio", key=f"p_v_{st.session_state.clear_plan}")
+                        p_costo = st.number_input("Precio / Costo comercial del plan (S/):", min_value=0.0, max_value=5000.0, value=None, step=10.0, placeholder="Escribe el precio", key=f"p_v_{st.session_state.clear_plan}")
                                     
                         col_p1, col_p2 = st.columns(2)
                         with col_p1:
@@ -1454,7 +1454,7 @@ else:
                                     def minutos_sesion(sesion):
                                         inicio = datetime_time.fromisoformat(str(sesion["hora_inicio"]))
                                         fin = datetime_time.fromisoformat(str(sesion["hora_fin"]))
-                                        return int((datetime.combine(datetime.now().date(), fin) - datetime.combine(datetime.now().date(), inicio)).total_seconds() // 60)
+                                        return int((datetime.combine(datetime.now(ZoneInfo("America/Lima")).date(), fin) - datetime.combine(datetime.now(ZoneInfo("America/Lima")).date(), inicio)).total_seconds() // 60)
 
                                     def monto_fijo_sesion(sesion):
                                         # El monto fijo por clase usa la tarifa congelada al programarla.
@@ -1524,7 +1524,7 @@ else:
                                                 supabase.table("pagos_instructoras").insert({
                                                     "sesion_id": sesion_pagada["id"],
                                                     "instructora_id": instructora_actual["id"],
-                                                    "fecha_pago": datetime.now().date().isoformat(),
+                                                    "fecha_pago": datetime.now(ZoneInfo("America/Lima")).date().isoformat(),
                                                     "pago_por_clase_aplicado": sesion_pagada["pago_por_clase_aplicado"],
                                                     "duracion_minutos": minutos_sesion(sesion_pagada),
                                                     "importe": round(monto_fijo_sesion(sesion_pagada), 2),
@@ -1678,8 +1678,8 @@ else:
                             with col_mas1:
                                 sede_agenda = st.selectbox("Selecciona Sede:", [""] + list(opciones_locales.keys()), key=f"mas_sede_{st.session_state.clear_agenda}", placeholder="Selecciona una sede...")
                                 sede_objeto_agenda = next((l for l in lista_locales if l["nombre"] == sede_agenda), None)
-                                fecha_inicio = st.date_input("Fecha de Inicio:", value=None, min_value=datetime.now().date(), key=f"mas_f_ini_{st.session_state.clear_agenda}")
-                                fecha_fin = st.date_input("Fecha de Fin:", value=None, min_value=datetime.now().date(), key=f"mas_f_fin_{st.session_state.clear_agenda}")
+                                fecha_inicio = st.date_input("Fecha de Inicio:", value=None, min_value=datetime.now(ZoneInfo("America/Lima")).date(), key=f"mas_f_ini_{st.session_state.clear_agenda}")
+                                fecha_fin = st.date_input("Fecha de Fin:", value=None, min_value=datetime.now(ZoneInfo("America/Lima")).date(), key=f"mas_f_fin_{st.session_state.clear_agenda}")
                                 hora_agenda = st.time_input("Hora de inicio:", value=datetime_time(8, 0), key=f"mas_hora_{st.session_state.clear_agenda}")
                                 duracion_agenda = st.number_input("Duración (minutos):", min_value=15, max_value=240, value=50, step=5, key=f"mas_duracion_{st.session_state.clear_agenda}")
                             with col_mas2:
@@ -1765,9 +1765,9 @@ else:
                         try:
                             col_desde, col_hasta = st.columns(2)
                             with col_desde:
-                                desde = st.date_input("Desde", value=datetime.now().date(), key="agenda_reporte_desde")
+                                desde = st.date_input("Desde", value=datetime.now(ZoneInfo("America/Lima")).date(), key="agenda_reporte_desde")
                             with col_hasta:
-                                hasta = st.date_input("Hasta", value=datetime.now().date() + timedelta(days=6), key="agenda_reporte_hasta")
+                                hasta = st.date_input("Hasta", value=datetime.now(ZoneInfo("America/Lima")).date() + timedelta(days=6), key="agenda_reporte_hasta")
                             sesiones_reporte = supabase.table("sesiones_clase").select("*").gte("fecha_clase", desde.isoformat()).lte("fecha_clase", hasta.isoformat()).order("hora_inicio").order("fecha_clase").execute().data or []
                             if desde > hasta:
                                 st.warning("El rango de fechas no es válido.")
@@ -1961,7 +1961,7 @@ else:
                                         .select("id,tipo_paquete,modalidad_plan,local_id_fijo,clases_totales,clases_restantes,fecha_vencimiento,estado,pagado,fecha_pago,pago_confirmado_por,pago_revertido_en,pago_revertido_por")
                                         .eq("alumno_id", data_al["id"])
                                         .eq("estado", "Activo")
-                                        .gte("fecha_vencimiento", datetime.now().date().isoformat())
+                                        .gte("fecha_vencimiento", datetime.now(ZoneInfo("America/Lima")).date().isoformat())
                                         .order("fecha_compra", desc=True)
                                         .execute()
                                     )
@@ -2000,7 +2000,7 @@ else:
                                                     st.info(
                                                         f"**Resumen del cambio de plan:** {paquete_actual['tipo_paquete']} → {paquete_nuevo_alumno} · "
                                                         f"Se añadirán {diferencia_upgrade} clases al saldo actual · "
-                                                        f"Total a pagar: ${costos_planes.get(paquete_nuevo_alumno, 0):.2f}"
+                                                        f"Total a pagar: S/ {costos_planes.get(paquete_nuevo_alumno, 0):.2f}"
                                                     )
                                                     confirmar_pago_upgrade = st.checkbox(
                                                         "Confirmo que el alumno ya pagó el cambio de plan.",
@@ -2051,7 +2051,7 @@ else:
                                                         if paquete_nuevo_alumno and paquete_nuevo_alumno != "Sin cambio":
                                                             clases_nuevo_plan = planes_superiores[paquete_nuevo_alumno]
                                                             diferencia_clases = clases_nuevo_plan - int(paquete_actual.get("clases_totales") or 0)
-                                                            fecha_pago_upgrade = datetime.now().astimezone().isoformat()
+                                                            fecha_pago_upgrade = datetime.now(ZoneInfo("America/Lima")).isoformat()
                                                             actualizacion_paquete.update({
                                                                 "tipo_paquete": paquete_nuevo_alumno,
                                                                 "clases_totales": clases_nuevo_plan,
@@ -2176,7 +2176,7 @@ else:
                                                 )
                                                 if sede_detalle:
                                                     texto_detalle += f" en {sede_detalle}"
-                                                importe = f"${float(detalle.get('costo') or 0):.2f}"
+                                                importe = f"S/ {float(detalle.get('costo') or 0):.2f}"
                                             elif tipo_evento == "renovacion":
                                                 texto_detalle = (
                                                     f"Paquete {detalle.get('tipo_paquete', '—')}: "
@@ -2185,7 +2185,7 @@ else:
                                                     f"(saldo total: {detalle.get('clases_totales', '—')}); "
                                                     f"acceso {detalle.get('modalidad_plan', '—')}"
                                                 )
-                                                importe = f"${float(detalle.get('costo') or 0):.2f}"
+                                                importe = f"S/ {float(detalle.get('costo') or 0):.2f}"
                                             elif tipo_evento == "cambio_plan":
                                                 anterior = detalle.get("paquete_anterior") or {}
                                                 texto_detalle = (
@@ -2193,7 +2193,7 @@ else:
                                                     f"{detalle.get('tipo_paquete_nuevo', 'paquete superior')}; "
                                                     f"modalidad {detalle.get('modalidad_nueva', '—')}"
                                                 )
-                                                importe = f"${float(detalle.get('costo') or 0):.2f}"
+                                                importe = f"S/ {float(detalle.get('costo') or 0):.2f}"
                                             elif tipo_evento == "cambio_modalidad":
                                                 local_detalle = locales_por_id.get(str(detalle.get("local_id_fijo_nuevo")), "")
                                                 texto_detalle = f"Modalidad actualizada a {detalle.get('modalidad_nueva', '—')}"
@@ -2209,13 +2209,13 @@ else:
                                                 if paquete_original:
                                                     texto_detalle = f"Se revirtió el pago asociado al paquete {paquete_original} y se restauró el estado anterior."
                                                 if detalle_original.get("costo") is not None:
-                                                    importe = f"${float(detalle_original.get('costo') or 0):.2f} (revertido)"
+                                                    importe = f"S/ {float(detalle_original.get('costo') or 0):.2f} (revertido)"
                                             else:
                                                 texto_detalle = "Se actualizaron los datos del paquete."
 
                                             fecha_evento = str(evento.get("fecha_evento") or "")
                                             try:
-                                                fecha_evento = datetime.fromisoformat(fecha_evento.replace("Z", "+00:00")).astimezone().strftime("%d/%m/%Y %H:%M")
+                                                fecha_evento = datetime.fromisoformat(fecha_evento.replace("Z", "+00:00")).astimezone(ZoneInfo("America/Lima")).strftime("%d/%m/%Y %H:%M")
                                             except (TypeError, ValueError):
                                                 pass
                                             admin_id_evento = evento.get("realizado_por")
