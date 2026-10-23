@@ -528,12 +528,15 @@ else:
                         sesiones_futuras.append(sesion)
                 ids_sesiones = [s["id"] for s in sesiones_futuras]
                 reservas_agendadas = []
+                sesiones_reservadas_alumno = set()
                 if ids_sesiones:
-                    reservas_agendadas = supabase.table("reservas").select("sesion_id,estado").in_("sesion_id", ids_sesiones).eq("estado", "Programada").execute().data or []
+                    reservas_agendadas = supabase.table("reservas").select("sesion_id,estado,alumno_id").in_("sesion_id", ids_sesiones).eq("estado", "Programada").execute().data or []
                 ocupacion = {}
                 for reserva_activa in reservas_agendadas:
                     id_sesion = reserva_activa.get("sesion_id")
                     ocupacion[id_sesion] = ocupacion.get(id_sesion, 0) + 1
+                    if str(reserva_activa.get("alumno_id")) == str(id_alumno_portal):
+                        sesiones_reservadas_alumno.add(int(id_sesion))
                 locales_portal = supabase.table("locales").select("id,nombre").execute().data or []
                 instructoras_portal = supabase.table("instructoras").select("id,nombre").execute().data or []
                 nombre_local_portal = {x["id"]: x.get("nombre", "Sede") for x in locales_portal}
@@ -546,6 +549,14 @@ else:
                     s for s in sesiones_con_cupo
                     if ahora_portal <= limite_reserva_cancelacion(s["_inicio_dt"])
                 ]
+                sesiones_reserva_mostrables = [
+                    s for s in sesiones_futuras
+                    if int(s["id"]) in sesiones_reservadas_alumno
+                    or (
+                        ocupacion.get(s["id"], 0) < int(s.get("capacidad") or 0)
+                        and ahora_portal <= limite_reserva_cancelacion(s["_inicio_dt"])
+                    )
+                ]
                 etiqueta_sesion = lambda s: (
                     f"{s['fecha_clase']} · {str(s['hora_inicio'])[:5]} · {s.get('tipo_servicio', 'Clase')} · "
                     f"{nombre_local_portal.get(s.get('local_id'), 'Sede')} · "
@@ -557,12 +568,12 @@ else:
                     st.subheader("Reservar una clase")
                     if not paquetes_portal:
                         st.info("Necesitas un plan pagado, vigente y con clases disponibles para reservar.")
-                    elif not sesiones_disponibles:
+                    elif not sesiones_reserva_mostrables:
                         st.info(f"No hay clases con cupos y dentro del plazo de reserva. Las clases de mañana se reservan hasta las {limite_reserva_manana.strftime('%H:%M')} del día anterior; las de tarde, hasta {limite_reserva_tarde_horas} horas antes.")
                     else:
                         opciones_reserva = []
                         for plan in paquetes_portal:
-                            for sesion in sesiones_disponibles:
+                            for sesion in sesiones_reserva_mostrables:
                                 if plan.get("modalidad_plan") != "Fixed" or plan.get("local_id_fijo") == sesion.get("local_id"):
                                     opciones_reserva.append((plan, sesion))
                         if opciones_reserva:
@@ -570,7 +581,7 @@ else:
                             for plan, sesion in opciones_reserva:
                                 planes_por_sesion.setdefault(int(sesion["id"]), []).append(plan)
 
-                            sesiones_con_plan = [s for s in sesiones_disponibles if int(s["id"]) in planes_por_sesion]
+                            sesiones_con_plan = [s for s in sesiones_reserva_mostrables if int(s["id"]) in planes_por_sesion]
                             fechas_con_clases = sorted({sesion["_inicio_dt"].date() for sesion in sesiones_con_plan})
                             st.caption("Elige un día en el calendario para ver sus clases disponibles. La lista conserva el detalle de horarios, sede, instructor y cupos.")
                             fecha_reserva = st.date_input(
@@ -596,13 +607,18 @@ else:
                                         st.markdown(f"**{str(sesion['hora_inicio'])[:5]}–{str(sesion['hora_fin'])[:5]} · {sesion.get('tipo_servicio', 'Clase')}**")
                                         st.write(f"📍 {nombre_local_portal.get(sesion.get('local_id'), 'Sede')}  ·  👤 {nombre_instructora_portal.get(sesion.get('instructora_id'), 'Instructor')}")
                                         plazo_reserva = limite_reserva_cancelacion(sesion["_inicio_dt"])
-                                        st.caption(f"{cupos_sesion} {'cupos disponibles' if cupos_sesion != 1 else 'cupo disponible'} · Reserva hasta {plazo_reserva.strftime('%d/%m a las %H:%M')}")
-                                        seleccionada = st.session_state.get(sesion_portal_key) == int(sesion["id"])
+                                        ya_reservada = int(sesion["id"]) in sesiones_reservadas_alumno
+                                        if ya_reservada:
+                                            st.info("Ya tienes esta clase reservada.")
+                                        else:
+                                            st.caption(f"{cupos_sesion} {'cupos disponibles' if cupos_sesion != 1 else 'cupo disponible'} · Reserva hasta {plazo_reserva.strftime('%d/%m a las %H:%M')}")
+                                        seleccionada = not ya_reservada and st.session_state.get(sesion_portal_key) == int(sesion["id"])
                                         if st.button(
-                                            "Horario elegido ✓" if seleccionada else "Elegir este horario",
+                                            "Ya tienes esta clase reservada" if ya_reservada else ("Horario elegido ✓" if seleccionada else "Elegir este horario"),
                                             key=f"elegir_sesion_portal_{id_alumno_portal}_{sesion['id']}_{st.session_state.clear_portal_reserva}",
                                             type="primary" if seleccionada else "secondary",
                                             use_container_width=True,
+                                            disabled=ya_reservada,
                                         ):
                                             st.session_state[sesion_portal_key] = int(sesion["id"])
                                             st.rerun()
