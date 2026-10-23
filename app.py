@@ -5,7 +5,8 @@ import secrets
 import base64
 import html
 import re
-from datetime import datetime, timedelta
+import pandas as pd
+from datetime import datetime, timedelta, time as datetime_time
 from supabase import create_client, Client
 
 # 1. CONFIGURACIÓN DE LA PÁGINA (Debe ser la primera línea de Streamlit)
@@ -287,6 +288,7 @@ VENTANAS_ADMIN = {
     "inscripciones": "Inscripciones",
     "renovaciones": "Renovaciones",
     "planes": "Planes y tarifas",
+    "instructoras": "Gestión de Instructoras",
     "agenda": "Agenda",
     "alumnos": "Gestión de Alumnos",
     "configuracion": "Configuración",
@@ -541,7 +543,7 @@ else:
             if "clear_ren" not in st.session_state: st.session_state.clear_ren = 0
             if "clear_search" not in st.session_state: st.session_state.clear_search = 0
             if "clear_plan" not in st.session_state: st.session_state.clear_plan = 0
-            for llave_limpieza in ("clear_instructora", "clear_agenda", "clear_feriado", "clear_usuario", "clear_tarifa", "clear_cuenta", "clear_reset_clave", "clear_configuracion", "clear_editar_alumno", "clear_permisos", "clear_eliminar_usuario", "clear_catalogo", "clear_dias_operativos", "clear_feriados_tabla", "clear_paquete_alumno"):
+            for llave_limpieza in ("clear_instructora", "clear_agenda", "clear_feriado", "clear_usuario", "clear_tarifa", "clear_cuenta", "clear_reset_clave", "clear_configuracion", "clear_editar_alumno", "clear_permisos", "clear_eliminar_usuario", "clear_catalogo", "clear_dias_operativos", "clear_feriados_tabla", "clear_paquete_alumno", "clear_gestion_instructoras", "clear_programacion_clases", "clear_estado_sesion", "clear_pago_instructora"):
                 if llave_limpieza not in st.session_state:
                     st.session_state[llave_limpieza] = 0
 
@@ -577,6 +579,7 @@ else:
             ventanas_visibles = [
                 clave for clave in ventanas_disponibles
                 if st.session_state.admin_es_superadmin or clave in permisos_sesion
+                or (clave == "instructoras" and "agenda" in permisos_sesion)
             ]
             claves_pestanas = ventanas_visibles + ["mi_cuenta"]
             if st.session_state.admin_es_superadmin:
@@ -1007,9 +1010,9 @@ else:
                         else: st.info("No hay planes configurados para modificar.")
 
                     with sub_tab3:
-                        st.markdown("#### Lista de Tarifas Ordenadas de Mayor a Menor Precio")
+                        st.markdown("#### Catálogo de planes · precio de menor a mayor")
                         try:
-                            todos_planes_res = supabase.table("tipos_paquetes").select("*").order("costo", desc=True).execute()
+                            todos_planes_res = supabase.table("tipos_paquetes").select("*").order("costo", desc=False).execute()
                             if todos_planes_res.data and len(todos_planes_res.data) > 0:
                                 import pandas as pd
                                 df_catalogo = pd.DataFrame(todos_planes_res.data)
@@ -1030,38 +1033,235 @@ else:
                             else: st.info("💡 No se encontraron planes registrados.")
                         except Exception as e: st.error(f"Error: {e}")
                                     
+            if "instructoras" in paneles_admin:
+                with paneles_admin["instructoras"]:
+                    st.subheader(":material/groups: Gestión de Instructoras")
+                    st.caption("Administra datos y tarifas, consulta las clases dictadas y lleva el control de pagos.")
+                    aviso_instructora = st.session_state.pop("aviso_instructora", None)
+                    if aviso_instructora:
+                        st.success(aviso_instructora)
+
+                    tab_directorio_inst, tab_alta_inst = st.tabs(["Directorio y ficha", "Registrar instructora"])
+                    try:
+                        instructoras_res = supabase.table("instructoras").select("id,nombre,telefono,costo_hora,activo").order("nombre").execute()
+                        instructoras_db = instructoras_res.data or []
+                    except Exception as e:
+                        instructoras_db = []
+                        st.error(f"No se pudo cargar el directorio de instructoras: {e}")
+
+                    with tab_directorio_inst:
+                        if instructoras_db:
+                            opciones_instructoras = {
+                                f"{i['nombre']} · {'Activa' if i.get('activo', True) else 'Inactiva'}": i
+                                for i in instructoras_db
+                            }
+                            etiqueta_instructora = st.selectbox(
+                                "Busca y selecciona una instructora:",
+                                [""] + list(opciones_instructoras),
+                                key=f"buscar_instructora_{st.session_state.clear_gestion_instructoras}",
+                                placeholder="Escribe su nombre..."
+                            )
+                            instructora_actual = opciones_instructoras.get(etiqueta_instructora)
+                            if instructora_actual:
+                                st.markdown(f"### {instructora_actual['nombre']}")
+                                estado_instructora = "Activa" if instructora_actual.get("activo", True) else "Inactiva"
+                                st.caption(f"Estado: {estado_instructora} · Teléfono: {instructora_actual.get('telefono') or 'No registrado'} · Tarifa: ${float(instructora_actual.get('costo_hora') or 0):.2f} por hora")
+
+                                with st.expander("Modificar datos personales y tarifa", expanded=False):
+                                    with st.form(f"form_editar_instructora_{instructora_actual['id']}_{st.session_state.clear_gestion_instructoras}"):
+                                        nombre_inst_editado = st.text_input("Nombre completo", value=instructora_actual["nombre"], key=f"nombre_inst_edit_{instructora_actual['id']}_{st.session_state.clear_gestion_instructoras}")
+                                        telefono_inst_editado = st.text_input("Teléfono", value=instructora_actual.get("telefono") or "", key=f"telefono_inst_edit_{instructora_actual['id']}_{st.session_state.clear_gestion_instructoras}")
+                                        tarifa_inst_editada = st.number_input("Tarifa por hora ($)", min_value=0.0, value=float(instructora_actual.get("costo_hora") or 0), step=5.0, key=f"tarifa_inst_edit_{instructora_actual['id']}_{st.session_state.clear_gestion_instructoras}")
+                                        guardar_inst_editada = st.form_submit_button("Guardar cambios", type="primary")
+                                        limpiar_inst_editada = st.form_submit_button("Restaurar datos")
+                                    if limpiar_inst_editada:
+                                        st.session_state.clear_gestion_instructoras += 1
+                                        st.rerun()
+                                    elif guardar_inst_editada:
+                                        if not nombre_inst_editado.strip():
+                                            st.error("El nombre de la instructora es obligatorio.")
+                                        else:
+                                            try:
+                                                supabase.table("instructoras").update({
+                                                    "nombre": nombre_inst_editado.strip(),
+                                                    "telefono": telefono_inst_editado.strip() or None,
+                                                    "costo_hora": tarifa_inst_editada
+                                                }).eq("id", instructora_actual["id"]).execute()
+                                                st.session_state.aviso_instructora = "Datos de la instructora actualizados. Las sesiones existentes conservan su tarifa histórica."
+                                                st.session_state.clear_gestion_instructoras += 1
+                                                st.rerun()
+                                            except Exception as e:
+                                                st.error(f"No se pudieron guardar los datos: {e}")
+
+                                col_estado_inst, col_ficha_inst = st.columns([1, 2])
+                                with col_estado_inst:
+                                    if instructora_actual.get("activo", True):
+                                        confirmar_baja_inst = st.checkbox(
+                                            "Confirmo dar de baja a esta instructora",
+                                            key=f"confirmar_baja_inst_{instructora_actual['id']}_{st.session_state.clear_gestion_instructoras}"
+                                        )
+                                        if st.button("Dar de baja", key=f"baja_inst_{instructora_actual['id']}_{st.session_state.clear_gestion_instructoras}", disabled=not confirmar_baja_inst):
+                                            try:
+                                                supabase.table("instructoras").update({"activo": False}).eq("id", instructora_actual["id"]).execute()
+                                                st.session_state.aviso_instructora = f"{instructora_actual['nombre']} quedó inactiva. Su historial se conserva."
+                                                st.session_state.clear_gestion_instructoras += 1
+                                                st.rerun()
+                                            except Exception as e:
+                                                st.error(f"No se pudo dar de baja: {e}")
+                                    else:
+                                        if st.button("Reactivar instructora", key=f"reactivar_inst_{instructora_actual['id']}_{st.session_state.clear_gestion_instructoras}"):
+                                            try:
+                                                supabase.table("instructoras").update({"activo": True}).eq("id", instructora_actual["id"]).execute()
+                                                st.session_state.aviso_instructora = f"{instructora_actual['nombre']} volvió a estar activa."
+                                                st.session_state.clear_gestion_instructoras += 1
+                                                st.rerun()
+                                            except Exception as e:
+                                                st.error(f"No se pudo reactivar: {e}")
+
+                                try:
+                                    sesiones_inst_res = (
+                                        supabase.table("sesiones_clase")
+                                        .select("id,local_id,fecha_clase,hora_inicio,hora_fin,tipo_servicio,capacidad,estado,tarifa_hora_aplicada")
+                                        .eq("instructora_id", instructora_actual["id"])
+                                        .order("fecha_clase", desc=True)
+                                        .limit(500)
+                                        .execute()
+                                    )
+                                    sesiones_inst = sesiones_inst_res.data or []
+                                    pagos_inst_res = (
+                                        supabase.table("pagos_instructoras")
+                                        .select("id,sesion_id,fecha_pago,importe,referencia")
+                                        .eq("instructora_id", instructora_actual["id"])
+                                        .order("fecha_pago", desc=True)
+                                        .limit(500)
+                                        .execute()
+                                    )
+                                    pagos_inst = pagos_inst_res.data or []
+                                    pagos_por_sesion = {p["sesion_id"]: p for p in pagos_inst}
+                                    completadas_inst = [s for s in sesiones_inst if s["estado"] == "Realizada"]
+
+                                    def minutos_sesion(sesion):
+                                        inicio = datetime_time.fromisoformat(str(sesion["hora_inicio"]))
+                                        fin = datetime_time.fromisoformat(str(sesion["hora_fin"]))
+                                        return int((datetime.combine(datetime.now().date(), fin) - datetime.combine(datetime.now().date(), inicio)).total_seconds() // 60)
+
+                                    def importe_sesion(sesion):
+                                        return (minutos_sesion(sesion) / 60) * float(sesion.get("tarifa_hora_aplicada") or 0)
+
+                                    por_pagar_inst = sum(importe_sesion(s) for s in completadas_inst if s["id"] not in pagos_por_sesion)
+                                    pagado_inst = sum(float(p.get("importe") or 0) for p in pagos_inst)
+                                    horas_inst = sum(minutos_sesion(s) for s in completadas_inst) / 60
+                                    met1, met2, met3, met4 = st.columns(4)
+                                    met1.metric("Clases dictadas", len(completadas_inst))
+                                    met2.metric("Horas dictadas", f"{horas_inst:.1f}")
+                                    met3.metric("Pendiente de pago", f"${por_pagar_inst:.2f}")
+                                    met4.metric("Pagos registrados", f"${pagado_inst:.2f}")
+
+                                    if sesiones_inst:
+                                        st.markdown("#### Horarios, sedes y clases")
+                                        locales_por_id_inst = {l["id"]: l["nombre"] for l in lista_locales_admin}
+                                        filas_sesiones_inst = []
+                                        for sesion in sesiones_inst:
+                                            filas_sesiones_inst.append({
+                                                "Fecha": sesion["fecha_clase"],
+                                                "Horario": f"{str(sesion['hora_inicio'])[:5]}–{str(sesion['hora_fin'])[:5]}",
+                                                "Sede": locales_por_id_inst.get(sesion["local_id"], "Sede"),
+                                                "Clase": sesion["tipo_servicio"],
+                                                "Estado": sesion["estado"],
+                                                "Pago": f"${float(pagos_por_sesion[sesion['id']]['importe']):.2f}" if sesion["id"] in pagos_por_sesion else (f"Pendiente · ${importe_sesion(sesion):.2f}" if sesion["estado"] == "Realizada" else "—")
+                                            })
+                                        st.dataframe(pd.DataFrame(filas_sesiones_inst), use_container_width=True, hide_index=True)
+                                    else:
+                                        st.info("Aún no hay sesiones programadas para esta instructora.")
+
+                                    sesiones_por_pagar = [s for s in completadas_inst if s["id"] not in pagos_por_sesion]
+                                    if sesiones_por_pagar:
+                                        st.markdown("#### Registrar pago de una clase dictada")
+                                        pagos_opciones = {
+                                            f"{s['fecha_clase']} · {str(s['hora_inicio'])[:5]} · {locales_por_id_inst.get(s['local_id'], 'Sede')} · ${importe_sesion(s):.2f}": s
+                                            for s in sesiones_por_pagar
+                                        }
+                                        pago_sesion_label = st.selectbox(
+                                            "Clase pendiente de pago:",
+                                            [""] + list(pagos_opciones),
+                                            key=f"sesion_pago_inst_{instructora_actual['id']}_{st.session_state.clear_pago_instructora}",
+                                            placeholder="Selecciona una clase..."
+                                        )
+                                        pago_referencia = st.text_input("Referencia o nota del pago", key=f"referencia_pago_inst_{instructora_actual['id']}_{st.session_state.clear_pago_instructora}")
+                                        if pago_sesion_label:
+                                            st.info(f"Importe a registrar: **${importe_sesion(pagos_opciones[pago_sesion_label]):.2f}**")
+                                        if st.button("Registrar pago realizado", key=f"guardar_pago_inst_{instructora_actual['id']}_{st.session_state.clear_pago_instructora}", type="primary", disabled=not pago_sesion_label):
+                                            sesion_pagada = pagos_opciones[pago_sesion_label]
+                                            try:
+                                                supabase.table("pagos_instructoras").insert({
+                                                    "sesion_id": sesion_pagada["id"],
+                                                    "instructora_id": instructora_actual["id"],
+                                                    "fecha_pago": datetime.now().date().isoformat(),
+                                                    "tarifa_hora_aplicada": sesion_pagada["tarifa_hora_aplicada"],
+                                                    "duracion_minutos": minutos_sesion(sesion_pagada),
+                                                    "importe": round(importe_sesion(sesion_pagada), 2),
+                                                    "referencia": pago_referencia.strip() or None,
+                                                    "registrado_por": st.session_state.admin_id
+                                                }).execute()
+                                                st.session_state.aviso_instructora = f"Pago de ${importe_sesion(sesion_pagada):.2f} registrado para {instructora_actual['nombre']}."
+                                                st.session_state.clear_pago_instructora += 1
+                                                st.rerun()
+                                            except Exception as e:
+                                                st.error(f"No se pudo registrar el pago: {e}")
+
+                                    if pagos_inst:
+                                        st.markdown("#### Historial de pagos realizados")
+                                        pagos_historial = []
+                                        sesiones_por_id = {s["id"]: s for s in sesiones_inst}
+                                        for pago in pagos_inst:
+                                            sesion_pago = sesiones_por_id.get(pago["sesion_id"], {})
+                                            pagos_historial.append({
+                                                "Fecha de pago": pago["fecha_pago"],
+                                                "Fecha de clase": sesion_pago.get("fecha_clase", "—"),
+                                                "Sede": locales_por_id_inst.get(sesion_pago.get("local_id"), "—"),
+                                                "Importe": f"${float(pago.get('importe') or 0):.2f}",
+                                                "Referencia": pago.get("referencia") or "—"
+                                            })
+                                        st.dataframe(pd.DataFrame(pagos_historial), use_container_width=True, hide_index=True)
+                                except Exception as e:
+                                    st.warning(f"Para consultar clases y pagos, ejecuta supabase_gestion_instructoras_migration.sql en Supabase. Detalle: {e}")
+                        else:
+                            st.info("Registra una instructora para abrir su ficha y llevar su historial.")
+
+                    with tab_alta_inst:
+                        st.markdown("#### Registrar instructora")
+                        nombre_inst_nueva = st.text_input("Nombre completo", key=f"alta_inst_nombre_{st.session_state.clear_gestion_instructoras}")
+                        telefono_inst_nueva = st.text_input("Teléfono de contacto", key=f"alta_inst_telefono_{st.session_state.clear_gestion_instructoras}")
+                        tarifa_inst_nueva = st.number_input("Tarifa por hora ($)", min_value=0.0, value=None, step=5.0, placeholder="Escribe la tarifa", key=f"alta_inst_tarifa_{st.session_state.clear_gestion_instructoras}")
+                        col_guardar_inst_nueva, col_limpiar_inst_nueva = st.columns(2)
+                        with col_guardar_inst_nueva:
+                            if st.button("Guardar instructora", key=f"guardar_inst_nueva_{st.session_state.clear_gestion_instructoras}"):
+                                if not nombre_inst_nueva.strip() or tarifa_inst_nueva is None:
+                                    st.error("Completa el nombre y la tarifa por hora.")
+                                else:
+                                    try:
+                                        supabase.table("instructoras").insert({
+                                            "nombre": nombre_inst_nueva.strip(),
+                                            "telefono": telefono_inst_nueva.strip() or None,
+                                            "costo_hora": tarifa_inst_nueva,
+                                            "activo": True
+                                        }).execute()
+                                        st.session_state.aviso_instructora = f"Instructora '{nombre_inst_nueva.strip()}' registrada."
+                                        st.session_state.clear_gestion_instructoras += 1
+                                        st.rerun()
+                                    except Exception as e:
+                                        st.error(f"No se pudo registrar la instructora: {e}")
+                        with col_limpiar_inst_nueva:
+                            if st.button("Limpiar campos", key=f"limpiar_inst_nueva_{st.session_state.clear_gestion_instructoras}"):
+                                st.session_state.clear_gestion_instructoras += 1
+                                st.rerun()
+
             if "agenda" in paneles_admin:
                 with paneles_admin["agenda"]:
-                    st.subheader("🗓️ Control de Agenda, Clases e Inactividades")
-                    sub_agenda1, sub_agenda2, sub_agenda3, sub_agenda4 = st.tabs([
-                        "Instructoras", "Programación de horarios", "Días laborales", "Feriados y festivos"
-                    ])
-                                    
+                    st.subheader(":material/calendar_month: Agenda y sesiones del estudio")
+                    sub_agenda1, sub_agenda2 = st.tabs(["Programar clases", "Calendario por sede"])
+
                     with sub_agenda1:
-                        st.markdown("#### Alta de Profesoras y Tarifas por Hora")
-                        aviso_instructora = st.session_state.pop("aviso_instructora", None)
-                        if aviso_instructora:
-                            st.success(aviso_instructora)
-                        inst_nombre = st.text_input("Nombre completo de la Instructora:", key=f"inst_nombre_{st.session_state.clear_instructora}")
-                        inst_telefono = st.text_input("Teléfono de contacto:", key=f"inst_telefono_{st.session_state.clear_instructora}")
-                        inst_costo = st.number_input("Costo / Tarifa por hora dictada ($):", min_value=0.0, value=None, step=5.0, placeholder="Escribe la tarifa", key=f"inst_costo_{st.session_state.clear_instructora}")
-                        col_inst_1, col_inst_2 = st.columns(2)
-                        with col_inst_1:
-                            if st.button("Guardar Instructora"):
-                                if inst_nombre.strip() and inst_costo is not None:
-                                    try:
-                                        supabase.table("instructoras").insert({"nombre": inst_nombre.strip(), "telefono": inst_telefono.strip(), "costo_hora": inst_costo}).execute()
-                                        st.session_state.aviso_instructora = f"Instructora '{inst_nombre.strip()}' registrada."
-                                        st.session_state.clear_instructora += 1
-                                        st.rerun()
-                                    except Exception as e: st.error(f"❌ Error al guardar instructora: {e}")
-                                else: st.error("Completa el nombre y la tarifa por hora.")
-                        with col_inst_2:
-                            if st.button("Limpiar campos", key="limpiar_instructora"):
-                                st.session_state.clear_instructora += 1
-                                st.rerun()
-                                                
-                    with sub_agenda2:
                         st.markdown("#### 🚀 Generador Automatizado de Calendario Mensual")
                         aviso_agenda = st.session_state.pop("aviso_agenda", None)
                         if aviso_agenda:
@@ -1070,18 +1270,19 @@ else:
                             dias_db = supabase.table("dias_operativos").select("nombre_dia", "numero_dia", "habilitado").execute()
                             dias_habilitados = {d['numero_dia']: d['habilitado'] for d in dias_db.data} if dias_db.data else {}
                                             
-                            inst_res = supabase.table("instructoras").select("id", "nombre").eq("activo", True).execute()
+                            inst_res = supabase.table("instructoras").select("id", "nombre", "costo_hora").eq("activo", True).execute()
                             lista_inst = inst_res.data if inst_res.data else []
-                            opciones_inst = {ins['nombre']: ins['id'] for ins in lista_inst}
+                            opciones_inst = {f"{ins['nombre']} · S/ {float(ins.get('costo_hora') or 0):.2f}/h": ins for ins in lista_inst}
                                             
                             col_mas1, col_mas2 = st.columns(2)
                             with col_mas1:
                                 sede_agenda = st.selectbox("Selecciona Sede:", [""] + list(opciones_locales.keys()), key=f"mas_sede_{st.session_state.clear_agenda}", placeholder="Selecciona una sede...")
                                 fecha_inicio = st.date_input("Fecha de Inicio:", value=None, min_value=datetime.now().date(), key=f"mas_f_ini_{st.session_state.clear_agenda}")
                                 fecha_fin = st.date_input("Fecha de Fin:", value=None, min_value=datetime.now().date(), key=f"mas_f_fin_{st.session_state.clear_agenda}")
-                                hora_agenda = st.time_input("Hora de Inicio:", value=None, key=f"mas_hora_{st.session_state.clear_agenda}")
+                                hora_agenda = st.time_input("Hora de inicio:", value=datetime_time(8, 0), key=f"mas_hora_{st.session_state.clear_agenda}")
+                                duracion_agenda = st.number_input("Duración (minutos):", min_value=15, max_value=240, value=50, step=5, key=f"mas_duracion_{st.session_state.clear_agenda}")
                             with col_mas2:
-                                inst_agenda = st.selectbox("Asignar Instructora:", [""] + list(opciones_inst.keys()), key=f"mas_inst_{st.session_state.clear_agenda}", placeholder="Selecciona una instructora...")
+                                inst_agenda = st.selectbox("Asignar instructora:", [""] + list(opciones_inst.keys()), key=f"mas_inst_{st.session_state.clear_agenda}", placeholder="Selecciona una instructora...")
                                 tipo_serv_agenda = st.selectbox("Tipo de Sesión:", ["", "Grupal", "Privado"], key=f"mas_tipo_{st.session_state.clear_agenda}", placeholder="Selecciona una modalidad...")
                                 if tipo_serv_agenda == "Grupal":
                                     aforo_agenda = st.number_input("Aforo Máximo Camillas:", min_value=4, max_value=10, value=None, placeholder="Indica el aforo", key=f"mas_aforo_{st.session_state.clear_agenda}")
@@ -1089,19 +1290,14 @@ else:
                                 else: aforo_agenda = None
                                             
                             dias_seleccionados = []
-                            col_d1, col_d2, col_d3, col_d4, col_d5 = st.columns(5)
-                            with col_d1: 
-                                if st.checkbox("Lunes", value=False, key=f"dia_lunes_{st.session_state.clear_agenda}"): dias_seleccionados.append(0)
-                            with col_d2: 
-                                if st.checkbox("Martes", value=False, key=f"dia_martes_{st.session_state.clear_agenda}"): dias_seleccionados.append(1)
-                            with col_d3: 
-                                if st.checkbox("Miércoles", value=False, key=f"dia_miercoles_{st.session_state.clear_agenda}"): dias_seleccionados.append(2)
-                            with col_d4: 
-                                if st.checkbox("Jueves", value=False, key=f"dia_jueves_{st.session_state.clear_agenda}"): dias_seleccionados.append(3)
-                            with col_d5: 
-                                if st.checkbox("Viernes", value=False, key=f"dia_viernes_{st.session_state.clear_agenda}"): dias_seleccionados.append(4)
+                            nombres_dias = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado", "Domingo"]
+                            cols_dias = st.columns(4)
+                            for numero_dia, nombre_dia in enumerate(nombres_dias):
+                                with cols_dias[numero_dia % 4]:
+                                    if st.checkbox(nombre_dia, value=False, key=f"dia_{numero_dia}_{st.session_state.clear_agenda}"):
+                                        dias_seleccionados.append(numero_dia)
                                             
-                            if st.button("⚡ Calcular fechas elegibles"):
+                            if st.button("Programar clases", type="primary", key=f"guardar_agenda_{st.session_state.clear_agenda}"):
                                 if not sede_agenda or not inst_agenda or not tipo_serv_agenda or fecha_inicio is None or fecha_fin is None or hora_agenda is None or (tipo_serv_agenda == "Grupal" and aforo_agenda is None): st.error("Completa sede, fechas, hora, instructora, modalidad y aforo si es grupal.")
                                 elif not opciones_locales or not opciones_inst: st.error("❌ Se requieren locales e instructoras.")
                                 elif fecha_inicio > fecha_fin: st.error("❌ Rango inválido.")
@@ -1109,14 +1305,39 @@ else:
                                 else:
                                     feriados_db = supabase.table("feriados").select("fecha").execute()
                                     lista_feriados = [f['fecha'] for f in feriados_db.data] if feriados_db.data else []
-                                    total_creadas = 0
+                                    instructora = opciones_inst[inst_agenda]
+                                    fin_dt = datetime.combine(datetime.today().date(), hora_agenda) + timedelta(minutes=int(duracion_agenda))
+                                    if fin_dt.date() != datetime.combine(datetime.today().date(), hora_agenda).date():
+                                        st.error("La sesión debe terminar el mismo día en que empieza.")
+                                        st.stop()
+                                    creadas = 0
+                                    omitidas = 0
                                     fecha_actual = fecha_inicio
                                     while fecha_actual <= fecha_fin:
                                         num_dia = fecha_actual.weekday()
                                         if num_dia in dias_seleccionados and dias_habilitados.get(num_dia, False) and (fecha_actual.isoformat() not in lista_feriados):
-                                            total_creadas += 1
+                                            nueva_sesion = {
+                                                "local_id": opciones_locales[sede_agenda],
+                                                "instructora_id": instructora["id"],
+                                                "fecha_clase": fecha_actual.isoformat(),
+                                                "hora_inicio": hora_agenda.strftime("%H:%M:%S"),
+                                                "hora_fin": fin_dt.time().strftime("%H:%M:%S"),
+                                                "tipo_servicio": tipo_serv_agenda,
+                                                "capacidad": int(aforo_agenda),
+                                                "estado": "Programada",
+                                                "tarifa_hora_aplicada": float(instructora.get("costo_hora") or 0),
+                                                "creado_por": st.session_state.get("admin_id"),
+                                            }
+                                            try:
+                                                supabase.table("sesiones_clase").insert(nueva_sesion).execute()
+                                                creadas += 1
+                                            except Exception as error_sesion:
+                                                if "23505" in str(error_sesion) or "duplicate" in str(error_sesion).lower():
+                                                    omitidas += 1
+                                                else:
+                                                    raise error_sesion
                                         fecha_actual += timedelta(days=1)
-                                    st.session_state.aviso_agenda = f"Se encontraron {total_creadas} fechas elegibles. Este cálculo no crea ni publica clases en la base de datos."
+                                    st.session_state.aviso_agenda = f"Se programaron {creadas} clases. Fechas omitidas por horario ya ocupado: {omitidas}."
                                     st.session_state.clear_agenda += 1
                                     st.rerun()
                             if st.button("Limpiar campos", key="limpiar_generador_agenda"):
@@ -1124,66 +1345,51 @@ else:
                                 st.rerun()
                         except Exception as e: st.error(f"Error: {e}")
 
-                    with sub_agenda3:
-                        st.markdown("#### Configuración de Días Laborales del Estudio")
+                    with sub_agenda2:
+                        st.markdown("#### Clases programadas por sede y turno")
+                        st.caption("El turno mañana se considera antes de las 12:00; desde las 12:00 se muestra como tarde.")
                         try:
-                            dias_consulta = supabase.table("dias_operativos").select("*").order("numero_dia").execute()
-                            if dias_consulta.data:
-                                import pandas as pd
-                                df_dias = pd.DataFrame(dias_consulta.data)
-                                df_dias_amigable = df_dias[["id", "nombre_dia", "habilitado"]].rename(columns={"nombre_dia": "Día de la Semana", "habilitado": "Estudio Abierto"})
-                                editor_dias_key = f"editor_dias_operativos_{st.session_state.clear_dias_operativos}"
-                                cambios_dias = st.data_editor(df_dias_amigable, hide_index=True, disabled=["id", "Día de la Semana"], use_container_width=True, key=editor_dias_key)
-                                if st.session_state.get(editor_dias_key) and "edited_rows" in st.session_state[editor_dias_key]:
-                                    filas_edit_dias = st.session_state[editor_dias_key]["edited_rows"]
-                                    for idx_fila, cambio_dia in filas_edit_dias.items():
-                                        if "Estudio Abierto" in cambio_dia:
-                                            supabase.table("dias_operativos").update({"habilitado": cambio_dia["Estudio Abierto"]}).eq("id", int(df_dias_amigable.iloc[idx_fila]["id"])).execute()
-                                            st.session_state.clear_dias_operativos += 1
-                                            st.rerun()
-                        except Exception as e: st.error(f"Error: {e}")
-
-                    with sub_agenda4:
-                        st.markdown("#### Registro y Eliminación Interactiva de Días Festivos")
-                        aviso_feriado = st.session_state.pop("aviso_feriado", None)
-                        if aviso_feriado:
-                            st.success(aviso_feriado)
-                        col_f1, col_f2 = st.columns(2)
-                        with col_f1:
-                            fecha_f = st.date_input("Fecha del Feriado:", value=None, key=f"input_fecha_feriado_{st.session_state.clear_feriado}")
-                            desc_f = st.text_input("Descripción del Festivo:", key=f"input_desc_feriado_{st.session_state.clear_feriado}")
-                            if st.button("Habilitar Feriado"):
-                                if fecha_f is not None and desc_f.strip():
-                                    try:
-                                        supabase.table("feriados").insert({"fecha": fecha_f.isoformat(), "descripcion": desc_f}).execute()
-                                        st.session_state.aviso_feriado = f"Feriado del {fecha_f} guardado."
-                                        st.session_state.clear_feriado += 1
+                            desde = st.date_input("Desde", value=datetime.now().date(), key="agenda_reporte_desde")
+                            hasta = st.date_input("Hasta", value=datetime.now().date() + timedelta(days=6), key="agenda_reporte_hasta")
+                            sesiones_reporte = supabase.table("sesiones_clase").select("*").gte("fecha_clase", desde.isoformat()).lte("fecha_clase", hasta.isoformat()).order("fecha_clase").order("hora_inicio").execute().data or []
+                            if desde > hasta:
+                                st.warning("El rango de fechas no es válido.")
+                            elif sesiones_reporte:
+                                locales_nombres = {int(v): k for k, v in opciones_locales.items()}
+                                nombres_instructoras = {int(i["id"]): i["nombre"] for i in (supabase.table("instructoras").select("id,nombre").execute().data or [])}
+                                for sesion in sesiones_reporte:
+                                    sesion["Sede"] = locales_nombres.get(int(sesion["local_id"]), "Sede")
+                                    sesion["Instructora"] = nombres_instructoras.get(int(sesion["instructora_id"]), "—")
+                                    sesion["Turno"] = "Mañana" if str(sesion["hora_inicio"]) < "12:00" else "Tarde"
+                                for sede in sorted({s["Sede"] for s in sesiones_reporte}):
+                                    st.markdown(f"##### {sede}")
+                                    manana, tarde = st.columns(2)
+                                    for turno, contenedor in (("Mañana", manana), ("Tarde", tarde)):
+                                        with contenedor:
+                                            st.markdown(f"**{turno}**")
+                                            filas = [s for s in sesiones_reporte if s["Sede"] == sede and s["Turno"] == turno]
+                                            if filas:
+                                                st.dataframe(pd.DataFrame([{"Fecha": s["fecha_clase"], "Hora": f"{str(s['hora_inicio'])[:5]}–{str(s['hora_fin'])[:5]}", "Clase": s["tipo_servicio"], "Instructora": s["Instructora"], "Aforo": s["capacidad"], "Estado": s["estado"]} for s in filas]), hide_index=True, use_container_width=True)
+                                            else:
+                                                st.caption("Sin clases")
+                                st.divider()
+                                st.markdown("#### Actualizar estado de una clase")
+                                sesion_etiquetas = {f"{s['fecha_clase']} · {str(s['hora_inicio'])[:5]} · {s['Sede']} · {s['Instructora']} ({s['estado']})": s for s in sesiones_reporte}
+                                etiqueta_sesion = st.selectbox("Selecciona una clase", [""] + list(sesion_etiquetas), key=f"estado_sesion_sel_{st.session_state.clear_estado_sesion}")
+                                sesion_estado = sesion_etiquetas.get(etiqueta_sesion)
+                                estado_nuevo = st.selectbox("Estado", ["Programada", "Realizada", "Cancelada"], key=f"estado_sesion_val_{st.session_state.clear_estado_sesion}")
+                                if st.button("Guardar estado", key=f"guardar_estado_sesion_{st.session_state.clear_estado_sesion}", disabled=sesion_estado is None):
+                                    pago_existente = supabase.table("pagos_instructoras").select("id").eq("sesion_id", sesion_estado["id"]).limit(1).execute().data or []
+                                    if pago_existente and estado_nuevo != "Realizada":
+                                        st.error("No se puede cambiar a cancelada una clase cuyo pago ya fue registrado.")
+                                    else:
+                                        supabase.table("sesiones_clase").update({"estado": estado_nuevo}).eq("id", sesion_estado["id"]).execute()
+                                        st.session_state.clear_estado_sesion += 1
                                         st.rerun()
-                                    except Exception as e: st.error(f"❌ Ya registrado o error: {e}")
-                                else: st.error("Selecciona una fecha y escribe una descripción.")
-                            if st.button("Limpiar campos", key="limpiar_feriado"):
-                                st.session_state.clear_feriado += 1
-                                st.rerun()
-                        with col_f2:
-                            try:
-                                feriados_res = supabase.table("feriados").select("*").order("fecha").execute()
-                                if feriados_res.data:
-                                    import pandas as pd
-                                    df_fer = pd.DataFrame(feriados_res.data)
-                                    df_fer["Eliminar"] = False
-                                    df_fer_amigable = df_fer[["id", "fecha", "descripcion", "Eliminar"]].rename(columns={"fecha": "Fecha Bloqueada", "descripcion": "Festivo / Motivo"})
-                                    editor_feriados_key = f"editor_tabla_feriados_{st.session_state.clear_feriados_tabla}"
-                                    cambios_feriados = st.data_editor(df_fer_amigable, hide_index=True, disabled=["id", "Fecha Bloqueada", "Festivo / Motivo"], use_container_width=True, key=editor_feriados_key)
-                                    if st.session_state.get(editor_feriados_key) and "edited_rows" in st.session_state[editor_feriados_key]:
-                                        filas_edit_fer = st.session_state[editor_feriados_key]["edited_rows"]
-                                        for idx_f, cambio_f in filas_edit_fer.items():
-                                            if "Eliminar" in cambio_f and cambio_f["Eliminar"] == True:
-                                                id_fer_borrar = int(df_fer_amigable.iloc[idx_f]["id"])
-                                                supabase.table("feriados").delete().eq("id", id_fer_borrar).execute()
-                                                st.session_state.clear_feriados_tabla += 1
-                                                st.rerun()
-                                else: st.info("No hay feriados agendados.")
-                            except Exception as e: st.error(f"Error: {e}")
+                            else:
+                                st.info("No hay clases programadas para este rango.")
+                        except Exception as e:
+                            st.warning(f"Para usar el calendario de sesiones, ejecuta la migración de Gestión de Instructoras en Supabase. Detalle: {e}")
 
                 # --- CONSULTA PREDICTIVA DE ALUMNOS Y KÁRDEX ---
             if "alumnos" in paneles_admin:
@@ -1922,3 +2128,65 @@ else:
                                     st.rerun()
                                 except Exception as e:
                                     st.error(f"No se pudo guardar la configuración. Revisa la migración y los permisos de Supabase: {e}")
+
+                    st.divider()
+                    st.subheader(":material/calendar_month: Calendario operativo")
+                    st.caption("Configura los días en que abre el estudio y los feriados que bloquean la programación.")
+                    calendario_dias, calendario_feriados = st.tabs(["Días laborales", "Feriados y festivos"])
+                    with calendario_dias:
+                        try:
+                            dias_consulta = supabase.table("dias_operativos").select("*").order("numero_dia").execute()
+                            if dias_consulta.data:
+                                df_dias = pd.DataFrame(dias_consulta.data)
+                                df_dias_amigable = df_dias[["id", "nombre_dia", "habilitado"]].rename(columns={"nombre_dia": "Día de la semana", "habilitado": "Estudio abierto"})
+                                editor_dias_key = f"editor_dias_operativos_{st.session_state.clear_dias_operativos}"
+                                st.data_editor(df_dias_amigable, hide_index=True, disabled=["id", "Día de la semana"], use_container_width=True, key=editor_dias_key)
+                                cambios_dias = st.session_state.get(editor_dias_key, {}).get("edited_rows", {})
+                                for idx_fila, cambio_dia in cambios_dias.items():
+                                    if "Estudio abierto" in cambio_dia:
+                                        supabase.table("dias_operativos").update({"habilitado": cambio_dia["Estudio abierto"]}).eq("id", int(df_dias_amigable.iloc[idx_fila]["id"])).execute()
+                                        st.session_state.clear_dias_operativos += 1
+                                        st.rerun()
+                            else:
+                                st.info("No hay días operativos configurados.")
+                        except Exception as e:
+                            st.error(f"No se pudo cargar la configuración de días: {e}")
+                    with calendario_feriados:
+                        aviso_feriado = st.session_state.pop("aviso_feriado", None)
+                        if aviso_feriado:
+                            st.success(aviso_feriado)
+                        col_f1, col_f2 = st.columns(2)
+                        with col_f1:
+                            fecha_f = st.date_input("Fecha del feriado", value=None, key=f"input_fecha_feriado_{st.session_state.clear_feriado}")
+                            desc_f = st.text_input("Descripción", key=f"input_desc_feriado_{st.session_state.clear_feriado}")
+                            if st.button("Registrar feriado", key=f"guardar_feriado_{st.session_state.clear_feriado}"):
+                                if fecha_f is not None and desc_f.strip():
+                                    try:
+                                        supabase.table("feriados").insert({"fecha": fecha_f.isoformat(), "descripcion": desc_f.strip()}).execute()
+                                        st.session_state.aviso_feriado = f"Feriado del {fecha_f} guardado."
+                                        st.session_state.clear_feriado += 1
+                                        st.rerun()
+                                    except Exception as e:
+                                        st.error(f"Ya está registrado o no se pudo guardar: {e}")
+                            if st.button("Limpiar campos", key=f"limpiar_feriado_{st.session_state.clear_feriado}"):
+                                st.session_state.clear_feriado += 1
+                                st.rerun()
+                        with col_f2:
+                            try:
+                                feriados_res = supabase.table("feriados").select("*").order("fecha").execute()
+                                if feriados_res.data:
+                                    df_fer = pd.DataFrame(feriados_res.data)
+                                    df_fer["Eliminar"] = False
+                                    df_fer_amigable = df_fer[["id", "fecha", "descripcion", "Eliminar"]].rename(columns={"fecha": "Fecha bloqueada", "descripcion": "Motivo"})
+                                    editor_feriados_key = f"editor_tabla_feriados_{st.session_state.clear_feriados_tabla}"
+                                    st.data_editor(df_fer_amigable, hide_index=True, disabled=["id", "Fecha bloqueada", "Motivo"], use_container_width=True, key=editor_feriados_key)
+                                    filas_edit_fer = st.session_state.get(editor_feriados_key, {}).get("edited_rows", {})
+                                    for idx_f, cambio_f in filas_edit_fer.items():
+                                        if cambio_f.get("Eliminar") is True:
+                                            supabase.table("feriados").delete().eq("id", int(df_fer_amigable.iloc[idx_f]["id"])).execute()
+                                            st.session_state.clear_feriados_tabla += 1
+                                            st.rerun()
+                                else:
+                                    st.info("No hay feriados registrados.")
+                            except Exception as e:
+                                st.error(f"No se pudo cargar la lista de feriados: {e}")
