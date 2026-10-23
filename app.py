@@ -1022,13 +1022,21 @@ else:
                         
                     col_i1, col_i2 = st.columns(2)
                     with col_i1:
-                        if st.button("Confirmar pago e inscribir", type="primary", disabled=not (inscripcion_completa and confirmar_pago_inscripcion), key=f"registrar_alumno_{st.session_state.clear_ins}"):
-                            if not a_nombre.strip() or not a_apellido.strip() or not a_telefono.strip() or not tipo_p or not modalidad:
-                                st.error("❌ Completa nombre, apellido, teléfono, plan y modalidad.")
+                        if st.button("Confirmar pago e inscribir", type="primary", key=f"registrar_alumno_{st.session_state.clear_ins}"):
+                            if not a_nombre.strip() or not a_apellido.strip() or not a_telefono.strip():
+                                st.error("❌ Completa el nombre, apellido y teléfono del alumno.")
                             elif not opciones_planes:
-                                st.error("❌ No puedes registrar alumnos sin configurar planes vigentes.")
-                            elif modalidad == "Fixed" and (not opciones_locales or sede_assigned not in opciones_locales):
+                                st.error("❌ No puedes registrar alumnos: primero configura al menos un plan vigente en Planes y precios.")
+                            elif not tipo_p or tipo_p not in opciones_planes:
+                                st.error("❌ Selecciona un plan vigente.")
+                            elif modalidad not in ("Fixed", "Flex"):
+                                st.error("❌ Selecciona la modalidad de acceso.")
+                            elif modalidad == "Fixed" and not opciones_locales:
+                                st.error("❌ No hay sedes activas. Registra una sede o elige modalidad Flex.")
+                            elif modalidad == "Fixed" and sede_assigned not in opciones_locales:
                                 st.error("❌ Selecciona una sede válida para la modalidad Fixed.")
+                            elif not confirmar_pago_inscripcion:
+                                st.error("❌ Confirma que el alumno ya pagó el plan para continuar con la inscripción.")
                             else:
                                 try:
                                     nuevo_alumno = supabase.table("alumnos").insert({
