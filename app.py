@@ -1,3 +1,4 @@
+
 import streamlit as st
 import hashlib
 import hmac
@@ -837,8 +838,16 @@ else:
             if "instructoras" in paneles_admin:
                 paneles_admin["agenda"] = paneles_admin["instructoras"]
             if "alumnos_operacion" in paneles_admin:
-                for clave_alumnos in ("inscripciones", "renovaciones", "alumnos"):
-                    paneles_admin[clave_alumnos] = paneles_admin["alumnos_operacion"]
+                with paneles_admin["alumnos_operacion"]:
+                    st.caption("Elige una pestaña según la tarea que quieras realizar.")
+                    tab_alta_alumno, tab_renovar_alumno, tab_directorio_alumno = st.tabs([
+                        "1. Inscribir alumno",
+                        "2. Renovar o cambiar plan",
+                        "3. Buscar y gestionar alumnos",
+                    ])
+                    paneles_admin["inscripciones"] = tab_alta_alumno
+                    paneles_admin["renovaciones"] = tab_renovar_alumno
+                    paneles_admin["alumnos"] = tab_directorio_alumno
 
             if not ventanas_visibles:
                 st.info("Tu cuenta solo tiene acceso a Mi cuenta. Pide a un superadministrador que te asigne otras secciones si las necesitas.")
@@ -849,118 +858,121 @@ else:
                     st.caption("Modifica los datos de una sede o dale de baja para retirarla de los formularios. Las referencias históricas se conservan.")
                     if not locales_tiene_baja:
                         st.warning("Para habilitar bajas de sedes, ejecuta supabase_locales_migration.sql en Supabase.")
-                    st.markdown("#### Registrar una sede")
-                    nombre_local = st.text_input("Nombre de la sede (ej: Barranco):", key=f"loc_name_{st.session_state.clear_local}")
-                    direccion_local = st.text_input("Dirección:", key=f"loc_dir_{st.session_state.clear_local}")
-                    
-                    col_btn1, col_btn2 = st.columns(2)
-                    with col_btn1:
-                        if st.button("Guardar Local"):
-                            if nombre_local:
-                                try:
-                                    supabase.table("locales").insert({"nombre": nombre_local, "direccion": direccion_local}).execute()
-                                    st.session_state.mensaje_resultado_app = f"La sede {nombre_local.strip()} quedó registrada."
-                                    st.session_state.clear_local += 1
-                                    st.rerun()
-                                except Exception as e:
-                                    if "23505" in str(e):
-                                        st.error("Ya existe una sede con ese nombre.")
-                                    else:
-                                        st.error(f"❌ Error al guardar el local: {e}")
-                            else:
-                                st.error("El nombre de la sede es obligatorio.")
-                    with col_btn2:
-                        if st.button("Limpiar Pantalla", key="btn_clear_loc"):
-                            st.session_state.clear_local += 1
-                            st.rerun()
-
-                    st.divider()
-                    st.markdown("#### Modificar o dar de baja una sede")
-                    if lista_locales_admin:
-                        etiquetas_locales = {
-                            f"{local['nombre']} {'(Inactiva)' if not local.get('activo', True) else ''}".strip(): local
-                            for local in lista_locales_admin
-                        }
-                        opciones_locales_editar = [""] + list(etiquetas_locales.keys())
-                        local_seleccionado_label = st.selectbox(
-                            "Sede",
-                            opciones_locales_editar,
-                            index=0,
-                            key=f"local_seleccionado_editar_{st.session_state.clear_local}",
-                            placeholder="Selecciona una sede..."
-                        )
-                        local_seleccionado = etiquetas_locales.get(local_seleccionado_label) or {
-                            "id": "", "nombre": "", "direccion": "", "activo": False
-                        }
-                        local_id = local_seleccionado["id"]
-                        nombre_local_editado = st.text_input(
-                            "Nombre",
-                            value=local_seleccionado["nombre"],
-                            key=f"local_nombre_editar_{local_id}_{st.session_state.clear_local}"
-                        )
-                        direccion_local_editada = st.text_input(
-                            "Dirección",
-                            value=local_seleccionado.get("direccion") or "",
-                            key=f"local_direccion_editar_{local_id}_{st.session_state.clear_local}"
-                        )
-                        max_camillas_local = st.number_input(
-                            "Máximo de camillas",
-                            min_value=1,
-                            max_value=50,
-                            value=int(local_seleccionado.get("max_camillas") or 8),
-                            key=f"local_camillas_editar_{local_id}_{st.session_state.clear_local}"
-                        )
-                        col_local_guardar, col_local_baja = st.columns(2)
-                        with col_local_guardar:
-                            if st.button("Guardar cambios", key=f"guardar_local_{local_id}_{st.session_state.clear_local}", type="primary", disabled=not local_id):
-                                if not nombre_local_editado.strip():
-                                    st.error("El nombre de la sede es obligatorio.")
-                                else:
+                    tab_nueva_sede, tab_gestion_sede = st.tabs(["1. Registrar sede", "2. Buscar y gestionar sedes"])
+                    with tab_nueva_sede:
+                        st.markdown("#### Registrar una sede")
+                        nombre_local = st.text_input("Nombre de la sede (ej: Barranco):", key=f"loc_name_{st.session_state.clear_local}")
+                        direccion_local = st.text_input("Dirección:", key=f"loc_dir_{st.session_state.clear_local}")
+                        
+                        col_btn1, col_btn2 = st.columns(2)
+                        with col_btn1:
+                            if st.button("Guardar Local"):
+                                if nombre_local:
                                     try:
-                                        supabase.table("locales").update({
-                                            "nombre": nombre_local_editado.strip(),
-                                            "direccion": direccion_local_editada.strip(),
-                                            "max_camillas": int(max_camillas_local)
-                                        }).eq("id", local_id).execute()
-                                        st.session_state.mensaje_resultado_app = f"Los datos de la sede {nombre_local_editado.strip()} se actualizaron."
+                                        supabase.table("locales").insert({"nombre": nombre_local, "direccion": direccion_local}).execute()
+                                        st.session_state.mensaje_resultado_app = f"La sede {nombre_local.strip()} quedó registrada."
                                         st.session_state.clear_local += 1
                                         st.rerun()
                                     except Exception as e:
                                         if "23505" in str(e):
-                                            st.error("Ya existe otra sede con ese nombre.")
+                                            st.error("Ya existe una sede con ese nombre.")
                                         else:
-                                            st.error(f"No se pudieron guardar los cambios: {e}")
-                        with col_local_baja:
-                            if local_id and local_seleccionado.get("activo", True):
-                                confirmar_baja_local = st.checkbox(
-                                    "Confirmo dar de baja esta sede",
-                                    key=f"confirmar_baja_local_{local_id}_{st.session_state.clear_local}"
-                                )
-                                if st.button("Dar de baja", key=f"baja_local_{local_id}", disabled=not confirmar_baja_local):
-                                    if not locales_tiene_baja:
-                                        st.error("Ejecuta primero supabase_locales_migration.sql en Supabase.")
+                                            st.error(f"❌ Error al guardar el local: {e}")
+                                else:
+                                    st.error("El nombre de la sede es obligatorio.")
+                        with col_btn2:
+                            if st.button("Limpiar Pantalla", key="btn_clear_loc"):
+                                st.session_state.clear_local += 1
+                                st.rerun()
+    
+                    with tab_gestion_sede:
+                        st.divider()
+                        st.markdown("#### Modificar o dar de baja una sede")
+                        if lista_locales_admin:
+                            etiquetas_locales = {
+                                f"{local['nombre']} {'(Inactiva)' if not local.get('activo', True) else ''}".strip(): local
+                                for local in lista_locales_admin
+                            }
+                            opciones_locales_editar = [""] + list(etiquetas_locales.keys())
+                            local_seleccionado_label = st.selectbox(
+                                "Sede",
+                                opciones_locales_editar,
+                                index=0,
+                                key=f"local_seleccionado_editar_{st.session_state.clear_local}",
+                                placeholder="Selecciona una sede..."
+                            )
+                            local_seleccionado = etiquetas_locales.get(local_seleccionado_label) or {
+                                "id": "", "nombre": "", "direccion": "", "activo": False
+                            }
+                            local_id = local_seleccionado["id"]
+                            nombre_local_editado = st.text_input(
+                                "Nombre",
+                                value=local_seleccionado["nombre"],
+                                key=f"local_nombre_editar_{local_id}_{st.session_state.clear_local}"
+                            )
+                            direccion_local_editada = st.text_input(
+                                "Dirección",
+                                value=local_seleccionado.get("direccion") or "",
+                                key=f"local_direccion_editar_{local_id}_{st.session_state.clear_local}"
+                            )
+                            max_camillas_local = st.number_input(
+                                "Máximo de camillas",
+                                min_value=1,
+                                max_value=50,
+                                value=int(local_seleccionado.get("max_camillas") or 8),
+                                key=f"local_camillas_editar_{local_id}_{st.session_state.clear_local}"
+                            )
+                            col_local_guardar, col_local_baja = st.columns(2)
+                            with col_local_guardar:
+                                if st.button("Guardar cambios", key=f"guardar_local_{local_id}_{st.session_state.clear_local}", type="primary", disabled=not local_id):
+                                    if not nombre_local_editado.strip():
+                                        st.error("El nombre de la sede es obligatorio.")
                                     else:
                                         try:
-                                            supabase.table("locales").update({"activo": False}).eq("id", local_id).execute()
-                                            st.session_state.mensaje_resultado_app = f"La sede {local_seleccionado['nombre']} quedó inactiva."
+                                            supabase.table("locales").update({
+                                                "nombre": nombre_local_editado.strip(),
+                                                "direccion": direccion_local_editada.strip(),
+                                                "max_camillas": int(max_camillas_local)
+                                            }).eq("id", local_id).execute()
+                                            st.session_state.mensaje_resultado_app = f"Los datos de la sede {nombre_local_editado.strip()} se actualizaron."
                                             st.session_state.clear_local += 1
                                             st.rerun()
                                         except Exception as e:
-                                            st.error(f"No se pudo dar de baja la sede: {e}")
-                            elif local_id:
-                                if st.button("Reactivar sede", key=f"reactivar_local_{local_id}_{st.session_state.clear_local}"):
-                                    try:
-                                        supabase.table("locales").update({"activo": True}).eq("id", local_id).execute()
-                                        st.session_state.mensaje_resultado_app = f"La sede {local_seleccionado['nombre']} volvió a estar activa."
-                                        st.session_state.clear_local += 1
-                                        st.rerun()
-                                    except Exception as e:
-                                        st.error(f"No se pudo reactivar la sede: {e}")
-                            else:
-                                st.info("Selecciona una sede para editarla.")
-                    else:
-                        st.info("Registra una sede para habilitar su edición.")
-
+                                            if "23505" in str(e):
+                                                st.error("Ya existe otra sede con ese nombre.")
+                                            else:
+                                                st.error(f"No se pudieron guardar los cambios: {e}")
+                            with col_local_baja:
+                                if local_id and local_seleccionado.get("activo", True):
+                                    confirmar_baja_local = st.checkbox(
+                                        "Confirmo dar de baja esta sede",
+                                        key=f"confirmar_baja_local_{local_id}_{st.session_state.clear_local}"
+                                    )
+                                    if st.button("Dar de baja", key=f"baja_local_{local_id}", disabled=not confirmar_baja_local):
+                                        if not locales_tiene_baja:
+                                            st.error("Ejecuta primero supabase_locales_migration.sql en Supabase.")
+                                        else:
+                                            try:
+                                                supabase.table("locales").update({"activo": False}).eq("id", local_id).execute()
+                                                st.session_state.mensaje_resultado_app = f"La sede {local_seleccionado['nombre']} quedó inactiva."
+                                                st.session_state.clear_local += 1
+                                                st.rerun()
+                                            except Exception as e:
+                                                st.error(f"No se pudo dar de baja la sede: {e}")
+                                elif local_id:
+                                    if st.button("Reactivar sede", key=f"reactivar_local_{local_id}_{st.session_state.clear_local}"):
+                                        try:
+                                            supabase.table("locales").update({"activo": True}).eq("id", local_id).execute()
+                                            st.session_state.mensaje_resultado_app = f"La sede {local_seleccionado['nombre']} volvió a estar activa."
+                                            st.session_state.clear_local += 1
+                                            st.rerun()
+                                        except Exception as e:
+                                            st.error(f"No se pudo reactivar la sede: {e}")
+                                else:
+                                    st.info("Selecciona una sede para editarla.")
+                        else:
+                            st.info("Registra una sede para habilitar su edición.")
+    
             if "inscripciones" in paneles_admin:
                 with paneles_admin["inscripciones"]:
                     st.subheader("1. Inscribir alumno")
@@ -1229,7 +1241,11 @@ else:
                     aviso_planes = st.session_state.pop("aviso_planes", None)
                     if aviso_planes:
                         st.success(aviso_planes)
-                    sub_tab1, sub_tab2, sub_tab3 = st.tabs(["Crear plan", "Cambiar precios", "Catálogo de planes"])
+                    sub_tab1, sub_tab2, sub_tab3 = st.tabs([
+                        "1. Crear plan",
+                        "2. Actualizar precios",
+                        "3. Consultar planes",
+                    ])
                                 
                     with sub_tab1:
                         st.markdown("#### Registro de Nuevas Ofertas Comerciales")
@@ -1311,7 +1327,7 @@ else:
 
                     tab_alta_inst, tab_directorio_inst, tab_agenda_inst, tab_pagos_inst = st.tabs([
                         "1. Registrar instructor",
-                        "2. Equipo y fichas",
+                        "2. Buscar y gestionar",
                         "3. Agenda de clases",
                         "4. Pagos realizados",
                     ])
@@ -1564,8 +1580,28 @@ else:
                         col_guardar_inst_nueva, col_limpiar_inst_nueva = st.columns(2)
                         with col_guardar_inst_nueva:
                             if st.button("Guardar instructor", key=f"guardar_inst_nueva_{st.session_state.clear_gestion_instructoras}"):
-                                if not nombre_inst_nueva.strip() or tarifa_inst_nueva is None:
-                                    st.error("Completa el nombre y el pago fijo por clase.")
+                                nombre_inst_normalizado = "".join(
+                                    c for c in unicodedata.normalize("NFKD", nombre_inst_nueva or "").casefold()
+                                    if not unicodedata.combining(c)
+                                ).strip()
+                                telefono_inst_normalizado = re.sub(r"\D", "", telefono_inst_nueva or "")
+                                instructor_existente = next((
+                                    instructor for instructor in instructoras_db
+                                    if "".join(
+                                        c for c in unicodedata.normalize("NFKD", str(instructor.get("nombre") or "")).casefold()
+                                        if not unicodedata.combining(c)
+                                    ).strip() == nombre_inst_normalizado
+                                    or (
+                                        telefono_inst_normalizado
+                                        and re.sub(r"\D", "", str(instructor.get("telefono") or "")) == telefono_inst_normalizado
+                                    )
+                                ), None)
+                                if not nombre_inst_nueva.strip():
+                                    st.error("Ingresa el nombre completo del instructor.")
+                                elif instructor_existente:
+                                    st.error(f"Ya existe un registro para {instructor_existente.get('nombre', 'esta persona')}. Búscalo en “Buscar y gestionar” para consultar sus datos o reactivarlo.")
+                                elif tarifa_inst_nueva is None:
+                                    st.error("Ingresa el pago fijo acordado por clase.")
                                 else:
                                     try:
                                         supabase.table("instructoras").insert({
@@ -1587,7 +1623,7 @@ else:
                     with tab_pagos_inst:
                         st.markdown("#### Historial de pagos realizados")
                         st.caption("Cada fila muestra la clase, sede, duración, importe pagado y referencia.")
-                        st.info("En Agenda de clases, las sesiones se cierran automáticamente al terminar si tuvieron reservas. Luego, en Equipo y fichas, podrás registrar el pago correspondiente.")
+                        st.info("En Agenda de clases, las sesiones se cierran automáticamente al terminar si tuvieron reservas. Luego, en Buscar y gestionar, podrás registrar el pago correspondiente.")
                         try:
                             pagos_globales = supabase.table("pagos_instructoras").select("*").order("fecha_pago", desc=True).limit(1000).execute().data or []
                             if pagos_globales:
@@ -1621,7 +1657,10 @@ else:
             if "agenda" in paneles_admin:
                 with tab_agenda_inst:
                     st.subheader(":material/calendar_month: Agenda de clases")
-                    sub_agenda1, sub_agenda2 = st.tabs(["Programar clases", "Consultar clases por sede"])
+                    sub_agenda1, sub_agenda2 = st.tabs([
+                        "1. Programar clases",
+                        "2. Consultar por sede",
+                    ])
 
                     with sub_agenda1:
                         st.markdown("#### Programar clases")
@@ -1716,7 +1755,10 @@ else:
                         st.caption("Si una clase vencida no se cerró automáticamente, puedes volver a ejecutar el proceso aquí. El sistema actualizará las reservas y cerrará únicamente las clases vencidas que tengan alumnos reservados.")
                         if st.button("Reintentar cierre de clases vencidas", key="reintentar_cierre_clases_vencidas"):
                             try:
-                                resultado_cierre = supabase.rpc("marcar_inasistencias_vencidas", {}).execute()
+                                resultado_cierre = supabase.rpc(
+                                    "reintentar_cierre_clases",
+                                    {"p_admin_id": st.session_state.admin_id},
+                                ).execute()
                                 total_inasistencias = resultado_cierre.data or 0
                                 st.success(f"Reintento completado. Se registraron {total_inasistencias} inasistencias. Las clases vencidas con reservas y asistencia o inasistencia quedaron cerradas automáticamente.")
                             except Exception as error_cierre:
@@ -1739,7 +1781,7 @@ else:
                                     sesion["Turno"] = "Mañana" if str(sesion["hora_inicio"]) < "12:00" else "Tarde"
                                 for sede in sorted({s["Sede"] for s in sesiones_reporte}):
                                     st.markdown(f"##### {sede}")
-                                    tab_manana, tab_tarde = st.tabs(["Mañana", "Tarde"])
+                                    tab_manana, tab_tarde = st.tabs(["Turno mañana", "Turno tarde"])
                                     for turno, pestaña_turno in (("Mañana", tab_manana), ("Tarde", tab_tarde)):
                                         with pestaña_turno:
                                             filas = [s for s in sesiones_reporte if s["Sede"] == sede and s["Turno"] == turno]
@@ -2255,281 +2297,285 @@ else:
                 with paneles_admin["usuarios"]:
                     st.subheader(":material/manage_accounts: Crear Usuario y permisos de acceso")
                     st.caption("Cada usuario solo verá las secciones asignadas. Todos pueden cambiar su contraseña desde Mi cuenta.")
+                    tab_crear_usuario, tab_clave_usuario, tab_permisos_usuario, tab_eliminar_usuario = st.tabs(["1. Crear usuario", "2. Cambiar contraseña", "3. Asignar permisos", "4. Eliminar usuario"])
 
-                    with st.form(f"form_crear_usuario_admin_{st.session_state.clear_usuario}"):
-                        nuevo_usuario_admin = st.text_input("Nombre de usuario", key=f"nuevo_usuario_admin_{st.session_state.clear_usuario}")
-                        nueva_clave_admin = st.text_input("Contraseña inicial (mínimo 12 caracteres)", type="password", key=f"nueva_clave_admin_{st.session_state.clear_usuario}")
-                        confirmar_clave_admin = st.text_input("Confirmar contraseña", type="password", key=f"confirmar_clave_admin_{st.session_state.clear_usuario}")
-                        permisos_nuevos = st.multiselect(
-                            "Secciones que podrá administrar",
-                            options=list(VENTANAS_ADMIN.keys()),
-                            format_func=lambda permiso: VENTANAS_ADMIN[permiso],
-                            key=f"permisos_nuevo_admin_{st.session_state.clear_usuario}"
-                        )
-                        crear_usuario = st.form_submit_button("Crear usuario administrador", type="primary")
-                        limpiar_usuario = st.form_submit_button("Limpiar campos")
-                    if limpiar_usuario:
-                        st.session_state.clear_usuario += 1
-                        st.rerun()
-                    if crear_usuario:
-                        if not nuevo_usuario_admin.strip():
-                            st.error("Escribe un nombre de usuario.")
-                        elif len(nueva_clave_admin) < 12:
-                            st.error("La contraseña debe tener al menos 12 caracteres.")
-                        elif nueva_clave_admin != confirmar_clave_admin:
-                            st.error("Las contraseñas no coinciden.")
-                        else:
-                            try:
-                                supabase.table("usuarios_admin").insert({
-                                    "usuario": nuevo_usuario_admin.strip(),
-                                    "contrasena_encriptada": encriptar_contrasena(nueva_clave_admin),
-                                    "es_superadmin": False,
-                                    "permisos": permisos_nuevos
-                                }).execute()
-                                st.session_state.mensaje_resultado_app = f"Usuario {nuevo_usuario_admin.strip()} creado correctamente."
-                                st.session_state.clear_usuario += 1
-                                st.rerun()
-                            except Exception as e:
-                                if "23505" in str(e) or "already exists" in str(e).lower():
-                                    st.error("Ese nombre de usuario ya existe.")
-                                elif "42703" in str(e):
-                                    st.error("Ejecuta primero supabase_admin_users_migration.sql en Supabase para habilitar los permisos.")
-                                else:
-                                    st.error("No se pudo crear el usuario. Revisa la conexión y los permisos de Supabase.")
-
-                    st.divider()
-                    st.markdown("#### Restablecer contraseña de un usuario")
-                    aviso_clave_restablecida = st.session_state.pop("aviso_clave_restablecida", None)
-                    if aviso_clave_restablecida:
-                        st.success(aviso_clave_restablecida)
-                    try:
-                        usuarios_claves_res = supabase.table("usuarios_admin").select("id,usuario").order("usuario").execute()
-                        usuarios_claves = usuarios_claves_res.data or []
-                        if usuarios_claves:
-                            usuarios_clave_labels = {f"{u['usuario']}" : u["id"] for u in usuarios_claves}
-                            usuario_clave_sel = st.selectbox(
-                                "Usuario al que cambiar la contraseña",
-                                [""] + list(usuarios_clave_labels.keys()),
-                                key=f"usuario_restablecer_clave_{st.session_state.clear_reset_clave}",
-                                placeholder="Selecciona un usuario..."
+                    with tab_crear_usuario:
+                        with st.form(f"form_crear_usuario_admin_{st.session_state.clear_usuario}"):
+                            nuevo_usuario_admin = st.text_input("Nombre de usuario", key=f"nuevo_usuario_admin_{st.session_state.clear_usuario}")
+                            nueva_clave_admin = st.text_input("Contraseña inicial (mínimo 12 caracteres)", type="password", key=f"nueva_clave_admin_{st.session_state.clear_usuario}")
+                            confirmar_clave_admin = st.text_input("Confirmar contraseña", type="password", key=f"confirmar_clave_admin_{st.session_state.clear_usuario}")
+                            permisos_nuevos = st.multiselect(
+                                "Secciones que podrá administrar",
+                                options=list(VENTANAS_ADMIN.keys()),
+                                format_func=lambda permiso: VENTANAS_ADMIN[permiso],
+                                key=f"permisos_nuevo_admin_{st.session_state.clear_usuario}"
                             )
-                            with st.form(f"form_restablecer_clave_{st.session_state.clear_reset_clave}"):
-                                clave_admin_nueva = st.text_input(
-                                    "Nueva contraseña (mínimo 12 caracteres)",
-                                    type="password",
-                                    key=f"reset_clave_nueva_{st.session_state.clear_reset_clave}"
-                                )
-                                confirmar_clave_admin_nueva = st.text_input(
-                                    "Confirmar nueva contraseña",
-                                    type="password",
-                                    key=f"reset_clave_confirmar_{st.session_state.clear_reset_clave}"
-                                )
-                                cambiar_clave_usuario = st.form_submit_button("Cambiar contraseña", type="primary", disabled=not usuario_clave_sel)
-                                limpiar_reset_clave = st.form_submit_button("Limpiar campos")
-                            if limpiar_reset_clave:
-                                st.session_state.clear_reset_clave += 1
-                                st.rerun()
-                            if cambiar_clave_usuario:
-                                if len(clave_admin_nueva) < 12:
-                                    st.error("La contraseña debe tener al menos 12 caracteres.")
-                                elif clave_admin_nueva != confirmar_clave_admin_nueva:
-                                    st.error("Las contraseñas no coinciden.")
-                                else:
-                                    supabase.table("usuarios_admin").update({
-                                        "contrasena_encriptada": encriptar_contrasena(clave_admin_nueva)
-                                    }).eq("id", usuarios_clave_labels[usuario_clave_sel]).execute()
-                                    st.session_state.aviso_clave_restablecida = f"Contraseña de {usuario_clave_sel} cambiada correctamente."
-                                    st.session_state.clear_reset_clave += 1
-                                    st.rerun()
-                        else:
-                            st.info("No hay usuarios administradores registrados.")
-                    except Exception:
-                        st.error("No se pudo restablecer la contraseña. Revisa la conexión y los permisos de Supabase.")
-
-                    st.divider()
-                    st.markdown("#### Editar permisos de un usuario existente")
-                    aviso_permisos = st.session_state.pop("aviso_permisos", None)
-                    if aviso_permisos:
-                        st.success(aviso_permisos)
-                    try:
-                        usuarios_res = supabase.table("usuarios_admin").select(
-                            "id,usuario,es_superadmin,permisos"
-                        ).order("usuario").execute()
-                        usuarios_db = usuarios_res.data or []
-                        usuarios_normales = [u for u in usuarios_db if not u.get("es_superadmin", False)]
-                        if usuarios_normales:
-                            etiqueta_a_id = {u["usuario"]: u["id"] for u in usuarios_normales}
-                            usuario_editar = st.selectbox(
-                                "Usuario",
-                                [""] + list(etiqueta_a_id.keys()),
-                                key=f"usuario_permisos_editar_{st.session_state.clear_permisos}",
-                                placeholder="Selecciona un usuario..."
-                            )
-                            if usuario_editar:
-                                usuario_obj = next(u for u in usuarios_normales if u["id"] == etiqueta_a_id[usuario_editar])
-                                permisos_actuales = usuario_obj.get("permisos") or []
-                                permisos_editados = st.multiselect(
-                            "Secciones a las que puede acceder",
-                                    options=list(VENTANAS_ADMIN.keys()),
-                            default=normalizar_permisos_admin(permisos_actuales),
-                                    format_func=lambda permiso: VENTANAS_ADMIN[permiso],
-                                    key=f"permisos_editar_{usuario_obj['id']}_{st.session_state.clear_permisos}"
-                                )
-                                if st.button("Guardar permisos", key=f"guardar_permisos_usuario_{st.session_state.clear_permisos}", type="primary"):
-                                    supabase.table("usuarios_admin").update({
-                                        "permisos": permisos_editados
-                                    }).eq("id", usuario_obj["id"]).execute()
-                                    st.session_state.aviso_permisos = f"Permisos de {usuario_editar} actualizados."
-                                    st.session_state.clear_permisos += 1
-                                    st.rerun()
+                            crear_usuario = st.form_submit_button("Crear usuario administrador", type="primary")
+                            limpiar_usuario = st.form_submit_button("Limpiar campos")
+                        if limpiar_usuario:
+                            st.session_state.clear_usuario += 1
+                            st.rerun()
+                        if crear_usuario:
+                            if not nuevo_usuario_admin.strip():
+                                st.error("Escribe un nombre de usuario.")
+                            elif len(nueva_clave_admin) < 12:
+                                st.error("La contraseña debe tener al menos 12 caracteres.")
+                            elif nueva_clave_admin != confirmar_clave_admin:
+                                st.error("Las contraseñas no coinciden.")
                             else:
-                                st.info("Selecciona un usuario para revisar y editar sus permisos.")
-                        else:
-                            st.info("Aún no hay otros usuarios administradores para editar.")
-                    except Exception:
-                        st.error("No se pudieron cargar los usuarios. Ejecuta la migración SQL y revisa los permisos de Supabase.")
-
-                    st.divider()
-                    st.markdown("#### Eliminar usuario")
-                    aviso_usuario_eliminado = st.session_state.pop("aviso_usuario_eliminado", None)
-                    if aviso_usuario_eliminado:
-                        st.success(aviso_usuario_eliminado)
-                    st.caption("La eliminación es permanente. No puedes eliminar la cuenta con la que tienes la sesión abierta ni el último superusuario.")
-                    try:
-                        usuarios_borrar_res = supabase.table("usuarios_admin").select(
-                            "id,usuario,es_superadmin"
-                        ).order("usuario").execute()
-                        usuarios_borrar = usuarios_borrar_res.data or []
-                        usuarios_eliminables = [
-                            usuario for usuario in usuarios_borrar
-                            if str(usuario["id"]) != str(st.session_state.admin_id)
-                        ]
-                        if usuarios_eliminables:
-                            etiquetas_borrar = {
-                                f"{usuario['usuario']} — {'Superusuario' if usuario.get('es_superadmin') else 'Administrador'}": usuario
-                                for usuario in usuarios_eliminables
-                            }
-                            usuario_borrar_etiqueta = st.selectbox(
-                                "Selecciona la cuenta que deseas eliminar",
-                                [""] + list(etiquetas_borrar.keys()),
-                                key=f"usuario_admin_seleccionar_eliminar_{st.session_state.clear_eliminar_usuario}",
-                                placeholder="Selecciona un usuario..."
-                            )
-                            usuario_borrar = etiquetas_borrar.get(usuario_borrar_etiqueta)
-                            confirmar_borrado = st.checkbox(
-                                f"Confirmo que deseo eliminar permanentemente a {usuario_borrar['usuario']}" if usuario_borrar else "Confirmo la eliminación de la cuenta seleccionada",
-                                key=f"confirmar_eliminar_usuario_{st.session_state.clear_eliminar_usuario}",
-                                disabled=not usuario_borrar
-                            )
-                            if st.button(
-                                "Eliminar usuario",
-                                key=f"eliminar_usuario_admin_{st.session_state.clear_eliminar_usuario}",
-                                type="secondary",
-                                disabled=not usuario_borrar or not confirmar_borrado
-                            ):
-                                superusuarios = [u for u in usuarios_borrar if u.get("es_superadmin")]
-                                if usuario_borrar.get("es_superadmin") and len(superusuarios) <= 1:
-                                    st.error("No se puede eliminar el último superusuario.")
-                                else:
-                                    supabase.table("usuarios_admin").delete().eq("id", usuario_borrar["id"]).execute()
-                                    st.session_state.aviso_usuario_eliminado = f"La cuenta {usuario_borrar['usuario']} fue eliminada."
-                                    st.session_state.clear_eliminar_usuario += 1
-                                    st.rerun()
-                        else:
-                            st.info("No hay otras cuentas que puedas eliminar.")
-                    except Exception:
-                        st.error("No se pudo cargar o eliminar la cuenta. Verifica la migración SQL y los permisos de Supabase.")
-
-            if "configuracion" in paneles_admin:
-                with paneles_admin["configuracion"]:
-                    st.subheader(":material/palette: Identidad visual del estudio")
-                    st.caption("El nombre y la apariencia se aplican a todos los perfiles de la aplicación.")
-                    if not config_estudio_disponible:
-                        st.error("Falta crear la tabla de configuración. Ejecuta supabase_app_config_migration.sql en Supabase y vuelve a cargar la app.")
-                    else:
-                        if st.session_state.pop("configuracion_guardada", False):
-                            st.success("Configuración del estudio guardada.")
-                        logo_actual = configuracion_estudio.get("logo_base64")
-                        logo_mime_actual = configuracion_estudio.get("logo_mime") or "image/png"
-                        logo_subido = st.file_uploader(
-                            "Cambiar logo (PNG, JPG o WEBP; máximo 1 MB)",
-                            type=["png", "jpg", "jpeg", "webp"],
-                            key=f"config_logo_{st.session_state.clear_configuracion}"
-                        )
-                        if logo_subido is not None:
-                            st.image(logo_subido.getvalue(), caption="Vista previa del nuevo logo", width=180)
-                        elif logo_actual:
-                            try:
-                                st.image(base64.b64decode(logo_actual), caption="Logo actual", width=180)
-                            except Exception:
-                                st.warning("No se pudo mostrar el logo guardado.")
-
-                        nombre_nuevo_estudio = st.text_input(
-                            "Nombre del estudio",
-                            value=nombre_estudio,
-                            key=f"config_nombre_{st.session_state.clear_configuracion}"
-                        )
-                        col_color_1, col_color_2, col_color_3 = st.columns(3)
-                        with col_color_1:
-                            fondo_nuevo = st.color_picker(
-                                "Fondo principal",
-                                value=color_fondo_app,
-                                key=f"config_fondo_{st.session_state.clear_configuracion}"
-                            )
-                        with col_color_2:
-                            acento_nuevo = st.color_picker(
-                                "Color de acento",
-                                value=color_acento_app,
-                                key=f"config_acento_{st.session_state.clear_configuracion}"
-                            )
-                        with col_color_3:
-                            boton_nuevo = st.color_picker(
-                                "Color de botones",
-                                value=color_boton_app,
-                                key=f"config_boton_{st.session_state.clear_configuracion}"
-                            )
-                        quitar_logo = st.checkbox(
-                            "Quitar el logo actual",
-                            key=f"config_quitar_logo_{st.session_state.clear_configuracion}"
-                        )
-                        guardar_configuracion = st.button(
-                            "Guardar configuración",
-                            key=f"guardar_configuracion_{st.session_state.clear_configuracion}",
-                            type="primary"
-                        )
-
-                        if guardar_configuracion:
-                            if not nombre_nuevo_estudio.strip():
-                                st.error("Escribe el nombre del estudio.")
-                            elif logo_subido is not None and logo_subido.size > 1_048_576:
-                                st.error("El logo supera el límite de 1 MB.")
-                            else:
-                                logo_base64_nuevo = None if quitar_logo else logo_actual
-                                logo_mime_nuevo = None if quitar_logo else logo_mime_actual
-                                if logo_subido is not None:
-                                    logo_base64_nuevo = base64.b64encode(logo_subido.getvalue()).decode("ascii")
-                                    logo_mime_nuevo = logo_subido.type or "image/png"
                                 try:
-                                    supabase.table("configuracion_estudio").upsert({
-                                        "id": 1,
-                                        "nombre_estudio": nombre_nuevo_estudio.strip(),
-                                        "color_fondo": fondo_nuevo,
-                                        "color_acento": acento_nuevo,
-                                        "color_boton": boton_nuevo,
-                                        "logo_base64": logo_base64_nuevo,
-                                        "logo_mime": logo_mime_nuevo,
-                                    }, on_conflict="id").execute()
-                                    st.session_state.configuracion_guardada = True
-                                    st.session_state.clear_configuracion += 1
+                                    supabase.table("usuarios_admin").insert({
+                                        "usuario": nuevo_usuario_admin.strip(),
+                                        "contrasena_encriptada": encriptar_contrasena(nueva_clave_admin),
+                                        "es_superadmin": False,
+                                        "permisos": permisos_nuevos
+                                    }).execute()
+                                    st.session_state.mensaje_resultado_app = f"Usuario {nuevo_usuario_admin.strip()} creado correctamente."
+                                    st.session_state.clear_usuario += 1
                                     st.rerun()
                                 except Exception as e:
-                                    st.error(f"No se pudo guardar la configuración. Revisa la migración y los permisos de Supabase: {e}")
-
-                    st.divider()
-                    st.subheader(":material/calendar_month: Calendario operativo")
-                    st.caption("Configura los días en que abre el estudio y los feriados que bloquean la programación.")
-                    calendario_dias, calendario_feriados, calendario_capacidad = st.tabs(["Días laborales", "Feriados y festivos", "Capacidad por sede"])
+                                    if "23505" in str(e) or "already exists" in str(e).lower():
+                                        st.error("Ese nombre de usuario ya existe.")
+                                    elif "42703" in str(e):
+                                        st.error("Ejecuta primero supabase_admin_users_migration.sql en Supabase para habilitar los permisos.")
+                                    else:
+                                        st.error("No se pudo crear el usuario. Revisa la conexión y los permisos de Supabase.")
+    
+                    with tab_clave_usuario:
+                        st.divider()
+                        st.markdown("#### Restablecer contraseña de un usuario")
+                        aviso_clave_restablecida = st.session_state.pop("aviso_clave_restablecida", None)
+                        if aviso_clave_restablecida:
+                            st.success(aviso_clave_restablecida)
+                        try:
+                            usuarios_claves_res = supabase.table("usuarios_admin").select("id,usuario").order("usuario").execute()
+                            usuarios_claves = usuarios_claves_res.data or []
+                            if usuarios_claves:
+                                usuarios_clave_labels = {f"{u['usuario']}" : u["id"] for u in usuarios_claves}
+                                usuario_clave_sel = st.selectbox(
+                                    "Usuario al que cambiar la contraseña",
+                                    [""] + list(usuarios_clave_labels.keys()),
+                                    key=f"usuario_restablecer_clave_{st.session_state.clear_reset_clave}",
+                                    placeholder="Selecciona un usuario..."
+                                )
+                                with st.form(f"form_restablecer_clave_{st.session_state.clear_reset_clave}"):
+                                    clave_admin_nueva = st.text_input(
+                                        "Nueva contraseña (mínimo 12 caracteres)",
+                                        type="password",
+                                        key=f"reset_clave_nueva_{st.session_state.clear_reset_clave}"
+                                    )
+                                    confirmar_clave_admin_nueva = st.text_input(
+                                        "Confirmar nueva contraseña",
+                                        type="password",
+                                        key=f"reset_clave_confirmar_{st.session_state.clear_reset_clave}"
+                                    )
+                                    cambiar_clave_usuario = st.form_submit_button("Cambiar contraseña", type="primary", disabled=not usuario_clave_sel)
+                                    limpiar_reset_clave = st.form_submit_button("Limpiar campos")
+                                if limpiar_reset_clave:
+                                    st.session_state.clear_reset_clave += 1
+                                    st.rerun()
+                                if cambiar_clave_usuario:
+                                    if len(clave_admin_nueva) < 12:
+                                        st.error("La contraseña debe tener al menos 12 caracteres.")
+                                    elif clave_admin_nueva != confirmar_clave_admin_nueva:
+                                        st.error("Las contraseñas no coinciden.")
+                                    else:
+                                        supabase.table("usuarios_admin").update({
+                                            "contrasena_encriptada": encriptar_contrasena(clave_admin_nueva)
+                                        }).eq("id", usuarios_clave_labels[usuario_clave_sel]).execute()
+                                        st.session_state.aviso_clave_restablecida = f"Contraseña de {usuario_clave_sel} cambiada correctamente."
+                                        st.session_state.clear_reset_clave += 1
+                                        st.rerun()
+                            else:
+                                st.info("No hay usuarios administradores registrados.")
+                        except Exception:
+                            st.error("No se pudo restablecer la contraseña. Revisa la conexión y los permisos de Supabase.")
+    
+                    with tab_permisos_usuario:
+                        st.divider()
+                        st.markdown("#### Editar permisos de un usuario existente")
+                        aviso_permisos = st.session_state.pop("aviso_permisos", None)
+                        if aviso_permisos:
+                            st.success(aviso_permisos)
+                        try:
+                            usuarios_res = supabase.table("usuarios_admin").select(
+                                "id,usuario,es_superadmin,permisos"
+                            ).order("usuario").execute()
+                            usuarios_db = usuarios_res.data or []
+                            usuarios_normales = [u for u in usuarios_db if not u.get("es_superadmin", False)]
+                            if usuarios_normales:
+                                etiqueta_a_id = {u["usuario"]: u["id"] for u in usuarios_normales}
+                                usuario_editar = st.selectbox(
+                                    "Usuario",
+                                    [""] + list(etiqueta_a_id.keys()),
+                                    key=f"usuario_permisos_editar_{st.session_state.clear_permisos}",
+                                    placeholder="Selecciona un usuario..."
+                                )
+                                if usuario_editar:
+                                    usuario_obj = next(u for u in usuarios_normales if u["id"] == etiqueta_a_id[usuario_editar])
+                                    permisos_actuales = usuario_obj.get("permisos") or []
+                                    permisos_editados = st.multiselect(
+                                "Secciones a las que puede acceder",
+                                        options=list(VENTANAS_ADMIN.keys()),
+                                default=normalizar_permisos_admin(permisos_actuales),
+                                        format_func=lambda permiso: VENTANAS_ADMIN[permiso],
+                                        key=f"permisos_editar_{usuario_obj['id']}_{st.session_state.clear_permisos}"
+                                    )
+                                    if st.button("Guardar permisos", key=f"guardar_permisos_usuario_{st.session_state.clear_permisos}", type="primary"):
+                                        supabase.table("usuarios_admin").update({
+                                            "permisos": permisos_editados
+                                        }).eq("id", usuario_obj["id"]).execute()
+                                        st.session_state.aviso_permisos = f"Permisos de {usuario_editar} actualizados."
+                                        st.session_state.clear_permisos += 1
+                                        st.rerun()
+                                else:
+                                    st.info("Selecciona un usuario para revisar y editar sus permisos.")
+                            else:
+                                st.info("Aún no hay otros usuarios administradores para editar.")
+                        except Exception:
+                            st.error("No se pudieron cargar los usuarios. Ejecuta la migración SQL y revisa los permisos de Supabase.")
+    
+                    with tab_eliminar_usuario:
+                        st.divider()
+                        st.markdown("#### Eliminar usuario")
+                        aviso_usuario_eliminado = st.session_state.pop("aviso_usuario_eliminado", None)
+                        if aviso_usuario_eliminado:
+                            st.success(aviso_usuario_eliminado)
+                        st.caption("La eliminación es permanente. No puedes eliminar la cuenta con la que tienes la sesión abierta ni el último superusuario.")
+                        try:
+                            usuarios_borrar_res = supabase.table("usuarios_admin").select(
+                                "id,usuario,es_superadmin"
+                            ).order("usuario").execute()
+                            usuarios_borrar = usuarios_borrar_res.data or []
+                            usuarios_eliminables = [
+                                usuario for usuario in usuarios_borrar
+                                if str(usuario["id"]) != str(st.session_state.admin_id)
+                            ]
+                            if usuarios_eliminables:
+                                etiquetas_borrar = {
+                                    f"{usuario['usuario']} — {'Superusuario' if usuario.get('es_superadmin') else 'Administrador'}": usuario
+                                    for usuario in usuarios_eliminables
+                                }
+                                usuario_borrar_etiqueta = st.selectbox(
+                                    "Selecciona la cuenta que deseas eliminar",
+                                    [""] + list(etiquetas_borrar.keys()),
+                                    key=f"usuario_admin_seleccionar_eliminar_{st.session_state.clear_eliminar_usuario}",
+                                    placeholder="Selecciona un usuario..."
+                                )
+                                usuario_borrar = etiquetas_borrar.get(usuario_borrar_etiqueta)
+                                confirmar_borrado = st.checkbox(
+                                    f"Confirmo que deseo eliminar permanentemente a {usuario_borrar['usuario']}" if usuario_borrar else "Confirmo la eliminación de la cuenta seleccionada",
+                                    key=f"confirmar_eliminar_usuario_{st.session_state.clear_eliminar_usuario}",
+                                    disabled=not usuario_borrar
+                                )
+                                if st.button(
+                                    "Eliminar usuario",
+                                    key=f"eliminar_usuario_admin_{st.session_state.clear_eliminar_usuario}",
+                                    type="secondary",
+                                    disabled=not usuario_borrar or not confirmar_borrado
+                                ):
+                                    superusuarios = [u for u in usuarios_borrar if u.get("es_superadmin")]
+                                    if usuario_borrar.get("es_superadmin") and len(superusuarios) <= 1:
+                                        st.error("No se puede eliminar el último superusuario.")
+                                    else:
+                                        supabase.table("usuarios_admin").delete().eq("id", usuario_borrar["id"]).execute()
+                                        st.session_state.aviso_usuario_eliminado = f"La cuenta {usuario_borrar['usuario']} fue eliminada."
+                                        st.session_state.clear_eliminar_usuario += 1
+                                        st.rerun()
+                            else:
+                                st.info("No hay otras cuentas que puedas eliminar.")
+                        except Exception:
+                            st.error("No se pudo cargar o eliminar la cuenta. Verifica la migración SQL y los permisos de Supabase.")
+    
+            if "configuracion" in paneles_admin:
+                with paneles_admin["configuracion"]:
+                    tab_identidad_configuracion, calendario_dias, calendario_feriados, calendario_capacidad = st.tabs(["1. Identidad y apariencia", "2. Días laborales", "3. Feriados y festivos", "4. Aforo por sede"])
+                    with tab_identidad_configuracion:
+                        st.subheader(":material/palette: Identidad visual del estudio")
+                        st.caption("El nombre y la apariencia se aplican a todos los perfiles de la aplicación.")
+                        if not config_estudio_disponible:
+                            st.error("Falta crear la tabla de configuración. Ejecuta supabase_app_config_migration.sql en Supabase y vuelve a cargar la app.")
+                        else:
+                            if st.session_state.pop("configuracion_guardada", False):
+                                st.success("Configuración del estudio guardada.")
+                            logo_actual = configuracion_estudio.get("logo_base64")
+                            logo_mime_actual = configuracion_estudio.get("logo_mime") or "image/png"
+                            logo_subido = st.file_uploader(
+                                "Cambiar logo (PNG, JPG o WEBP; máximo 1 MB)",
+                                type=["png", "jpg", "jpeg", "webp"],
+                                key=f"config_logo_{st.session_state.clear_configuracion}"
+                            )
+                            if logo_subido is not None:
+                                st.image(logo_subido.getvalue(), caption="Vista previa del nuevo logo", width=180)
+                            elif logo_actual:
+                                try:
+                                    st.image(base64.b64decode(logo_actual), caption="Logo actual", width=180)
+                                except Exception:
+                                    st.warning("No se pudo mostrar el logo guardado.")
+    
+                            nombre_nuevo_estudio = st.text_input(
+                                "Nombre del estudio",
+                                value=nombre_estudio,
+                                key=f"config_nombre_{st.session_state.clear_configuracion}"
+                            )
+                            col_color_1, col_color_2, col_color_3 = st.columns(3)
+                            with col_color_1:
+                                fondo_nuevo = st.color_picker(
+                                    "Fondo principal",
+                                    value=color_fondo_app,
+                                    key=f"config_fondo_{st.session_state.clear_configuracion}"
+                                )
+                            with col_color_2:
+                                acento_nuevo = st.color_picker(
+                                    "Color de acento",
+                                    value=color_acento_app,
+                                    key=f"config_acento_{st.session_state.clear_configuracion}"
+                                )
+                            with col_color_3:
+                                boton_nuevo = st.color_picker(
+                                    "Color de botones",
+                                    value=color_boton_app,
+                                    key=f"config_boton_{st.session_state.clear_configuracion}"
+                                )
+                            quitar_logo = st.checkbox(
+                                "Quitar el logo actual",
+                                key=f"config_quitar_logo_{st.session_state.clear_configuracion}"
+                            )
+                            guardar_configuracion = st.button(
+                                "Guardar configuración",
+                                key=f"guardar_configuracion_{st.session_state.clear_configuracion}",
+                                type="primary"
+                            )
+    
+                            if guardar_configuracion:
+                                if not nombre_nuevo_estudio.strip():
+                                    st.error("Escribe el nombre del estudio.")
+                                elif logo_subido is not None and logo_subido.size > 1_048_576:
+                                    st.error("El logo supera el límite de 1 MB.")
+                                else:
+                                    logo_base64_nuevo = None if quitar_logo else logo_actual
+                                    logo_mime_nuevo = None if quitar_logo else logo_mime_actual
+                                    if logo_subido is not None:
+                                        logo_base64_nuevo = base64.b64encode(logo_subido.getvalue()).decode("ascii")
+                                        logo_mime_nuevo = logo_subido.type or "image/png"
+                                    try:
+                                        supabase.table("configuracion_estudio").upsert({
+                                            "id": 1,
+                                            "nombre_estudio": nombre_nuevo_estudio.strip(),
+                                            "color_fondo": fondo_nuevo,
+                                            "color_acento": acento_nuevo,
+                                            "color_boton": boton_nuevo,
+                                            "logo_base64": logo_base64_nuevo,
+                                            "logo_mime": logo_mime_nuevo,
+                                        }, on_conflict="id").execute()
+                                        st.session_state.configuracion_guardada = True
+                                        st.session_state.clear_configuracion += 1
+                                        st.rerun()
+                                    except Exception as e:
+                                        st.error(f"No se pudo guardar la configuración. Revisa la migración y los permisos de Supabase: {e}")
+    
                     with calendario_dias:
+                        st.caption("Indica los días de la semana en que el estudio abre.")
                         try:
                             dias_consulta = supabase.table("dias_operativos").select("*").order("numero_dia").execute()
                             if dias_consulta.data:
@@ -2549,6 +2595,7 @@ else:
                         except Exception as e:
                             st.error(f"No se pudo cargar la configuración de días: {e}")
                     with calendario_feriados:
+                        st.caption("Registra fechas sin actividad o elimina feriados ingresados por error.")
                         aviso_feriado = st.session_state.pop("aviso_feriado", None)
                         if aviso_feriado:
                             st.success(aviso_feriado)
