@@ -1923,12 +1923,7 @@ else:
                                     )
                                     pagos_inst = pagos_inst_res.data or []
                                     locales_por_id_inst = {int(l["id"]): l["nombre"] for l in lista_locales_admin}
-                                    nombres_sedes_inst = sorted({locales_por_id_inst.get(int(s["local_id"]), "Sede") for s in sesiones_inst})
-                                    filtro_sede_inst = st.selectbox(
-                                        "Filtrar clases y pagos por sede",
-                                        ["Todas las sedes"] + nombres_sedes_inst,
-                                        key=f"filtro_sede_instructor_{instructora_actual['id']}_{st.session_state.clear_gestion_instructoras}",
-                                    )
+                                    filtro_sede_inst = filtro_sede_directorio
                                     if filtro_sede_inst != "Todas las sedes":
                                         ids_sedes_filtro = {
                                             int(local["id"]) for local in lista_locales_admin
