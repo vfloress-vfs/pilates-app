@@ -1777,10 +1777,10 @@ else:
                     if aviso_instructora:
                         st.success(aviso_instructora)
 
-                    tab_alta_inst, tab_directorio_inst, tab_agenda_inst, tab_pagos_inst = st.tabs([
+                    tab_alta_inst, tab_agenda_inst, tab_directorio_inst, tab_pagos_inst = st.tabs([
                         "1. Registrar instructor",
-                        "2. Buscar y gestionar",
-                        "3. Agenda de clases",
+                        "2. Agenda de clases",
+                        "3. Buscar y gestionar",
                         "4. Pagos realizados",
                     ], key="tabs_gestion_instructores", on_change="rerun")
                     try:
@@ -1879,12 +1879,28 @@ else:
                                         .execute()
                                     )
                                     pagos_inst = pagos_inst_res.data or []
+                                    locales_por_id_inst = {int(l["id"]): l["nombre"] for l in lista_locales_admin}
+                                    nombres_sedes_inst = sorted({locales_por_id_inst.get(int(s["local_id"]), "Sede") for s in sesiones_inst})
+                                    filtro_sede_inst = st.selectbox(
+                                        "Filtrar clases y pagos por sede",
+                                        ["Todas las sedes"] + nombres_sedes_inst,
+                                        key=f"filtro_sede_instructor_{instructora_actual['id']}_{st.session_state.clear_gestion_instructoras}",
+                                    )
+                                    if filtro_sede_inst != "Todas las sedes":
+                                        ids_sedes_filtro = {
+                                            int(local["id"]) for local in lista_locales_admin
+                                            if local.get("nombre") == filtro_sede_inst
+                                        }
+                                        sesiones_inst = [s for s in sesiones_inst if int(s["local_id"]) in ids_sedes_filtro]
+                                        ids_sesiones_filtro = {int(s["id"]) for s in sesiones_inst}
+                                        pagos_inst = [p for p in pagos_inst if int(p["sesion_id"]) in ids_sesiones_filtro]
                                     pagos_por_sesion = {p["sesion_id"]: p for p in pagos_inst}
                                     completadas_inst = [s for s in sesiones_inst if s["estado"] == "Realizada"]
 
                                     # Un pago solo procede si hay al menos un alumno marcado con asistencia o inasistencia.
-                                    ids_sesiones_inst = [s["id"] for s in completadas_inst]
+                                    ids_sesiones_inst = [s["id"] for s in sesiones_inst]
                                     reservas_por_sesion = {}
+                                    reservas_activas_por_sesion = {}
                                     if ids_sesiones_inst:
                                         reservas_inst = (
                                             supabase.table("reservas")
@@ -1895,6 +1911,8 @@ else:
                                         estados_asistencia = {"asistencia", "asistio", "presente"}
                                         estados_inasistencia = {"inasistencia", "no asistio", "ausente", "falta", "no show", "no-show"}
                                         for reserva in reservas_inst:
+                                            if reserva.get("estado") == "Programada":
+                                                reservas_activas_por_sesion[reserva["sesion_id"]] = reservas_activas_por_sesion.get(reserva["sesion_id"], 0) + 1
                                             if reserva.get("alumno_id") is None:
                                                 continue
                                             estado_reserva = unicodedata.normalize("NFKD", str(reserva.get("estado") or "").lower())
@@ -1926,21 +1944,176 @@ else:
 
                                     if sesiones_inst:
                                         st.markdown("#### Horarios, sedes y clases")
-                                        locales_por_id_inst = {l["id"]: l["nombre"] for l in lista_locales_admin}
-                                        filas_sesiones_inst = []
+                                        anchos_grid_sesiones = [0.9, 0.95, 1.0, 0.9, 0.7, 0.8, 0.8, 0.6]
+                                        encabezados_grid_sesiones = ["Fecha", "Horario", "Sede", "Clase", "Aforo", "Estado", "Asistencia", "Gestión"]
+                                        columnas_encabezado_sesiones = st.columns(anchos_grid_sesiones)
+                                        for columna, titulo in zip(columnas_encabezado_sesiones, encabezados_grid_sesiones):
+                                            columna.markdown(
+                                                f"<div style='font-size:.78rem;font-weight:700;white-space:nowrap;line-height:2rem'>{html.escape(titulo)}</div>",
+                                                unsafe_allow_html=True,
+                                            )
+                                        id_sesiones_seleccionadas = []
                                         for sesion in sesiones_inst:
-                                            filas_sesiones_inst.append({
-                                                "Fecha": fecha_visible(sesion["fecha_clase"]),
-                                                "Horario": f"{str(sesion['hora_inicio'])[:5]}–{str(sesion['hora_fin'])[:5]}",
-                                                "Sede": locales_por_id_inst.get(sesion["local_id"], "Sede"),
-                                                "Clase": sesion["tipo_servicio"],
-                                                "Estado": sesion["estado"],
-                                                "Asistencia / inasistencia": ", ".join(sorted({r["estado"] for r in reservas_por_sesion.get(sesion["id"], [])})) or "Sin registro",
-                                                "Pago": f"S/ {float(pagos_por_sesion[sesion['id']]['importe']):.2f}" if sesion["id"] in pagos_por_sesion else (f"Pendiente · S/ {monto_fijo_sesion(sesion):.2f}" if sesion in sesiones_por_pagar else ("Requiere asistencia o inasistencia" if sesion["estado"] == "Realizada" else "—"))
-                                            })
-                                        st.dataframe(pd.DataFrame(filas_sesiones_inst), use_container_width=True, hide_index=True)
+                                            motivo_bloqueo_gestion = ""
+                                            puede_gestionar_sesion = False
+                                            inicio_sesion_gestion = datetime.combine(
+                                                datetime.fromisoformat(str(sesion["fecha_clase"])).date(),
+                                                datetime_time.fromisoformat(str(sesion["hora_inicio"])),
+                                            ).replace(tzinfo=ZoneInfo("America/Lima"))
+                                            if sesion.get("estado") != "Programada":
+                                                motivo_bloqueo_gestion = f"La clase está {str(sesion.get('estado') or 'sin estado').lower()}."
+                                            elif inicio_sesion_gestion <= datetime.now(ZoneInfo("America/Lima")):
+                                                motivo_bloqueo_gestion = "La clase ya empezó o pasó."
+                                            elif sesion["id"] in pagos_por_sesion:
+                                                motivo_bloqueo_gestion = "La clase ya tiene un pago registrado."
+                                            elif reservas_por_sesion.get(sesion["id"]):
+                                                motivo_bloqueo_gestion = "La clase ya tiene asistencia registrada."
+                                            else:
+                                                puede_gestionar_sesion = True
+
+                                            inscritos_sesion = reservas_activas_por_sesion.get(sesion["id"], 0)
+                                            asistencia_sesion = ", ".join(sorted({r["estado"] for r in reservas_por_sesion.get(sesion["id"], [])})) or "—"
+                                            valores_sesion = [
+                                                fecha_visible(sesion["fecha_clase"]),
+                                                f"{str(sesion['hora_inicio'])[:5]}–{str(sesion['hora_fin'])[:5]}",
+                                                locales_por_id_inst.get(int(sesion["local_id"]), "Sede"),
+                                                sesion.get("tipo_servicio", "—"),
+                                                f"{inscritos_sesion}/{int(sesion.get('capacidad') or 0)}",
+                                                sesion.get("estado", "—"),
+                                                asistencia_sesion,
+                                            ]
+                                            columnas_fila_sesiones = st.columns(anchos_grid_sesiones)
+                                            for columna, valor in zip(columnas_fila_sesiones[:7], valores_sesion):
+                                                texto_celda = str(valor)
+                                                columna.markdown(
+                                                    f"<div title='{html.escape(texto_celda, quote=True)}' style='font-size:.78rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;line-height:2.35rem'>{html.escape(texto_celda)}</div>",
+                                                    unsafe_allow_html=True,
+                                                )
+                                            clave_gestion_sesion = f"gestion_sesion_{instructora_actual['id']}_{sesion['id']}_{st.session_state.clear_estado_sesion}"
+                                            if not puede_gestionar_sesion:
+                                                st.session_state.pop(clave_gestion_sesion, None)
+                                            seleccionada_gestion = columnas_fila_sesiones[7].checkbox(
+                                                "Gestión",
+                                                key=clave_gestion_sesion,
+                                                disabled=not puede_gestionar_sesion,
+                                                label_visibility="collapsed",
+                                                help=motivo_bloqueo_gestion or "Marca para cancelar la clase o modificar su instructor y modalidad.",
+                                            )
+                                            if seleccionada_gestion:
+                                                id_sesiones_seleccionadas.append(sesion["id"])
+                                        if len(id_sesiones_seleccionadas) > 1:
+                                            st.warning("Selecciona una sola clase para abrir sus opciones de gestión.")
+                                        sesion_seleccionada_gestion = next(
+                                            (s for s in sesiones_inst if len(id_sesiones_seleccionadas) == 1 and s["id"] == id_sesiones_seleccionadas[0]),
+                                            None,
+                                        )
+                                        if sesion_seleccionada_gestion:
+                                            pestaña_cancelar_sesion, pestaña_modificar_sesion = st.tabs(
+                                                ["Cancelar clase", "Modificar clase"],
+                                                key=f"tabs_gestion_sesion_{sesion_seleccionada_gestion['id']}_{st.session_state.clear_estado_sesion}",
+                                                on_change="rerun",
+                                            )
+                                            fecha_sesion_seleccionada = datetime.fromisoformat(str(sesion_seleccionada_gestion["fecha_clase"])).date()
+                                            dia_sesion_seleccionada = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado", "Domingo"][fecha_sesion_seleccionada.weekday()]
+                                            local_sesion_seleccionada = next((l for l in lista_locales_admin if int(l["id"]) == int(sesion_seleccionada_gestion["local_id"])), {})
+                                            localizacion_sesion = locales_por_id_inst.get(int(sesion_seleccionada_gestion["local_id"]), "Sede")
+                                            instructora_sesion_actual = next((i for i in instructoras_db if int(i["id"]) == int(sesion_seleccionada_gestion["instructora_id"])), {})
+                                            reservas_sesion_actuales = reservas_activas_por_sesion.get(sesion_seleccionada_gestion["id"], 0)
+
+                                            with pestaña_cancelar_sesion:
+                                                st.caption("Al cancelar, se anularán las reservas activas, se devolverán las clases a los planes y se invalidarán los QR.")
+                                                columnas_tarjeta_cancelar = st.columns(2)
+                                                with columnas_tarjeta_cancelar[0]:
+                                                    with st.container(border=True):
+                                                        st.markdown(f"### {dia_sesion_seleccionada}, {fecha_sesion_seleccionada.strftime('%d-%m-%Y')}")
+                                                        st.markdown(f"**{str(sesion_seleccionada_gestion['hora_inicio'])[:5]}–{str(sesion_seleccionada_gestion['hora_fin'])[:5]} · {sesion_seleccionada_gestion.get('tipo_servicio', 'Clase')}**")
+                                                        st.write(f"📍 {localizacion_sesion} · 👤 {instructora_sesion_actual.get('nombre', 'Instructor')}")
+                                                        st.caption(f"Reservas que se devolverán a sus planes: {reservas_sesion_actuales}")
+                                                        confirmar_cancelacion_sesion = st.checkbox(
+                                                            "Confirmo que deseo cancelar esta clase y devolver las clases reservadas.",
+                                                            key=f"confirmar_cancelar_sesion_{sesion_seleccionada_gestion['id']}_{st.session_state.clear_estado_sesion}",
+                                                        )
+                                                        if st.button(
+                                                            "Confirmar cancelación",
+                                                            key=f"cancelar_sesion_admin_{sesion_seleccionada_gestion['id']}_{st.session_state.clear_estado_sesion}",
+                                                            type="primary",
+                                                            use_container_width=True,
+                                                            disabled=not confirmar_cancelacion_sesion,
+                                                        ):
+                                                            try:
+                                                                resultado_cancelacion_sesion = supabase.rpc("cancelar_sesion_admin", {
+                                                                    "p_sesion_id": int(sesion_seleccionada_gestion["id"]),
+                                                                    "p_admin_id": int(st.session_state.admin_id),
+                                                                }).execute().data or 0
+                                                                st.session_state.aviso_instructora = f"Clase cancelada. Se devolvieron {int(resultado_cancelacion_sesion)} reserva(s) a sus planes y el cambio quedó registrado."
+                                                                st.session_state.clear_estado_sesion += 1
+                                                                st.rerun()
+                                                            except Exception as error_cancelacion_sesion:
+                                                                st.error(f"No se pudo cancelar la clase: {error_cancelacion_sesion}")
+
+                                            with pestaña_modificar_sesion:
+                                                st.caption("Puedes corregir el instructor y la modalidad. Se conservan la fecha, la hora y la sede.")
+                                                columnas_tarjeta_modificar = st.columns(2)
+                                                with columnas_tarjeta_modificar[0]:
+                                                    with st.container(border=True):
+                                                        st.markdown(f"### {dia_sesion_seleccionada}, {fecha_sesion_seleccionada.strftime('%d-%m-%Y')}")
+                                                        st.markdown(f"**{str(sesion_seleccionada_gestion['hora_inicio'])[:5]}–{str(sesion_seleccionada_gestion['hora_fin'])[:5]} · {sesion_seleccionada_gestion.get('tipo_servicio', 'Clase')}**")
+                                                        st.write(f"📍 {localizacion_sesion} · 👤 {instructora_sesion_actual.get('nombre', 'Instructor')}")
+                                                        aforo_sede_modificacion = int(local_sesion_seleccionada.get("max_camillas") or 8)
+                                                        instructores_activos_modificacion = [i for i in instructoras_db if i.get("activo", True)]
+                                                        ids_instructores_activos = [int(i["id"]) for i in instructores_activos_modificacion]
+                                                        indice_instructor_default = ids_instructores_activos.index(int(sesion_seleccionada_gestion["instructora_id"])) if int(sesion_seleccionada_gestion["instructora_id"]) in ids_instructores_activos else 0
+                                                        nuevo_instructor_sesion = st.selectbox(
+                                                            "Instructor asignado",
+                                                            instructores_activos_modificacion,
+                                                            index=indice_instructor_default if instructores_activos_modificacion else None,
+                                                            format_func=lambda i: f"{i['nombre']} · S/ {float(i.get('pago_por_clase') or 0):.2f} por clase",
+                                                            key=f"modificar_instructor_sesion_{sesion_seleccionada_gestion['id']}_{st.session_state.clear_estado_sesion}",
+                                                            placeholder="Selecciona un instructor...",
+                                                        )
+                                                        tipos_servicio_sesion = ["Grupal", "Privado"]
+                                                        tipo_actual_sesion = sesion_seleccionada_gestion.get("tipo_servicio")
+                                                        indice_tipo_default = tipos_servicio_sesion.index(tipo_actual_sesion) if tipo_actual_sesion in tipos_servicio_sesion else 0
+                                                        nuevo_tipo_sesion = st.selectbox(
+                                                            "Modalidad de la clase",
+                                                            tipos_servicio_sesion,
+                                                            index=indice_tipo_default,
+                                                            key=f"modificar_tipo_sesion_{sesion_seleccionada_gestion['id']}_{st.session_state.clear_estado_sesion}",
+                                                        )
+                                                        aforo_nuevo_sesion = (
+                                                            int(sesion_seleccionada_gestion.get("capacidad") or 1)
+                                                            if nuevo_tipo_sesion == tipo_actual_sesion
+                                                            else (1 if nuevo_tipo_sesion == "Privado" else aforo_sede_modificacion)
+                                                        )
+                                                        st.caption(f"Aforo resultante: {aforo_nuevo_sesion} · Reservas activas: {reservas_sesion_actuales}")
+                                                        cambio_invalido_aforo = reservas_sesion_actuales > aforo_nuevo_sesion
+                                                        if cambio_invalido_aforo:
+                                                            st.warning("La modalidad elegida no admite la cantidad actual de reservas.")
+                                                        if st.button(
+                                                            "Guardar cambios de la clase",
+                                                            key=f"guardar_modificar_sesion_{sesion_seleccionada_gestion['id']}_{st.session_state.clear_estado_sesion}",
+                                                            type="primary",
+                                                            use_container_width=True,
+                                                            disabled=not nuevo_instructor_sesion or cambio_invalido_aforo,
+                                                        ):
+                                                            try:
+                                                                supabase.rpc("modificar_sesion_instructora_admin", {
+                                                                    "p_sesion_id": int(sesion_seleccionada_gestion["id"]),
+                                                                    "p_instructora_id": int(nuevo_instructor_sesion["id"]),
+                                                                    "p_tipo_servicio": nuevo_tipo_sesion,
+                                                                    "p_admin_id": int(st.session_state.admin_id),
+                                                                }).execute()
+                                                                st.session_state.aviso_instructora = "Clase actualizada. Se conservaron sus reservas y se registró el cambio."
+                                                                st.session_state.clear_estado_sesion += 1
+                                                                st.rerun()
+                                                            except Exception as error_modificar_sesion:
+                                                                st.error(f"No se pudo modificar la clase. Verifica la disponibilidad del instructor y las reservas: {error_modificar_sesion}")
                                     else:
-                                        st.info("Aún no hay clases programadas para este instructor.")
+                                        st.info(
+                                            "No hay clases registradas para este instructor y la sede seleccionada."
+                                            if filtro_sede_inst != "Todas las sedes"
+                                            else "Aún no hay clases programadas para este instructor."
+                                        )
 
                                     if sesiones_por_pagar:
                                         st.markdown("#### Registrar pago de una clase con asistencia validada")
@@ -2252,38 +2425,7 @@ else:
                                             else:
                                                 st.caption("Sin clases para este turno.")
                                 st.divider()
-                                st.markdown("#### Cancelar una clase")
-                                sesion_etiquetas = {f"{fecha_visible(s['fecha_clase'])} · {str(s['hora_inicio'])[:5]} · {s['Sede']} · {s['Instructor']} ({s['estado']})": s for s in sesiones_reporte}
-                                etiqueta_sesion = st.selectbox("Selecciona una clase", [""] + list(sesion_etiquetas), key=f"estado_sesion_sel_{st.session_state.clear_estado_sesion}")
-                                sesion_estado = sesion_etiquetas.get(etiqueta_sesion)
-                                if sesion_estado and sesion_estado.get("estado") in {"Realizada", "Cancelada"}:
-                                    st.info(f"Esta clase ya está {str(sesion_estado['estado']).lower()}. Es un estado final y no se puede reabrir desde la aplicación.")
-                                elif sesion_estado:
-                                    st.caption("Las clases pasan a Realizada automáticamente al terminar y procesarse sus reservas. Solo se pueden cancelar antes de su hora de inicio.")
-                                if st.button("Cancelar clase seleccionada", key=f"cancelar_sesion_{st.session_state.clear_estado_sesion}", disabled=sesion_estado is None or sesion_estado.get("estado") != "Programada"):
-                                    try:
-                                        estado_actual = str(sesion_estado.get("estado") or "")
-                                        fecha_sesion = sesion_estado["fecha_clase"]
-                                        if isinstance(fecha_sesion, str):
-                                            fecha_sesion = datetime.fromisoformat(fecha_sesion[:10]).date()
-                                        hora_inicio = sesion_estado["hora_inicio"]
-                                        if isinstance(hora_inicio, str):
-                                            hora_inicio = datetime_time.fromisoformat(hora_inicio)
-                                        inicio_sesion = datetime.combine(fecha_sesion, hora_inicio).replace(tzinfo=ZoneInfo("America/Lima"))
-                                        pago_existente = supabase.table("pagos_instructoras").select("id").eq("sesion_id", sesion_estado["id"]).limit(1).execute().data or []
-                                        if estado_actual != "Programada":
-                                            st.error("Solo se pueden cancelar clases que sigan programadas.")
-                                        elif datetime.now(ZoneInfo("America/Lima")) >= inicio_sesion:
-                                            st.error("Solo se puede cancelar una clase antes de su hora de inicio. Para una clase vencida, usa el reintento de cierre automático.")
-                                        elif pago_existente:
-                                            st.error("No se puede cambiar una clase cuyo pago ya fue registrado.")
-                                        else:
-                                            supabase.table("sesiones_clase").update({"estado": "Cancelada"}).eq("id", sesion_estado["id"]).execute()
-                                            st.session_state.aviso_agenda = f"La clase del {fecha_visible(sesion_estado['fecha_clase'])} a las {str(sesion_estado['hora_inicio'])[:5]} quedó cancelada."
-                                            st.session_state.clear_estado_sesion += 1
-                                            st.rerun()
-                                    except Exception as error_estado:
-                                        st.error(f"No se pudo actualizar el estado de la clase: {error_estado}")
+                                st.info("Para cancelar una clase o corregir su instructor o modalidad, usa Gestión de instructores → Buscar y gestionar.")
                             else:
                                 st.info("No hay clases programadas para este rango.")
                         except Exception as e:
