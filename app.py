@@ -1202,8 +1202,8 @@ else:
                                         filas_sesiones_inst = []
                                         for sesion in sesiones_inst:
                                             filas_sesiones_inst.append({
-                                                "Horario": f"{str(sesion['hora_inicio'])[:5]}–{str(sesion['hora_fin'])[:5]}",
                                                 "Fecha": sesion["fecha_clase"],
+                                                "Horario": f"{str(sesion['hora_inicio'])[:5]}–{str(sesion['hora_fin'])[:5]}",
                                                 "Sede": locales_por_id_inst.get(sesion["local_id"], "Sede"),
                                                 "Clase": sesion["tipo_servicio"],
                                                 "Estado": sesion["estado"],
@@ -1264,17 +1264,32 @@ else:
 
                                     if pagos_inst:
                                         st.markdown("#### Historial de pagos realizados")
-                                        pagos_historial = []
-                                        sesiones_por_id = {s["id"]: s for s in sesiones_inst}
+                                        pagos_historial_ordenables = []
+                                        ids_sesiones_pagadas = list({p["sesion_id"] for p in pagos_inst})
+                                        sesiones_pago_res = supabase.table("sesiones_clase").select(
+                                            "id,local_id,fecha_clase,tipo_servicio"
+                                        ).in_("id", ids_sesiones_pagadas).execute()
+                                        sesiones_por_id = {s["id"]: s for s in (sesiones_pago_res.data or [])}
                                         for pago in pagos_inst:
                                             sesion_pago = sesiones_por_id.get(pago["sesion_id"], {})
-                                            pagos_historial.append({
-                                                "Fecha de pago": pago["fecha_pago"],
+                                            fila_pago = {
                                                 "Fecha de clase": sesion_pago.get("fecha_clase", "—"),
+                                                "Fecha de pago": pago["fecha_pago"],
                                                 "Sede": locales_por_id_inst.get(sesion_pago.get("local_id"), "—"),
-                                                "Importe": f"${float(pago.get('importe') or 0):.2f}",
+                                                "Clase": sesion_pago.get("tipo_servicio", "—"),
+                                                "Importe": f"S/ {float(pago.get('importe') or 0):.2f}",
                                                 "Referencia": pago.get("referencia") or "—"
-                                            })
+                                            }
+                                            orden_pago = (
+                                                fila_pago["Fecha de clase"],
+                                                fila_pago["Fecha de pago"],
+                                                fila_pago["Sede"].casefold(),
+                                                fila_pago["Clase"].casefold(),
+                                                float(pago.get("importe") or 0),
+                                                fila_pago["Referencia"].casefold(),
+                                            )
+                                            pagos_historial_ordenables.append((orden_pago, fila_pago))
+                                        pagos_historial = [fila for _, fila in sorted(pagos_historial_ordenables, key=lambda elemento: elemento[0])]
                                         st.dataframe(pd.DataFrame(pagos_historial), use_container_width=True, hide_index=True)
                                 except Exception as e:
                                     st.warning(f"Para consultar clases y pagos, ejecuta supabase_gestion_instructoras_migration.sql en Supabase. Detalle: {e}")
@@ -1462,9 +1477,9 @@ else:
                                     for turno, pestaña_turno in (("Mañana", tab_manana), ("Tarde", tab_tarde)):
                                         with pestaña_turno:
                                             filas = [s for s in sesiones_reporte if s["Sede"] == sede and s["Turno"] == turno]
-                                            filas.sort(key=lambda s: (str(s["hora_inicio"]), s["fecha_clase"], s["tipo_servicio"], s["Instructora"]))
+                                            filas.sort(key=lambda s: (s["fecha_clase"], str(s["hora_inicio"]), s["tipo_servicio"], s["Instructora"]))
                                             if filas:
-                                                st.dataframe(pd.DataFrame([{"Hora": f"{str(s['hora_inicio'])[:5]}–{str(s['hora_fin'])[:5]}", "Fecha": s["fecha_clase"], "Clase": s["tipo_servicio"], "Instructora": s["Instructora"], "Aforo": s["capacidad"], "Estado": s["estado"]} for s in filas]), hide_index=True, use_container_width=True)
+                                                st.dataframe(pd.DataFrame([{"Fecha": s["fecha_clase"], "Hora": f"{str(s['hora_inicio'])[:5]}–{str(s['hora_fin'])[:5]}", "Clase": s["tipo_servicio"], "Instructora": s["Instructora"], "Aforo": s["capacidad"], "Estado": s["estado"]} for s in filas]), hide_index=True, use_container_width=True)
                                             else:
                                                 st.caption("Sin clases para este turno.")
                                 st.divider()
