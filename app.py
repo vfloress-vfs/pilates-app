@@ -552,14 +552,18 @@ else:
             locales_tiene_baja = True
             try:
                 try:
-                    locales_res = supabase.table("locales").select("id,nombre,direccion,activo").order("nombre").execute()
+                    locales_res = supabase.table("locales").select("id,nombre,direccion,activo,max_camillas").order("nombre").execute()
                     lista_locales_admin = locales_res.data or []
                 except Exception as error_columna_local:
                     if "42703" not in str(error_columna_local) and getattr(error_columna_local, "code", None) != "42703":
                         raise
                     locales_tiene_baja = False
-                    locales_res = supabase.table("locales").select("id,nombre,direccion").order("nombre").execute()
-                    lista_locales_admin = [{**local, "activo": True} for local in (locales_res.data or [])]
+                    try:
+                        locales_res = supabase.table("locales").select("id,nombre,direccion,activo,max_camillas").order("nombre").execute()
+                        lista_locales_admin = [{**local, "activo": local.get("activo", True)} for local in (locales_res.data or [])]
+                    except Exception:
+                        locales_res = supabase.table("locales").select("id,nombre,direccion").order("nombre").execute()
+                        lista_locales_admin = [{**local, "activo": True, "max_camillas": 8} for local in (locales_res.data or [])]
                 lista_locales = [local for local in lista_locales_admin if local.get("activo", True)]
                 opciones_locales = {local['nombre']: local['id'] for local in lista_locales}
                 
@@ -650,6 +654,13 @@ else:
                             value=local_seleccionado.get("direccion") or "",
                             key=f"local_direccion_editar_{local_id}_{st.session_state.clear_local}"
                         )
+                        max_camillas_local = st.number_input(
+                            "Máximo de camillas",
+                            min_value=1,
+                            max_value=50,
+                            value=int(local_seleccionado.get("max_camillas") or 8),
+                            key=f"local_camillas_editar_{local_id}_{st.session_state.clear_local}"
+                        )
                         col_local_guardar, col_local_baja = st.columns(2)
                         with col_local_guardar:
                             if st.button("Guardar cambios", key=f"guardar_local_{local_id}_{st.session_state.clear_local}", type="primary", disabled=not local_id):
@@ -659,7 +670,8 @@ else:
                                     try:
                                         supabase.table("locales").update({
                                             "nombre": nombre_local_editado.strip(),
-                                            "direccion": direccion_local_editada.strip()
+                                            "direccion": direccion_local_editada.strip(),
+                                            "max_camillas": int(max_camillas_local)
                                         }).eq("id", local_id).execute()
                                         st.session_state.clear_local += 1
                                         st.rerun()
@@ -1041,7 +1053,7 @@ else:
                     if aviso_instructora:
                         st.success(aviso_instructora)
 
-                    tab_directorio_inst, tab_alta_inst = st.tabs(["Directorio y ficha", "Registrar instructora"])
+                    tab_directorio_inst, tab_alta_inst, tab_pagos_inst = st.tabs(["Directorio y ficha", "Registrar instructora", "Pagos realizados"])
                     try:
                         instructoras_res = supabase.table("instructoras").select("id,nombre,telefono,costo_hora,activo").order("nombre").execute()
                         instructoras_db = instructoras_res.data or []
@@ -1256,13 +1268,48 @@ else:
                                 st.session_state.clear_gestion_instructoras += 1
                                 st.rerun()
 
+                    with tab_pagos_inst:
+                        st.markdown("#### Historial de pagos a instructoras")
+                        st.caption("Cada fila confirma un pago y muestra la clase, sede, horas, tarifa y referencia registrada.")
+                        st.info("Para registrar un pago: en Agenda, marca la clase como Realizada; luego ve a Directorio y ficha, selecciona a la instructora y registra el pago de la clase pendiente.")
+                        try:
+                            pagos_globales = supabase.table("pagos_instructoras").select("*").order("fecha_pago", desc=True).limit(1000).execute().data or []
+                            if pagos_globales:
+                                sesiones_globales = supabase.table("sesiones_clase").select("id,local_id,fecha_clase,hora_inicio,hora_fin,tipo_servicio").in_("id", list({p["sesion_id"] for p in pagos_globales})).execute().data or []
+                                instructora_global = {int(i["id"]): i["nombre"] for i in (supabase.table("instructoras").select("id,nombre").execute().data or [])}
+                                usuarios_global = {int(u["id"]): u.get("usuario", "—") for u in (supabase.table("usuarios_admin").select("id,usuario").execute().data or [])}
+                                local_global = {int(l["id"]): l["nombre"] for l in lista_locales_admin}
+                                sesion_global_por_id = {int(s["id"]): s for s in sesiones_globales}
+                                detalle_pagos_global = []
+                                for pago in pagos_globales:
+                                    sesion_pago_global = sesion_global_por_id.get(int(pago["sesion_id"]), {})
+                                    detalle_pagos_global.append({
+                                        "Fecha de pago": pago.get("fecha_pago", "—"),
+                                        "Instructora": instructora_global.get(int(pago["instructora_id"]), "—"),
+                                        "Fecha de clase": sesion_pago_global.get("fecha_clase", "—"),
+                                        "Horario": f"{str(sesion_pago_global.get('hora_inicio', ''))[:5]}–{str(sesion_pago_global.get('hora_fin', ''))[:5]}",
+                                        "Sede": local_global.get(int(sesion_pago_global["local_id"]), "—") if sesion_pago_global.get("local_id") is not None else "—",
+                                        "Modalidad": sesion_pago_global.get("tipo_servicio", "—"),
+                                        "Duración": f"{int(pago.get('duracion_minutos') or 0)} min",
+                                        "Tarifa por hora": f"S/ {float(pago.get('tarifa_hora_aplicada') or 0):.2f}",
+                                        "Importe pagado": f"S/ {float(pago.get('importe') or 0):.2f}",
+                                        "Referencia": pago.get("referencia") or "—",
+                                        "Registrado por": usuarios_global.get(int(pago["registrado_por"]), "—") if pago.get("registrado_por") is not None else "—",
+                                    })
+                                st.dataframe(pd.DataFrame(detalle_pagos_global), hide_index=True, use_container_width=True)
+                                st.metric("Total pagado en el listado", f"S/ {sum(float(p.get('importe') or 0) for p in pagos_globales):.2f}")
+                            else:
+                                st.info("Todavía no hay pagos registrados. Cuando registres el primero, aparecerá en esta lista.")
+                        except Exception as e:
+                            st.warning(f"No se pudo cargar el historial. Verifica que ejecutaste supabase_gestion_instructoras_migration.sql en Supabase. Detalle: {e}")
+
             if "agenda" in paneles_admin:
                 with paneles_admin["agenda"]:
                     st.subheader(":material/calendar_month: Agenda y sesiones del estudio")
                     sub_agenda1, sub_agenda2 = st.tabs(["Programar clases", "Calendario por sede"])
 
                     with sub_agenda1:
-                        st.markdown("#### 🚀 Generador Automatizado de Calendario Mensual")
+                        st.markdown("#### Programar clases recurrentes")
                         aviso_agenda = st.session_state.pop("aviso_agenda", None)
                         if aviso_agenda:
                             st.info(aviso_agenda)
@@ -1277,6 +1324,7 @@ else:
                             col_mas1, col_mas2 = st.columns(2)
                             with col_mas1:
                                 sede_agenda = st.selectbox("Selecciona Sede:", [""] + list(opciones_locales.keys()), key=f"mas_sede_{st.session_state.clear_agenda}", placeholder="Selecciona una sede...")
+                                sede_objeto_agenda = next((l for l in lista_locales if l["nombre"] == sede_agenda), None)
                                 fecha_inicio = st.date_input("Fecha de Inicio:", value=None, min_value=datetime.now().date(), key=f"mas_f_ini_{st.session_state.clear_agenda}")
                                 fecha_fin = st.date_input("Fecha de Fin:", value=None, min_value=datetime.now().date(), key=f"mas_f_fin_{st.session_state.clear_agenda}")
                                 hora_agenda = st.time_input("Hora de inicio:", value=datetime_time(8, 0), key=f"mas_hora_{st.session_state.clear_agenda}")
@@ -1285,7 +1333,8 @@ else:
                                 inst_agenda = st.selectbox("Asignar instructora:", [""] + list(opciones_inst.keys()), key=f"mas_inst_{st.session_state.clear_agenda}", placeholder="Selecciona una instructora...")
                                 tipo_serv_agenda = st.selectbox("Tipo de Sesión:", ["", "Grupal", "Privado"], key=f"mas_tipo_{st.session_state.clear_agenda}", placeholder="Selecciona una modalidad...")
                                 if tipo_serv_agenda == "Grupal":
-                                    aforo_agenda = st.number_input("Aforo Máximo Camillas:", min_value=4, max_value=10, value=None, placeholder="Indica el aforo", key=f"mas_aforo_{st.session_state.clear_agenda}")
+                                    aforo_agenda = int(sede_objeto_agenda.get("max_camillas") or 8) if sede_objeto_agenda else None
+                                    st.caption(f"Aforo grupal de esta sede: **{aforo_agenda if aforo_agenda is not None else '—'} camillas** (se toma de Configuración).")
                                 elif tipo_serv_agenda == "Privado": aforo_agenda = 1
                                 else: aforo_agenda = None
                                             
@@ -1294,7 +1343,8 @@ else:
                             cols_dias = st.columns(4)
                             for numero_dia, nombre_dia in enumerate(nombres_dias):
                                 with cols_dias[numero_dia % 4]:
-                                    if st.checkbox(nombre_dia, value=False, key=f"dia_{numero_dia}_{st.session_state.clear_agenda}"):
+                                    habilitado = bool(dias_habilitados.get(numero_dia, False))
+                                    if st.checkbox(nombre_dia, value=False, disabled=not habilitado, key=f"dia_{numero_dia}_{st.session_state.clear_agenda}"):
                                         dias_seleccionados.append(numero_dia)
                                             
                             if st.button("Programar clases", type="primary", key=f"guardar_agenda_{st.session_state.clear_agenda}"):
@@ -2132,7 +2182,7 @@ else:
                     st.divider()
                     st.subheader(":material/calendar_month: Calendario operativo")
                     st.caption("Configura los días en que abre el estudio y los feriados que bloquean la programación.")
-                    calendario_dias, calendario_feriados = st.tabs(["Días laborales", "Feriados y festivos"])
+                    calendario_dias, calendario_feriados, calendario_capacidad = st.tabs(["Días laborales", "Feriados y festivos", "Capacidad por sede"])
                     with calendario_dias:
                         try:
                             dias_consulta = supabase.table("dias_operativos").select("*").order("numero_dia").execute()
@@ -2190,3 +2240,21 @@ else:
                                     st.info("No hay feriados registrados.")
                             except Exception as e:
                                 st.error(f"No se pudo cargar la lista de feriados: {e}")
+                    with calendario_capacidad:
+                        st.caption("Define cuántas camillas grupales puede utilizar cada sede. Agenda tomará este valor automáticamente.")
+                        if lista_locales_admin:
+                            sedes_config = {f"{l['nombre']} {'(Inactiva)' if not l.get('activo', True) else ''}".strip(): l for l in lista_locales_admin}
+                            sede_config_label = st.selectbox("Sede", [""] + list(sedes_config), key=f"sede_capacidad_{st.session_state.clear_configuracion}", placeholder="Selecciona una sede...")
+                            sede_config = sedes_config.get(sede_config_label)
+                            if sede_config:
+                                maximo_sede_config = st.number_input("Máximo de camillas", min_value=1, max_value=50, value=int(sede_config.get("max_camillas") or 8), key=f"max_camillas_config_{sede_config['id']}_{st.session_state.clear_configuracion}")
+                                if st.button("Guardar capacidad de la sede", key=f"guardar_capacidad_sede_{sede_config['id']}_{st.session_state.clear_configuracion}", type="primary"):
+                                    try:
+                                        supabase.table("locales").update({"max_camillas": int(maximo_sede_config)}).eq("id", sede_config["id"]).execute()
+                                        st.session_state.clear_configuracion += 1
+                                        st.success("Capacidad de camillas actualizada.")
+                                        st.rerun()
+                                    except Exception as e:
+                                        st.error(f"No se pudo guardar. Ejecuta la migración de capacidad por sede en Supabase. Detalle: {e}")
+                        else:
+                            st.info("Registra una sede antes de configurar su aforo.")
