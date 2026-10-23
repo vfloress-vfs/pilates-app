@@ -708,12 +708,15 @@ else:
                         filas_historial = [filas_historial[i] for i in orden_indices_historial]
                         ids_reservas_historial = [ids_reservas_historial[i] for i in orden_indices_historial]
                         selector_mis_clases_key = f"seleccionar_reserva_mis_clases_{id_alumno_portal}_{st.session_state.clear_portal_reserva}"
-                        anchos_columnas_historial = [1.0, 0.62, 1.25, 1.1, 1.2, 0.9, 0.82]
-                        encabezados_historial = ["Fecha", "Hora", "Sede", "Clase", "Instructor/a", "Estado", "Gestión"]
+                        anchos_columnas_historial = [1.0, 0.55, 1.0, 0.95, 1.05, 0.8, 0.52]
+                        encabezados_historial = ["Fecha", "Hora", "Sede", "Clase", "Instructor", "Estado", "Gestión"]
                         campos_historial = ["Fecha", "Hora", "Sede", "Clase", "Instructora", "Estado"]
                         columnas_encabezado = st.columns(anchos_columnas_historial)
                         for columna, titulo in zip(columnas_encabezado, encabezados_historial):
-                            columna.markdown(f"**{titulo}**")
+                            columna.markdown(
+                                f"<div style='font-size:.78rem;font-weight:700;white-space:nowrap;line-height:2rem'>{html.escape(titulo)}</div>",
+                                unsafe_allow_html=True,
+                            )
 
                         ids_seleccionados = []
                         for indice_historial, (fila_historial, id_reserva_historial) in enumerate(zip(filas_historial, ids_reservas_historial)):
@@ -746,9 +749,11 @@ else:
                                 st.session_state.pop(clave_checkbox_gestion, None)
                             columnas_fila = st.columns(anchos_columnas_historial)
                             for columna, campo in zip(columnas_fila[:6], campos_historial):
-                                columna.write(fila_historial.get(campo, "—"))
-                            if motivo_no_gestion:
-                                columnas_fila[5].caption(motivo_no_gestion)
+                                valor_celda = str(fila_historial.get(campo, "—"))
+                                columna.markdown(
+                                    f"<div title='{html.escape(valor_celda, quote=True)}' style='font-size:.78rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;line-height:2.35rem'>{html.escape(valor_celda)}</div>",
+                                    unsafe_allow_html=True,
+                                )
                             marcado = columnas_fila[6].checkbox(
                                 "Gestionar",
                                 key=clave_checkbox_gestion,
@@ -850,6 +855,7 @@ else:
                                         st.info("No hay otros horarios disponibles que cumplan las reglas de tu plan y de Configuración.")
                                     else:
                                         fechas_reagenda = sorted({s["_inicio_dt"].date() for s in sesiones_reagendables})
+                                        dias_semana_reagenda = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado", "Domingo"]
                                         fecha_reagenda_key = f"fecha_reagenda_portal_{id_alumno_portal}_{reserva_seleccionada_cancelable['id']}_{st.session_state.clear_portal_reserva}"
                                         fecha_reagenda = st.date_input(
                                             "Día de la nueva clase",
@@ -861,21 +867,26 @@ else:
                                         )
                                         sesiones_reagenda_dia = [s for s in sesiones_reagendables if s["_inicio_dt"].date() == fecha_reagenda]
                                         sesion_reagenda_key = f"sesion_reagenda_portal_{id_alumno_portal}_{reserva_seleccionada_cancelable['id']}"
+                                        columnas_reagenda = st.columns(2)
                                         for indice_reagenda, sesion_nueva in enumerate(sesiones_reagenda_dia):
                                             seleccion_reagenda = st.session_state.get(sesion_reagenda_key) == int(sesion_nueva["id"])
                                             cupos_reagenda = int(sesion_nueva.get("capacidad") or 0) - ocupacion.get(sesion_nueva["id"], 0)
-                                            with st.container(border=True):
-                                                st.markdown(f"**{str(sesion_nueva['hora_inicio'])[:5]}–{str(sesion_nueva['hora_fin'])[:5]} · {sesion_nueva.get('tipo_servicio', 'Clase')}**")
-                                                st.write(f"📍 {nombre_local_portal.get(sesion_nueva.get('local_id'), 'Sede')} · 👤 {nombre_instructora_portal.get(sesion_nueva.get('instructora_id'), 'Instructor')}")
-                                                st.caption(f"{cupos_reagenda} {'cupos disponibles' if cupos_reagenda != 1 else 'cupo disponible'} · Reagenda hasta {limite_reserva_cancelacion(sesion_nueva['_inicio_dt']).strftime('%d-%m-%Y %H:%M')}")
-                                                if st.button(
-                                                    "Horario elegido ✓" if seleccion_reagenda else "Elegir este horario",
-                                                    key=f"elegir_reagenda_{id_alumno_portal}_{reserva_seleccionada_cancelable['id']}_{sesion_nueva['id']}_{st.session_state.clear_portal_reserva}",
-                                                    type="primary" if seleccion_reagenda else "secondary",
-                                                    use_container_width=True,
-                                                ):
-                                                    st.session_state[sesion_reagenda_key] = int(sesion_nueva["id"])
-                                                    st.rerun()
+                                            with columnas_reagenda[indice_reagenda % 2]:
+                                                with st.container(border=True):
+                                                    st.markdown(f"### {dias_semana_reagenda[sesion_nueva['_inicio_dt'].weekday()]}, {sesion_nueva['_inicio_dt'].strftime('%d-%m-%Y')}")
+                                                    st.markdown(f"**{str(sesion_nueva['hora_inicio'])[:5]}–{str(sesion_nueva['hora_fin'])[:5]} · {sesion_nueva.get('tipo_servicio', 'Clase')}**")
+                                                    st.write(f"📍 {nombre_local_portal.get(sesion_nueva.get('local_id'), 'Sede')} · 👤 {nombre_instructora_portal.get(sesion_nueva.get('instructora_id'), 'Instructor')}")
+                                                    st.caption(f"{cupos_reagenda} {'cupos disponibles' if cupos_reagenda != 1 else 'cupo disponible'} · Reagenda hasta {limite_reserva_cancelacion(sesion_nueva['_inicio_dt']).strftime('%d-%m-%Y a las %H:%M')}")
+                                                    if st.button(
+                                                        "Horario elegido ✓" if seleccion_reagenda else "Elegir este horario",
+                                                        key=f"elegir_reagenda_{id_alumno_portal}_{reserva_seleccionada_cancelable['id']}_{sesion_nueva['id']}_{st.session_state.clear_portal_reserva}",
+                                                        type="primary" if seleccion_reagenda else "secondary",
+                                                        use_container_width=True,
+                                                    ):
+                                                        st.session_state[sesion_reagenda_key] = int(sesion_nueva["id"])
+                                                        st.rerun()
+                                        if not sesiones_reagenda_dia:
+                                            st.info("No hay horarios disponibles para este día. Elige otra fecha en el calendario.")
 
                                         sesion_nueva_seleccionada = next(
                                             (s for s in sesiones_reagenda_dia if int(s["id"]) == st.session_state.get(sesion_reagenda_key)),
