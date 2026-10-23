@@ -801,38 +801,39 @@ else:
 
                             with pestaña_cancelar:
                                 st.caption("La clase se devolverá a tu saldo si cancelas antes del plazo indicado.")
-                                titulo_cancelacion = (
-                                    f"{fecha_visible(sesion_original.get('fecha_clase'))} · "
-                                    f"{str(sesion_original.get('hora_inicio', ''))[:5]} · "
-                                    f"{sesion_original.get('tipo_servicio', 'Clase')} · "
-                                    f"{nombre_local_portal.get(sesion_original.get('local_id'), 'Sede')}"
-                                )
-                                with st.container(border=True):
-                                    st.write(titulo_cancelacion)
-                                    st.caption(f"Puedes cancelar hasta el {fecha_limite_reserva} (hora de Perú).")
-                                    confirmar_cancelacion = st.checkbox(
-                                        "Confirmo que deseo cancelar esta reserva y devolver la clase a mi saldo.",
-                                        key=f"confirmar_cancelacion_portal_{id_alumno_portal}_{reserva_seleccionada_cancelable['id']}_{st.session_state.clear_portal_reserva}",
-                                    )
-                                    if st.button(
-                                        "Cancelar reserva",
-                                        key=f"cancelar_reserva_portal_{id_alumno_portal}_{reserva_seleccionada_cancelable['id']}_{st.session_state.clear_portal_reserva}",
-                                        type="primary",
-                                    ):
-                                        if not confirmar_cancelacion:
-                                            st.error("Marca la confirmación para cancelar la reserva.")
-                                        else:
-                                            try:
-                                                supabase.rpc("cancelar_reserva_portal", {
-                                                    "p_telefono": telefono_alumno.strip(),
-                                                    "p_reserva_id": int(reserva_seleccionada_cancelable["id"]),
-                                                }).execute()
-                                                st.session_state["aviso_portal_mensaje"] = "Reserva cancelada. La clase se devolvió al saldo de tu plan."
-                                                st.session_state["aviso_portal"] = True
-                                                st.session_state.clear_portal_reserva += 1
-                                                st.rerun()
-                                            except Exception as error_cancelacion:
-                                                st.error(f"No se pudo cancelar la reserva: {error_cancelacion}")
+                                columnas_cancelacion = st.columns(2)
+                                dias_semana_cancelacion = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado", "Domingo"]
+                                fecha_clase_cancelar = datetime.fromisoformat(str(sesion_original["fecha_clase"])).date()
+                                with columnas_cancelacion[0]:
+                                    with st.container(border=True):
+                                        st.markdown(f"### {dias_semana_cancelacion[fecha_clase_cancelar.weekday()]}, {fecha_clase_cancelar.strftime('%d-%m-%Y')}")
+                                        st.markdown(f"**{str(sesion_original.get('hora_inicio', ''))[:5]}–{str(sesion_original.get('hora_fin', ''))[:5]} · {sesion_original.get('tipo_servicio', 'Clase')}**")
+                                        st.write(f"📍 {nombre_local_portal.get(sesion_original.get('local_id'), 'Sede')} · 👤 {nombre_instructora_portal.get(sesion_original.get('instructora_id'), 'Instructor')}")
+                                        st.caption(f"Puedes cancelar hasta el {fecha_limite_reserva} (hora de Perú).")
+                                        confirmar_cancelacion = st.checkbox(
+                                            "Confirmo que deseo cancelar esta reserva y devolver la clase a mi saldo.",
+                                            key=f"confirmar_cancelacion_portal_{id_alumno_portal}_{reserva_seleccionada_cancelable['id']}_{st.session_state.clear_portal_reserva}",
+                                        )
+                                        if st.button(
+                                            "Cancelar reserva",
+                                            key=f"cancelar_reserva_portal_{id_alumno_portal}_{reserva_seleccionada_cancelable['id']}_{st.session_state.clear_portal_reserva}",
+                                            type="primary",
+                                            use_container_width=True,
+                                        ):
+                                            if not confirmar_cancelacion:
+                                                st.error("Marca la confirmación para cancelar la reserva.")
+                                            else:
+                                                try:
+                                                    supabase.rpc("cancelar_reserva_portal", {
+                                                        "p_telefono": telefono_alumno.strip(),
+                                                        "p_reserva_id": int(reserva_seleccionada_cancelable["id"]),
+                                                    }).execute()
+                                                    st.session_state["aviso_portal_mensaje"] = "Reserva cancelada. La clase se devolvió al saldo de tu plan."
+                                                    st.session_state["aviso_portal"] = True
+                                                    st.session_state.clear_portal_reserva += 1
+                                                    st.rerun()
+                                                except Exception as error_cancelacion:
+                                                    st.error(f"No se pudo cancelar la reserva: {error_cancelacion}")
 
                             with pestaña_reagendar:
                                 st.caption("Elige otro horario disponible. Se conserva la clase ya descontada de tu plan y el plazo se valida según Configuración.")
