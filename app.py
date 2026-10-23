@@ -709,7 +709,7 @@ else:
                         ids_reservas_historial = [ids_reservas_historial[i] for i in orden_indices_historial]
                         selector_mis_clases_key = f"seleccionar_reserva_mis_clases_{id_alumno_portal}_{st.session_state.clear_portal_reserva}"
                         anchos_columnas_historial = [1.0, 0.62, 1.25, 1.1, 1.2, 0.9, 0.82]
-                        encabezados_historial = ["Fecha", "Hora", "Sede", "Clase", "Instructor/a", "Estado", "Gestionar"]
+                        encabezados_historial = ["Fecha", "Hora", "Sede", "Clase", "Instructor/a", "Estado", "Gestión"]
                         campos_historial = ["Fecha", "Hora", "Sede", "Clase", "Instructora", "Estado"]
                         columnas_encabezado = st.columns(anchos_columnas_historial)
                         for columna, titulo in zip(columnas_encabezado, encabezados_historial):
@@ -783,52 +783,125 @@ else:
                             if ahora_portal <= limite_cancelacion:
                                 reservas_cancelables.append(reserva_cancelable)
                         reserva_seleccionada_cancelable = next(
-                            (r for r in proximas_reservas if str(r.get("id")) == str(id_reserva_seleccionada)),
+                            (r for r in reservas_cancelables if str(r.get("id")) == str(id_reserva_seleccionada)),
                             None,
                         )
-                        if id_reserva_seleccionada is not None and reserva_seleccionada_cancelable is None:
-                            st.info("Solo puedes cancelar una reserva futura que siga activa.")
                         if reserva_seleccionada_cancelable:
-                            st.markdown("**Cancelar una reserva**")
-                            st.caption("La clase se devolverá a tu saldo si cancelas antes del plazo indicado.")
-                            for reserva_cancelable in [reserva_seleccionada_cancelable]:
-                                sesion_cancelable = datos_sesion_historial[reserva_cancelable["sesion_id"]]
-                                fecha_cancelable = reserva_cancelable["_limite_cancelacion"].strftime("%d-%m-%Y %H:%M")
+                            pestaña_cancelar, pestaña_reagendar = st.tabs(
+                                ["Cancelar una Reserva", "Reagendar una Reserva"],
+                                key=f"tabs_gestion_reserva_{id_alumno_portal}_{id_reserva_seleccionada}_{st.session_state.clear_portal_reserva}",
+                            )
+                            sesion_original = datos_sesion_historial[reserva_seleccionada_cancelable["sesion_id"]]
+                            fecha_limite_reserva = reserva_seleccionada_cancelable["_limite_cancelacion"].strftime("%d-%m-%Y %H:%M")
+
+                            with pestaña_cancelar:
+                                st.caption("La clase se devolverá a tu saldo si cancelas antes del plazo indicado.")
                                 titulo_cancelacion = (
-                                    f"{fecha_visible(sesion_cancelable.get('fecha_clase'))} · "
-                                    f"{str(sesion_cancelable.get('hora_inicio', ''))[:5]} · "
-                                    f"{sesion_cancelable.get('tipo_servicio', 'Clase')} · "
-                                    f"{nombre_local_portal.get(sesion_cancelable.get('local_id'), 'Sede')}"
+                                    f"{fecha_visible(sesion_original.get('fecha_clase'))} · "
+                                    f"{str(sesion_original.get('hora_inicio', ''))[:5]} · "
+                                    f"{sesion_original.get('tipo_servicio', 'Clase')} · "
+                                    f"{nombre_local_portal.get(sesion_original.get('local_id'), 'Sede')}"
                                 )
                                 with st.container(border=True):
                                     st.write(titulo_cancelacion)
-                                    if reserva_cancelable in reservas_cancelables:
-                                        st.caption(f"Puedes cancelar hasta el {fecha_cancelable} (hora de Perú).")
-                                        confirmar_cancelacion = st.checkbox(
-                                            "Confirmo que deseo cancelar esta reserva y devolver la clase a mi saldo.",
-                                            key=f"confirmar_cancelacion_portal_{id_alumno_portal}_{reserva_cancelable['id']}_{st.session_state.clear_portal_reserva}",
+                                    st.caption(f"Puedes cancelar hasta el {fecha_limite_reserva} (hora de Perú).")
+                                    confirmar_cancelacion = st.checkbox(
+                                        "Confirmo que deseo cancelar esta reserva y devolver la clase a mi saldo.",
+                                        key=f"confirmar_cancelacion_portal_{id_alumno_portal}_{reserva_seleccionada_cancelable['id']}_{st.session_state.clear_portal_reserva}",
+                                    )
+                                    if st.button(
+                                        "Cancelar reserva",
+                                        key=f"cancelar_reserva_portal_{id_alumno_portal}_{reserva_seleccionada_cancelable['id']}_{st.session_state.clear_portal_reserva}",
+                                        type="primary",
+                                    ):
+                                        if not confirmar_cancelacion:
+                                            st.error("Marca la confirmación para cancelar la reserva.")
+                                        else:
+                                            try:
+                                                supabase.rpc("cancelar_reserva_portal", {
+                                                    "p_telefono": telefono_alumno.strip(),
+                                                    "p_reserva_id": int(reserva_seleccionada_cancelable["id"]),
+                                                }).execute()
+                                                st.session_state["aviso_portal_mensaje"] = "Reserva cancelada. La clase se devolvió al saldo de tu plan."
+                                                st.session_state["aviso_portal"] = True
+                                                st.session_state.clear_portal_reserva += 1
+                                                st.rerun()
+                                            except Exception as error_cancelacion:
+                                                st.error(f"No se pudo cancelar la reserva: {error_cancelacion}")
+
+                            with pestaña_reagendar:
+                                st.caption("Elige otro horario disponible. Se conserva la clase ya descontada de tu plan y el plazo se valida según Configuración.")
+                                try:
+                                    paquete_reserva = (supabase.table("paquetes")
+                                        .select("id,modalidad_plan,local_id_fijo")
+                                        .eq("id", reserva_seleccionada_cancelable.get("paquete_id"))
+                                        .eq("alumno_id", id_alumno_portal)
+                                        .limit(1).execute().data or [])
+                                    paquete_reagenda = paquete_reserva[0] if paquete_reserva else None
+                                    sesiones_reagendables = [
+                                        s for s in sesiones_disponibles
+                                        if int(s["id"]) != int(reserva_seleccionada_cancelable.get("sesion_id") or 0)
+                                        and int(s["id"]) not in sesiones_reservadas_alumno
+                                        and paquete_reagenda
+                                        and (paquete_reagenda.get("modalidad_plan") != "Fixed"
+                                             or paquete_reagenda.get("local_id_fijo") == s.get("local_id"))
+                                    ]
+                                    if not sesiones_reagendables:
+                                        st.info("No hay otros horarios disponibles que cumplan las reglas de tu plan y de Configuración.")
+                                    else:
+                                        fechas_reagenda = sorted({s["_inicio_dt"].date() for s in sesiones_reagendables})
+                                        fecha_reagenda_key = f"fecha_reagenda_portal_{id_alumno_portal}_{reserva_seleccionada_cancelable['id']}_{st.session_state.clear_portal_reserva}"
+                                        fecha_reagenda = st.date_input(
+                                            "Día de la nueva clase",
+                                            value=fechas_reagenda[0],
+                                            min_value=ahora_portal.date(),
+                                            max_value=limite_agenda,
+                                            format="DD-MM-YYYY",
+                                            key=fecha_reagenda_key,
                                         )
-                                        if st.button(
-                                            "Cancelar reserva",
-                                            key=f"cancelar_reserva_portal_{id_alumno_portal}_{reserva_cancelable['id']}_{st.session_state.clear_portal_reserva}",
-                                            type="primary",
-                                        ):
-                                            if not confirmar_cancelacion:
-                                                st.error("Marca la confirmación para cancelar la reserva.")
-                                            else:
+                                        sesiones_reagenda_dia = [s for s in sesiones_reagendables if s["_inicio_dt"].date() == fecha_reagenda]
+                                        sesion_reagenda_key = f"sesion_reagenda_portal_{id_alumno_portal}_{reserva_seleccionada_cancelable['id']}"
+                                        for indice_reagenda, sesion_nueva in enumerate(sesiones_reagenda_dia):
+                                            seleccion_reagenda = st.session_state.get(sesion_reagenda_key) == int(sesion_nueva["id"])
+                                            cupos_reagenda = int(sesion_nueva.get("capacidad") or 0) - ocupacion.get(sesion_nueva["id"], 0)
+                                            with st.container(border=True):
+                                                st.markdown(f"**{str(sesion_nueva['hora_inicio'])[:5]}–{str(sesion_nueva['hora_fin'])[:5]} · {sesion_nueva.get('tipo_servicio', 'Clase')}**")
+                                                st.write(f"📍 {nombre_local_portal.get(sesion_nueva.get('local_id'), 'Sede')} · 👤 {nombre_instructora_portal.get(sesion_nueva.get('instructora_id'), 'Instructor')}")
+                                                st.caption(f"{cupos_reagenda} {'cupos disponibles' if cupos_reagenda != 1 else 'cupo disponible'} · Reagenda hasta {limite_reserva_cancelacion(sesion_nueva['_inicio_dt']).strftime('%d-%m-%Y %H:%M')}")
+                                                if st.button(
+                                                    "Horario elegido ✓" if seleccion_reagenda else "Elegir este horario",
+                                                    key=f"elegir_reagenda_{id_alumno_portal}_{reserva_seleccionada_cancelable['id']}_{sesion_nueva['id']}_{st.session_state.clear_portal_reserva}",
+                                                    type="primary" if seleccion_reagenda else "secondary",
+                                                    use_container_width=True,
+                                                ):
+                                                    st.session_state[sesion_reagenda_key] = int(sesion_nueva["id"])
+                                                    st.rerun()
+
+                                        sesion_nueva_seleccionada = next(
+                                            (s for s in sesiones_reagenda_dia if int(s["id"]) == st.session_state.get(sesion_reagenda_key)),
+                                            None,
+                                        )
+                                        if sesion_nueva_seleccionada:
+                                            st.info(f"Nueva clase: {etiqueta_sesion(sesion_nueva_seleccionada)}")
+                                            if st.button(
+                                                "Confirmar cambio de reserva",
+                                                key=f"confirmar_reagenda_{id_alumno_portal}_{reserva_seleccionada_cancelable['id']}_{st.session_state.clear_portal_reserva}",
+                                                type="primary",
+                                            ):
                                                 try:
-                                                    supabase.rpc("cancelar_reserva_portal", {
+                                                    supabase.rpc("reagendar_clase_portal", {
                                                         "p_telefono": telefono_alumno.strip(),
-                                                        "p_reserva_id": int(reserva_cancelable["id"]),
+                                                        "p_reserva_id": int(reserva_seleccionada_cancelable["id"]),
+                                                        "p_nueva_sesion_id": int(sesion_nueva_seleccionada["id"]),
                                                     }).execute()
-                                                    st.session_state["aviso_portal_mensaje"] = "Reserva cancelada. La clase se devolvió al saldo de tu plan."
+                                                    st.session_state["aviso_portal_mensaje"] = "Reserva reagendada. La clase de tu plan se conservó y ya puedes usar el nuevo QR."
                                                     st.session_state["aviso_portal"] = True
                                                     st.session_state.clear_portal_reserva += 1
                                                     st.rerun()
-                                                except Exception as error_cancelacion:
-                                                    st.error(f"No se pudo cancelar la reserva: {error_cancelacion}")
-                                    else:
-                                        st.caption(f"Ya venció el plazo para cancelar; era hasta el {fecha_cancelable}. La clase se mantiene reservada.")
+                                                except Exception as error_reagenda:
+                                                    st.error(f"No se pudo reagendar: {error_reagenda}")
+                                except Exception as error_carga_reagenda:
+                                    st.error(f"No se pudieron cargar los horarios para reagendar: {error_carga_reagenda}")
                         if proximas_reservas:
                             with st.expander("Pases QR para tus próximas clases", expanded=False):
                                 for reserva_qr in proximas_reservas:
