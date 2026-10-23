@@ -1792,14 +1792,57 @@ else:
 
                     with tab_directorio_inst:
                         if instructoras_db:
+                            try:
+                                sesiones_directorio_instructores = (
+                                    supabase.table("sesiones_clase")
+                                    .select("instructora_id,local_id")
+                                    .limit(5000)
+                                    .execute()
+                                    .data or []
+                                )
+                                nombres_locales_directorio = {int(local["id"]): local["nombre"] for local in lista_locales_admin}
+                                sedes_directorio = sorted({
+                                    nombres_locales_directorio[int(sesion["local_id"])]
+                                    for sesion in sesiones_directorio_instructores
+                                    if sesion.get("local_id") is not None and int(sesion["local_id"]) in nombres_locales_directorio
+                                })
+                                filtro_sede_directorio = st.selectbox(
+                                    "Filtrar instructores por sede",
+                                    ["Todas las sedes"] + sedes_directorio,
+                                    key=f"filtro_sede_directorio_instructores_{st.session_state.clear_gestion_instructoras}",
+                                )
+                                if filtro_sede_directorio == "Todas las sedes":
+                                    instructoras_para_buscar = instructoras_db
+                                else:
+                                    ids_sedes_directorio = {
+                                        int(local["id"]) for local in lista_locales_admin
+                                        if local.get("nombre") == filtro_sede_directorio
+                                    }
+                                    ids_instructores_sede = {
+                                        int(sesion["instructora_id"])
+                                        for sesion in sesiones_directorio_instructores
+                                        if sesion.get("instructora_id") is not None
+                                        and sesion.get("local_id") is not None
+                                        and int(sesion["local_id"]) in ids_sedes_directorio
+                                    }
+                                    instructoras_para_buscar = [
+                                        instructor for instructor in instructoras_db
+                                        if int(instructor["id"]) in ids_instructores_sede
+                                    ]
+                            except Exception as error_filtro_sede_directorio:
+                                instructoras_para_buscar = instructoras_db
+                                filtro_sede_directorio = "Todas las sedes"
+                                st.warning(f"No se pudo aplicar el filtro por sede: {error_filtro_sede_directorio}")
                             opciones_instructoras = {
                                 f"{i['nombre']} · {'Activa' if i.get('activo', True) else 'Inactiva'}": i
-                                for i in instructoras_db
+                                for i in instructoras_para_buscar
                             }
+                            if filtro_sede_directorio != "Todas las sedes" and not instructoras_para_buscar:
+                                st.info("No hay instructores con clases programadas en esta sede.")
                             etiqueta_instructora = st.selectbox(
                                 "Busca y selecciona un instructor:",
                                 [""] + list(opciones_instructoras),
-                                key=f"buscar_instructora_{st.session_state.clear_gestion_instructoras}",
+                                key=f"buscar_instructora_{st.session_state.clear_gestion_instructoras}_{filtro_sede_directorio}",
                                 placeholder="Escribe su nombre..."
                             )
                             instructora_actual = opciones_instructoras.get(etiqueta_instructora)
@@ -1862,7 +1905,7 @@ else:
                                 try:
                                     sesiones_inst_res = (
                                         supabase.table("sesiones_clase")
-                                        .select("id,local_id,fecha_clase,hora_inicio,hora_fin,tipo_servicio,capacidad,estado,pago_por_clase_aplicado")
+                                        .select("id,local_id,instructora_id,fecha_clase,hora_inicio,hora_fin,tipo_servicio,capacidad,estado,pago_por_clase_aplicado")
                                         .eq("instructora_id", instructora_actual["id"])
                                         .order("fecha_clase")
                                         .order("hora_inicio")
@@ -3382,3 +3425,4 @@ else:
                                         st.error(f"No se pudo guardar. Ejecuta la migración de capacidad por sede en Supabase. Detalle: {e}")
                         else:
                             st.info("Registra una sede antes de configurar su aforo.")
+
