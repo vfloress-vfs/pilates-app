@@ -288,21 +288,22 @@ ITERACIONES_HASH = 600_000
 
 VENTANAS_ADMIN = {
     "sucursales": "Sedes",
-    "inscripciones": "Inscribir alumno",
-    "renovaciones": "Renovar plan",
+    "alumnos_operacion": "Gestión de alumnos",
     "planes": "Planes y precios",
     "instructoras": "Instructoras y agenda",
-    "alumnos": "Alumnos",
     "configuracion": "Configuración",
 }
 
 def normalizar_permisos_admin(permisos):
-    """Une los permisos antiguos de Instructoras y Agenda bajo la ventana integrada."""
+    """Migra permisos antiguos de Agenda e integra las ventanas de alumnos."""
     if not isinstance(permisos, list):
         return []
+    permisos_alumnos_antiguos = {"inscripciones", "renovaciones", "alumnos"}
     normalizados = [p for p in permisos if p in VENTANAS_ADMIN and p != "instructoras"]
     if "instructoras" in permisos or "agenda" in permisos:
         normalizados.append("instructoras")
+    if permisos_alumnos_antiguos.intersection(permisos) or "alumnos_operacion" in permisos:
+        normalizados.append("alumnos_operacion")
     return list(dict.fromkeys(normalizados))
 
 def encriptar_contrasena(password):
@@ -824,6 +825,7 @@ else:
                 clave for clave in ventanas_disponibles
                 if st.session_state.admin_es_superadmin or clave in permisos_sesion
                 or (clave == "instructoras" and "agenda" in permisos_sesion)
+                or (clave == "alumnos_operacion" and bool({"inscripciones", "renovaciones", "alumnos"} & permisos_sesion))
             ]
             claves_pestanas = ventanas_visibles + ["mi_cuenta"]
             if st.session_state.admin_es_superadmin:
@@ -834,6 +836,9 @@ else:
             # Conserva las cuentas antiguas que tenían un permiso separado llamado "Agenda".
             if "instructoras" in paneles_admin:
                 paneles_admin["agenda"] = paneles_admin["instructoras"]
+            if "alumnos_operacion" in paneles_admin:
+                for clave_alumnos in ("inscripciones", "renovaciones", "alumnos"):
+                    paneles_admin[clave_alumnos] = paneles_admin["alumnos_operacion"]
 
             if not ventanas_visibles:
                 st.info("Tu cuenta solo tiene acceso a Mi cuenta. Pide a un superadministrador que te asigne otras secciones si las necesitas.")
@@ -958,7 +963,8 @@ else:
 
             if "inscripciones" in paneles_admin:
                 with paneles_admin["inscripciones"]:
-                    st.subheader("Formulario de Inscripción y Venta de Paquete")
+                    st.subheader("1. Inscribir alumno")
+                    st.caption("Registra sus datos y confirma el pago del plan para activar su inscripción.")
                     aviso_inscripcion = st.session_state.pop("aviso_inscripcion", None)
                     if aviso_inscripcion:
                         st.success(aviso_inscripcion)
@@ -1080,7 +1086,9 @@ else:
                             st.rerun()
             if "renovaciones" in paneles_admin:
                 with paneles_admin["renovaciones"]:
-                    st.subheader(":material/autorenew: Renovar paquete de alumno")
+                    st.divider()
+                    st.subheader("2. Renovar o cambiar plan")
+                    st.caption("Busca al alumno, revisa el plan actual y confirma el pago antes de aplicar la renovación o mejora.")
                     aviso_renovacion = st.session_state.pop("aviso_renovacion", None)
                     if aviso_renovacion:
                         st.success(aviso_renovacion)
@@ -1735,15 +1743,40 @@ else:
                                 etiqueta_sesion = st.selectbox("Selecciona una clase", [""] + list(sesion_etiquetas), key=f"estado_sesion_sel_{st.session_state.clear_estado_sesion}")
                                 sesion_estado = sesion_etiquetas.get(etiqueta_sesion)
                                 estado_nuevo = st.selectbox("Estado", ["Programada", "Realizada", "Cancelada"], key=f"estado_sesion_val_{st.session_state.clear_estado_sesion}")
+                                st.caption("Una clase solo puede marcarse como realizada después de su hora de fin y si tuvo al menos una reserva con asistencia o inasistencia. Las inasistencias se registran automáticamente.")
                                 if st.button("Guardar estado", key=f"guardar_estado_sesion_{st.session_state.clear_estado_sesion}", disabled=sesion_estado is None):
-                                    pago_existente = supabase.table("pagos_instructoras").select("id").eq("sesion_id", sesion_estado["id"]).limit(1).execute().data or []
-                                    if pago_existente and estado_nuevo != "Realizada":
-                                        st.error("No se puede cambiar a cancelada una clase cuyo pago ya fue registrado.")
-                                    else:
-                                        supabase.table("sesiones_clase").update({"estado": estado_nuevo}).eq("id", sesion_estado["id"]).execute()
-                                        st.session_state.aviso_agenda = f"La clase del {sesion_estado['fecha_clase']} a las {str(sesion_estado['hora_inicio'])[:5]} quedó como {estado_nuevo.lower()}."
-                                        st.session_state.clear_estado_sesion += 1
-                                        st.rerun()
+                                    try:
+                                        estado_actual = str(sesion_estado.get("estado") or "")
+                                        reservas_sesion = supabase.table("reservas").select("id,alumno_id,estado").eq("sesion_id", sesion_estado["id"]).execute().data or []
+                                        estados_con_registro = {"asistencia", "asistio", "presente", "inasistencia", "no asistio", "ausente", "falta", "no show", "no-show"}
+                                        hay_registro = any(
+                                            reserva.get("alumno_id") is not None
+                                            and "".join(c for c in unicodedata.normalize("NFKD", str(reserva.get("estado") or "").lower()) if not unicodedata.combining(c)).strip() in estados_con_registro
+                                            for reserva in reservas_sesion
+                                        )
+                                        fecha_sesion = sesion_estado["fecha_clase"]
+                                        if isinstance(fecha_sesion, str):
+                                            fecha_sesion = datetime.fromisoformat(fecha_sesion[:10]).date()
+                                        hora_fin = sesion_estado["hora_fin"]
+                                        if isinstance(hora_fin, str):
+                                            hora_fin = datetime_time.fromisoformat(hora_fin)
+                                        fin_sesion = datetime.combine(fecha_sesion, hora_fin).replace(tzinfo=ZoneInfo("America/Lima"))
+                                        pago_existente = supabase.table("pagos_instructoras").select("id").eq("sesion_id", sesion_estado["id"]).limit(1).execute().data or []
+                                        if estado_nuevo == "Realizada" and estado_actual != "Realizada" and datetime.now(ZoneInfo("America/Lima")) < fin_sesion:
+                                            st.error("No se puede marcar como realizada antes de la fecha y hora de fin de la clase.")
+                                        elif estado_nuevo == "Realizada" and not hay_registro:
+                                            st.error("No se puede marcar como realizada: la clase necesita al menos una reserva con asistencia o inasistencia registrada.")
+                                        elif estado_actual in {"Realizada", "Cancelada"} and estado_nuevo != estado_actual:
+                                            st.error("Una clase realizada o cancelada no puede reabrirse desde esta pantalla.")
+                                        elif pago_existente and estado_nuevo != "Realizada":
+                                            st.error("No se puede cambiar una clase cuyo pago ya fue registrado.")
+                                        else:
+                                            supabase.table("sesiones_clase").update({"estado": estado_nuevo}).eq("id", sesion_estado["id"]).execute()
+                                            st.session_state.aviso_agenda = f"La clase del {sesion_estado['fecha_clase']} a las {str(sesion_estado['hora_inicio'])[:5]} quedó como {estado_nuevo.lower()}."
+                                            st.session_state.clear_estado_sesion += 1
+                                            st.rerun()
+                                    except Exception as error_estado:
+                                        st.error(f"No se pudo actualizar el estado de la clase: {error_estado}")
                             else:
                                 st.info("No hay clases programadas para este rango.")
                         except Exception as e:
@@ -1752,8 +1785,9 @@ else:
                 # --- CONSULTA PREDICTIVA DE ALUMNOS Y KÁRDEX ---
             if "alumnos" in paneles_admin:
                 with paneles_admin["alumnos"]:
-                    st.subheader(":material/clinical_notes: Gestión de Alumnos")
-                    st.caption("Consulta el kárdex y actualiza los datos de contacto del alumno.")
+                    st.divider()
+                    st.subheader("3. Buscar y gestionar alumnos")
+                    st.caption("Consulta su historial y actualiza sus datos de contacto o plan.")
                     mensaje_gestion_alumno = st.session_state.pop("mensaje_gestion_alumno", None)
                     if mensaje_gestion_alumno:
                         st.success(mensaje_gestion_alumno)
