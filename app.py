@@ -1061,7 +1061,7 @@ else:
                             "Reservados": totales.get("programados", 0),
                             "Asistieron": totales.get("asistencias", 0),
                             "Inasistencias": totales.get("inasistencias", 0),
-                            "Cancelaciones": totales.get("cancelados", 0),
+                            "Cancelados": totales.get("cancelados", 0),
                             "Estado": clase_instructor.get("estado", "—"),
                         })
                     st.dataframe(pd.DataFrame(filas_agenda_instructor), hide_index=True, use_container_width=True)
