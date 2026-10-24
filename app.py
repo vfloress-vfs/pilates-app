@@ -1359,13 +1359,6 @@ else:
                                 value=local_seleccionado.get("direccion") or "",
                                 key=f"local_direccion_editar_{local_id}_{st.session_state.clear_local}"
                             )
-                            max_camillas_local = st.number_input(
-                                "Máximo de camillas",
-                                min_value=1,
-                                max_value=50,
-                                value=int(local_seleccionado.get("max_camillas") or 8),
-                                key=f"local_camillas_editar_{local_id}_{st.session_state.clear_local}"
-                            )
                             col_local_guardar, col_local_baja = st.columns(2)
                             with col_local_guardar:
                                 if st.button("Guardar cambios", key=f"guardar_local_{local_id}_{st.session_state.clear_local}", type="primary", disabled=not local_id):
@@ -1375,8 +1368,7 @@ else:
                                         try:
                                             supabase.table("locales").update({
                                                 "nombre": nombre_local_editado.strip(),
-                                                "direccion": direccion_local_editada.strip(),
-                                                "max_camillas": int(max_camillas_local)
+                                                "direccion": direccion_local_editada.strip()
                                             }).eq("id", local_id).execute()
                                             st.session_state.mensaje_resultado_app = f"Los datos de la sede {nombre_local_editado.strip()} se actualizaron."
                                             st.session_state.clear_local += 1
