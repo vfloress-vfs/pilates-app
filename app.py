@@ -1058,7 +1058,7 @@ else:
                             "Sede": sedes_instructor_map.get(int(clase_instructor["local_id"]), "Sede"),
                             "Clase": clase_instructor.get("tipo_servicio", "—"),
                             "Aforo": int(clase_instructor.get("capacidad") or 0),
-                            "Reservados": totales.get("programados", 0),
+                            "Reservas": totales.get("programados", 0),
                             "Asistieron": totales.get("asistencias", 0),
                             "Inasistencias": totales.get("inasistencias", 0),
                             "Cancelados": totales.get("cancelados", 0),
