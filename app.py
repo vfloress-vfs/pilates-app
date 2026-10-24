@@ -224,7 +224,8 @@ st.html("""
   };
 
   const clearSoon = () => window.setTimeout(clearInputFields, 0);
-  window.addEventListener("blur", clearSoon, true);
+  // Sin captura: así no responde al blur de un campo al pasar al siguiente.
+  window.addEventListener("blur", clearSoon);
   document.addEventListener("visibilitychange", () => {
     if (document.visibilityState === "hidden") clearSoon();
   });
