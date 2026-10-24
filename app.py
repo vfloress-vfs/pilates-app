@@ -160,6 +160,14 @@ h2, h3 { color: var(--pilates-forest); font-weight: 650; letter-spacing: -.02em;
     color: #102019; background: #a9c5b2; border-color: #a9c5b2;
     box-shadow: 0 4px 14px rgba(0,0,0,.25); font-weight: 800;
 }
+[data-testid="stTabs"] button[role="tab"]:focus {
+    outline: none !important;
+}
+[data-testid="stTabs"] button[role="tab"]:focus-visible {
+    outline: 2px solid var(--pilates-sage) !important;
+    outline-offset: 2px;
+    box-shadow: 0 0 0 3px rgba(143,180,157,.22) !important;
+}
 [data-testid="stTabs"] [role="tabpanel"] {
     padding: 1.25rem 1.35rem; background: var(--pilates-panel);
     border: 1px solid var(--pilates-border); border-radius: 5px 15px 15px 15px;
@@ -184,6 +192,52 @@ hr { border-color: var(--pilates-border); }
 }
 </style>
 """, unsafe_allow_html=True)
+
+# Limpia campos de texto cuando la persona sale de la app o cambia de sección.
+# Streamlit >= 1.55 permite ejecutar este pequeño manejador en el documento principal.
+st.html("""
+<script>
+(() => {
+  if (window.__pilatesClearInputsOnBlurInstalled) return;
+  window.__pilatesClearInputsOnBlurInstalled = true;
+
+  const clearInputFields = () => {
+    const selector = [
+      '[data-testid="stTextInput"] input',
+      '[data-testid="stNumberInput"] input',
+      '[data-testid="stDateInput"] input',
+      '[data-testid="stTimeInput"] input',
+      '[data-testid="stTextArea"] textarea'
+    ].join(',');
+
+    document.querySelectorAll(selector).forEach((field) => {
+      if (field.disabled || field.readOnly || field.value === "") return;
+      const prototype = field.tagName === "TEXTAREA"
+        ? window.HTMLTextAreaElement.prototype
+        : window.HTMLInputElement.prototype;
+      const valueSetter = Object.getOwnPropertyDescriptor(prototype, "value")?.set;
+      if (!valueSetter) return;
+      valueSetter.call(field, "");
+      field.dispatchEvent(new Event("input", { bubbles: true }));
+      field.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+  };
+
+  const clearSoon = () => window.setTimeout(clearInputFields, 0);
+  window.addEventListener("blur", clearSoon, true);
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "hidden") clearSoon();
+  });
+  document.addEventListener("click", (event) => {
+    if (event.target.closest('[role="tab"], [data-testid="stRadio"]')) clearSoon();
+  }, true);
+  document.addEventListener("keydown", (event) => {
+    const focus = event.target.closest?.('[role="tab"]');
+    if (focus && ["ArrowLeft", "ArrowRight", "Home", "End", "Enter", " "].includes(event.key)) clearSoon();
+  }, true);
+})();
+</script>
+""", unsafe_allow_javascript=True)
 
 # 2. CONEXIÓN SEGURA A SUPABASE
 @st.cache_resource
@@ -224,6 +278,11 @@ def color_texto_contraste(color):
 
 def fecha_visible(valor, incluir_hora=False):
     """Formatea fechas de base de datos para mostrarlas como dd-mm-aaaa."""
+    try:
+        if pd.isna(valor):
+            return "—"
+    except (TypeError, ValueError):
+        pass
     if valor is None or valor == "":
         return "—"
     if isinstance(valor, datetime):
@@ -1310,7 +1369,7 @@ else:
                         
                         col_btn1, col_btn2 = st.columns(2)
                         with col_btn1:
-                            if st.button("Guardar Local"):
+                            if st.button("Guardar sede"):
                                 if nombre_local:
                                     try:
                                         supabase.table("locales").insert({"nombre": nombre_local, "direccion": direccion_local}).execute()
@@ -2736,7 +2795,11 @@ else:
                                     st.markdown("#### :material/loyalty: Historial de paquetes y membresías")
                                     df_paq = pd.DataFrame(paq_res.data)
                                     df_paq["fecha_vencimiento"] = df_paq["fecha_vencimiento"].map(fecha_visible)
-                                    df_paq["fecha_pago"] = df_paq["fecha_pago"].map(fecha_visible)
+                                    df_paq["fecha_pago"] = df_paq.apply(
+                                        lambda fila: "" if str(fila.get("estado") or "").strip().casefold() == "revertido"
+                                        else fecha_visible(fila.get("fecha_pago")),
+                                        axis=1,
+                                    )
                                     df_paq["Clases Consumidas"] = df_paq["clases_totales"] - df_paq["clases_restantes"]
                                     df_paq["Pago confirmado"] = df_paq["pagado"].map({True: "Sí", False: "No"}).fillna("Sin registro histórico")
                                     df_reporte_paq = df_paq[[
