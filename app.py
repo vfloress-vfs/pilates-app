@@ -218,22 +218,30 @@ st.html("""
       const valueSetter = Object.getOwnPropertyDescriptor(prototype, "value")?.set;
       if (!valueSetter) return;
       valueSetter.call(field, "");
-      field.dispatchEvent(new Event("input", { bubbles: true }));
-      field.dispatchEvent(new Event("change", { bubbles: true }));
+      const evento_input = window.InputEvent
+        ? new InputEvent("input", { bubbles: true, composed: true, inputType: "deleteContentBackward" })
+        : new Event("input", { bubbles: true, composed: true });
+      field.dispatchEvent(evento_input);
+      field.dispatchEvent(new Event("change", { bubbles: true, composed: true }));
     });
   };
 
   const clearSoon = () => window.setTimeout(clearInputFields, 0);
   // Sin captura: así no responde al blur de un campo al pasar al siguiente.
-  window.addEventListener("blur", clearSoon);
+  window.addEventListener("blur", (event) => {
+    if (event.target === window) clearSoon();
+  });
+  window.addEventListener("pagehide", clearSoon);
   document.addEventListener("visibilitychange", () => {
     if (document.visibilityState === "hidden") clearSoon();
   });
   document.addEventListener("click", (event) => {
-    if (event.target.closest('[role="tab"], [data-testid="stRadio"]')) clearSoon();
+    const target = event.target instanceof Element ? event.target : event.target?.parentElement;
+    if (target?.closest('[role="tab"], [data-testid="stRadio"]')) clearSoon();
   }, true);
   document.addEventListener("keydown", (event) => {
-    const focus = event.target.closest?.('[role="tab"]');
+    const target = event.target instanceof Element ? event.target : event.target?.parentElement;
+    const focus = target?.closest('[role="tab"]');
     if (focus && ["ArrowLeft", "ArrowRight", "Home", "End", "Enter", " "].includes(event.key)) clearSoon();
   }, true);
 })();
