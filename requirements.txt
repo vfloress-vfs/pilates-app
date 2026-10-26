@@ -2,3 +2,4 @@ streamlit>=1.55.0
 supabase
 opencv-python-headless
 qrcode[pil]
+pandas
