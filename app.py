@@ -7,6 +7,7 @@ import html
 import re
 import unicodedata
 import io
+import calendar as calendario_lib
 import pandas as pd
 from datetime import datetime, timedelta, time as datetime_time
 from zoneinfo import ZoneInfo
@@ -289,24 +290,76 @@ def etiqueta_fecha_opcion(fecha):
     return f"{dias[fecha.weekday()]}, {fecha.strftime('%d-%m-%Y')}"
 
 def selector_fecha_disponible(etiqueta, opciones, key, valor_inicial=None, ayuda=None):
-    opciones = list(opciones or [])
-    if not opciones:
+    """Calendario mensual en el que solo las fechas incluidas en opciones se pueden pulsar."""
+    fechas = sorted(set(opciones or []))
+    if not fechas:
         st.info("No hay fechas disponibles según los días y cierres configurados.")
         return None
-    if valor_inicial in opciones:
-        indice = opciones.index(valor_inicial)
-    elif valor_inicial is not None:
-        indice = next((i for i, fecha in enumerate(opciones) if fecha >= valor_inicial), 0)
-    else:
-        indice = 0
-    return st.selectbox(
-        etiqueta,
-        opciones,
-        index=indice,
-        format_func=etiqueta_fecha_opcion,
-        key=key,
-        help=ayuda,
-    )
+
+    st.markdown(f"**{etiqueta}**")
+    if ayuda:
+        st.caption(ayuda)
+
+    clave_fecha = f"{key}__fecha"
+    clave_mes = f"{key}__mes"
+    fecha_seleccionada = st.session_state.get(clave_fecha)
+    if fecha_seleccionada not in fechas:
+        if valor_inicial in fechas:
+            fecha_seleccionada = valor_inicial
+        elif valor_inicial is not None:
+            fecha_seleccionada = next((fecha for fecha in fechas if fecha >= valor_inicial), fechas[0])
+        else:
+            fecha_seleccionada = fechas[0]
+        st.session_state[clave_fecha] = fecha_seleccionada
+
+    meses_disponibles = sorted({(fecha.year, fecha.month) for fecha in fechas})
+    mes_actual = st.session_state.get(clave_mes)
+    if mes_actual not in meses_disponibles:
+        mes_actual = (fecha_seleccionada.year, fecha_seleccionada.month)
+        st.session_state[clave_mes] = mes_actual
+    indice_mes = meses_disponibles.index(mes_actual)
+    nombres_meses = ("enero", "febrero", "marzo", "abril", "mayo", "junio", "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre")
+
+    col_anterior, col_mes, col_siguiente = st.columns([1, 5, 1])
+    with col_anterior:
+        if st.button("‹", key=f"{key}__mes_anterior", disabled=indice_mes == 0, help="Mes anterior"):
+            st.session_state[clave_mes] = meses_disponibles[indice_mes - 1]
+            st.rerun()
+    with col_mes:
+        st.markdown(f"<div style='text-align:center;padding:.35rem;font-weight:700'>{nombres_meses[mes_actual[1] - 1].capitalize()} {mes_actual[0]}</div>", unsafe_allow_html=True)
+    with col_siguiente:
+        if st.button("›", key=f"{key}__mes_siguiente", disabled=indice_mes >= len(meses_disponibles) - 1, help="Mes siguiente"):
+            st.session_state[clave_mes] = meses_disponibles[indice_mes + 1]
+            st.rerun()
+
+    nombres_dias = ("Lun", "Mar", "Mié", "Jue", "Vie", "Sáb", "Dom")
+    columnas_dias = st.columns(7)
+    for columna, nombre_dia in zip(columnas_dias, nombres_dias):
+        columna.markdown(f"<div style='text-align:center;font-size:.8rem;font-weight:700;padding:.3rem 0'>{nombre_dia}</div>", unsafe_allow_html=True)
+
+    disponibles_mes = {fecha for fecha in fechas if (fecha.year, fecha.month) == mes_actual}
+    for semana in calendario_lib.monthcalendar(*mes_actual):
+        columnas_semana = st.columns(7, gap="small")
+        for columna, numero_dia in zip(columnas_semana, semana):
+            if not numero_dia:
+                columna.markdown("&nbsp;", unsafe_allow_html=True)
+                continue
+            fecha = datetime(mes_actual[0], mes_actual[1], numero_dia).date()
+            habilitada = fecha in disponibles_mes
+            seleccionada = fecha == fecha_seleccionada
+            if columna.button(
+                f"{numero_dia:02d}",
+                key=f"{key}__dia_{fecha.isoformat()}",
+                disabled=not habilitada,
+                type="primary" if seleccionada else "secondary",
+                use_container_width=True,
+                help=etiqueta_fecha_opcion(fecha) if habilitada else "Día no disponible",
+            ) and habilitada:
+                st.session_state[clave_fecha] = fecha
+                st.rerun()
+
+    st.caption(f"Fecha elegida: **{etiqueta_fecha_opcion(fecha_seleccionada)}**")
+    return fecha_seleccionada
 
 def horas_configurables(*horas_actuales):
     opciones = {
