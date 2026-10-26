@@ -290,18 +290,15 @@ def etiqueta_fecha_opcion(fecha):
     return f"{dias[fecha.weekday()]}, {fecha.strftime('%d-%m-%Y')}"
 
 def selector_fecha_disponible(etiqueta, opciones, key, valor_inicial=None, ayuda=None):
-    """Calendario mensual en el que solo las fechas incluidas en opciones se pueden pulsar."""
+    """Muestra un campo de fecha; abre el calendario compacto solo desde el icono."""
     fechas = sorted(set(opciones or []))
     if not fechas:
         st.info("No hay fechas disponibles según los días y cierres configurados.")
         return None
 
-    st.markdown(f"**{etiqueta}**")
-    if ayuda:
-        st.caption(ayuda)
-
     clave_fecha = f"{key}__fecha"
     clave_mes = f"{key}__mes"
+    clave_abierto = f"{key}__abierto"
     fecha_seleccionada = st.session_state.get(clave_fecha)
     if fecha_seleccionada not in fechas:
         if valor_inicial in fechas:
@@ -312,6 +309,24 @@ def selector_fecha_disponible(etiqueta, opciones, key, valor_inicial=None, ayuda
             fecha_seleccionada = fechas[0]
         st.session_state[clave_fecha] = fecha_seleccionada
 
+    clave_campo_fecha = f"{key}__campo_fecha"
+    st.session_state[clave_campo_fecha] = fecha_seleccionada.strftime("%d-%m-%Y")
+    columna_fecha, columna_icono = st.columns([10, 1.4], gap="small", vertical_alignment="bottom")
+    with columna_fecha:
+        st.text_input(
+            etiqueta,
+            disabled=True,
+            key=clave_campo_fecha,
+            help=ayuda,
+        )
+    with columna_icono:
+        if st.button(" ", icon=":material/calendar_month:", key=f"{key}__abrir_calendario", help="Elegir fecha"):
+            st.session_state[clave_abierto] = not st.session_state.get(clave_abierto, False)
+            st.rerun()
+
+    if not st.session_state.get(clave_abierto, False):
+        return fecha_seleccionada
+
     meses_disponibles = sorted({(fecha.year, fecha.month) for fecha in fechas})
     mes_actual = st.session_state.get(clave_mes)
     if mes_actual not in meses_disponibles:
@@ -320,45 +335,47 @@ def selector_fecha_disponible(etiqueta, opciones, key, valor_inicial=None, ayuda
     indice_mes = meses_disponibles.index(mes_actual)
     nombres_meses = ("enero", "febrero", "marzo", "abril", "mayo", "junio", "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre")
 
-    col_anterior, col_mes, col_siguiente = st.columns([1, 5, 1])
-    with col_anterior:
-        if st.button("‹", key=f"{key}__mes_anterior", disabled=indice_mes == 0, help="Mes anterior"):
-            st.session_state[clave_mes] = meses_disponibles[indice_mes - 1]
-            st.rerun()
-    with col_mes:
-        st.markdown(f"<div style='text-align:center;padding:.35rem;font-weight:700'>{nombres_meses[mes_actual[1] - 1].capitalize()} {mes_actual[0]}</div>", unsafe_allow_html=True)
-    with col_siguiente:
-        if st.button("›", key=f"{key}__mes_siguiente", disabled=indice_mes >= len(meses_disponibles) - 1, help="Mes siguiente"):
-            st.session_state[clave_mes] = meses_disponibles[indice_mes + 1]
-            st.rerun()
-
-    nombres_dias = ("Lun", "Mar", "Mié", "Jue", "Vie", "Sáb", "Dom")
-    columnas_dias = st.columns(7)
-    for columna, nombre_dia in zip(columnas_dias, nombres_dias):
-        columna.markdown(f"<div style='text-align:center;font-size:.8rem;font-weight:700;padding:.3rem 0'>{nombre_dia}</div>", unsafe_allow_html=True)
-
-    disponibles_mes = {fecha for fecha in fechas if (fecha.year, fecha.month) == mes_actual}
-    for semana in calendario_lib.monthcalendar(*mes_actual):
-        columnas_semana = st.columns(7, gap="small")
-        for columna, numero_dia in zip(columnas_semana, semana):
-            if not numero_dia:
-                columna.markdown("&nbsp;", unsafe_allow_html=True)
-                continue
-            fecha = datetime(mes_actual[0], mes_actual[1], numero_dia).date()
-            habilitada = fecha in disponibles_mes
-            seleccionada = fecha == fecha_seleccionada
-            if columna.button(
-                f"{numero_dia:02d}",
-                key=f"{key}__dia_{fecha.isoformat()}",
-                disabled=not habilitada,
-                type="primary" if seleccionada else "secondary",
-                use_container_width=True,
-                help=etiqueta_fecha_opcion(fecha) if habilitada else "Día no disponible",
-            ) and habilitada:
-                st.session_state[clave_fecha] = fecha
+    with st.container(width=360, border=True):
+        col_anterior, col_mes, col_siguiente = st.columns([1, 5, 1], gap="small", vertical_alignment="center")
+        with col_anterior:
+            if st.button("‹", key=f"{key}__mes_anterior", disabled=indice_mes == 0, help="Mes anterior"):
+                st.session_state[clave_mes] = meses_disponibles[indice_mes - 1]
+                st.rerun()
+        with col_mes:
+            st.markdown(f"<div style='text-align:center;padding:.35rem;font-weight:700'>{nombres_meses[mes_actual[1] - 1].capitalize()} {mes_actual[0]}</div>", unsafe_allow_html=True)
+        with col_siguiente:
+            if st.button("›", key=f"{key}__mes_siguiente", disabled=indice_mes >= len(meses_disponibles) - 1, help="Mes siguiente"):
+                st.session_state[clave_mes] = meses_disponibles[indice_mes + 1]
                 st.rerun()
 
-    st.caption(f"Fecha elegida: **{etiqueta_fecha_opcion(fecha_seleccionada)}**")
+        nombres_dias = ("Lun", "Mar", "Mié", "Jue", "Vie", "Sáb", "Dom")
+        columnas_dias = st.columns(7, gap="small")
+        for columna, nombre_dia in zip(columnas_dias, nombres_dias):
+            columna.markdown(f"<div style='text-align:center;font-size:.75rem;font-weight:700;padding:.25rem 0'>{nombre_dia}</div>", unsafe_allow_html=True)
+
+        st.markdown(f"<style>div[class*='st-key-{key}__dia_'] button {{ min-height:2rem !important; height:2rem !important; padding:0 !important; border-radius:8px !important; box-shadow:none !important; font-size:.82rem !important; }} div[class*='st-key-{key}__dia_'] button:disabled {{ opacity:1 !important; color:#77817b !important; -webkit-text-fill-color:#77817b !important; background:transparent !important; border-color:transparent !important; cursor:not-allowed !important; }}</style>", unsafe_allow_html=True)
+        disponibles_mes = {fecha for fecha in fechas if (fecha.year, fecha.month) == mes_actual}
+        for semana in calendario_lib.monthcalendar(*mes_actual):
+            columnas_semana = st.columns(7, gap="small")
+            for columna, numero_dia in zip(columnas_semana, semana):
+                if not numero_dia:
+                    columna.markdown("&nbsp;", unsafe_allow_html=True)
+                    continue
+                fecha = datetime(mes_actual[0], mes_actual[1], numero_dia).date()
+                habilitada = fecha in disponibles_mes
+                seleccionada = fecha == fecha_seleccionada
+                if columna.button(
+                    f"{numero_dia:02d}",
+                    key=f"{key}__dia_{fecha.isoformat()}",
+                    disabled=not habilitada,
+                    type="primary" if seleccionada else "secondary",
+                    use_container_width=True,
+                    help=etiqueta_fecha_opcion(fecha) if habilitada else "Día no disponible",
+                ) and habilitada:
+                    st.session_state[clave_fecha] = fecha
+                    st.session_state[clave_abierto] = False
+                    st.rerun()
+
     return fecha_seleccionada
 
 def horas_configurables(*horas_actuales):
