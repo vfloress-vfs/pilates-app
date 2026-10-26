@@ -289,6 +289,13 @@ def etiqueta_fecha_opcion(fecha):
     dias = ("Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado", "Domingo")
     return f"{dias[fecha.weekday()]}, {fecha.strftime('%d-%m-%Y')}"
 
+def seleccionar_solo_una_casilla(claves, clave_activa):
+    """Al marcar una fila, desmarca las demás opciones del mismo grupo."""
+    if st.session_state.get(clave_activa):
+        for clave in claves:
+            if clave != clave_activa:
+                st.session_state[clave] = False
+
 def selector_fecha_disponible(etiqueta, opciones, key, valor_inicial=None, ayuda=None):
     """Muestra un campo de fecha; abre el calendario compacto solo desde el icono."""
     fechas = sorted(set(opciones or []))
@@ -335,7 +342,7 @@ def selector_fecha_disponible(etiqueta, opciones, key, valor_inicial=None, ayuda
     indice_mes = meses_disponibles.index(mes_actual)
     nombres_meses = ("enero", "febrero", "marzo", "abril", "mayo", "junio", "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre")
 
-    with st.container(width=360, border=True):
+    with st.container(key=f"{key}__panel", width=320, border=True):
         col_anterior, col_mes, col_siguiente = st.columns([1, 5, 1], gap="small", vertical_alignment="center")
         with col_anterior:
             if st.button("‹", key=f"{key}__mes_anterior", disabled=indice_mes == 0, help="Mes anterior"):
@@ -353,7 +360,7 @@ def selector_fecha_disponible(etiqueta, opciones, key, valor_inicial=None, ayuda
         for columna, nombre_dia in zip(columnas_dias, nombres_dias):
             columna.markdown(f"<div style='text-align:center;font-size:.75rem;font-weight:700;padding:.25rem 0'>{nombre_dia}</div>", unsafe_allow_html=True)
 
-        st.markdown(f"<style>div[class*='st-key-{key}__dia_'] button {{ min-height:2rem !important; height:2rem !important; padding:0 !important; border-radius:8px !important; box-shadow:none !important; font-size:.82rem !important; }} div[class*='st-key-{key}__dia_'] button:disabled {{ opacity:1 !important; color:#77817b !important; -webkit-text-fill-color:#77817b !important; background:transparent !important; border-color:transparent !important; cursor:not-allowed !important; }}</style>", unsafe_allow_html=True)
+        st.markdown(f"<style>div[class*='st-key-{key}__panel'] [data-testid='stHorizontalBlock'] {{ gap:.12rem !important; }} div[class*='st-key-{key}__dia_'] button {{ min-height:1.7rem !important; height:1.7rem !important; padding:0 !important; border-radius:7px !important; box-shadow:none !important; font-size:.78rem !important; }} div[class*='st-key-{key}__dia_'] button:disabled {{ opacity:1 !important; color:#77817b !important; -webkit-text-fill-color:#77817b !important; background:transparent !important; border-color:transparent !important; cursor:not-allowed !important; }}</style>", unsafe_allow_html=True)
         disponibles_mes = {fecha for fecha in fechas if (fecha.year, fecha.month) == mes_actual}
         for semana in calendario_lib.monthcalendar(*mes_actual):
             columnas_semana = st.columns(7, gap="small")
@@ -401,8 +408,8 @@ def selector_hora(etiqueta, opciones, key, valor_inicial=None, ayuda=None):
         help=ayuda,
     )
 
-def horas_inicio_operativas(apertura, cierre, inicio_receso, fin_receso, duracion_minutos, paso_minutos=15):
-    """Horas de inicio que permiten completar la clase antes de cierre y fuera del receso."""
+def horas_inicio_operativas(apertura, cierre, inicio_receso, fin_receso, duracion_minutos, paso_minutos=60):
+    """Horas desde la apertura, en incrementos de una hora, fuera del receso."""
     inicio_min = apertura.hour * 60 + apertura.minute
     cierre_min = cierre.hour * 60 + cierre.minute
     receso_inicio_min = inicio_receso.hour * 60 + inicio_receso.minute
@@ -1143,6 +1150,7 @@ else:
                             filas_historial = [filas_historial[i] for i in orden_indices_historial]
                             ids_reservas_historial = [ids_reservas_historial[i] for i in orden_indices_historial]
                             selector_mis_clases_key = f"seleccionar_reserva_mis_clases_{id_alumno_portal}_{st.session_state.clear_portal_reserva}"
+                            claves_checkbox_reserva = [f"{selector_mis_clases_key}_{id_reserva}" for id_reserva in ids_reservas_historial]
                             anchos_columnas_historial = [1.0, 0.55, 1.0, 0.95, 1.05, 0.8, 0.52]
                             encabezados_historial = ["Fecha", "Hora", "Sede", "Clase", "Instructor", "Estado", "Gestión"]
                             campos_historial = ["Fecha", "Hora", "Sede", "Clase", "Instructora", "Estado"]
@@ -1195,13 +1203,13 @@ else:
                                     disabled=not puede_gestionar,
                                     label_visibility="collapsed",
                                     help=motivo_no_gestion or "Marca para cancelar o reagendar esta reserva.",
+                                    on_change=seleccionar_solo_una_casilla,
+                                    args=(claves_checkbox_reserva, clave_checkbox_gestion),
                                 )
                                 if marcado:
                                     ids_seleccionados.append(id_reserva_historial)
 
                             id_reserva_seleccionada = ids_seleccionados[0] if len(ids_seleccionados) == 1 else None
-                            if len(ids_seleccionados) > 1:
-                                st.warning("Marca solo una reserva a la vez para ver sus opciones.")
                             proximas_reservas = [
                                 r for r in reservas_alumno
                                 if r.get("estado") == "Programada" and r.get("sesion_id") in datos_sesion_historial
@@ -1705,12 +1713,13 @@ else:
                 lista_locales = [local for local in lista_locales_admin if local.get("activo", True)]
                 opciones_locales = {local['nombre']: local['id'] for local in lista_locales}
                 
-                planes_res = supabase.table("tipos_paquetes").select("nombre_paquete", "clases_totales", "costo").eq("activo", True).execute()
+                planes_res = supabase.table("tipos_paquetes").select("nombre_paquete", "clases_totales", "costo", "vigencia_dias").eq("activo", True).execute()
                 lista_p_db = planes_res.data if planes_res.data else []
                 opciones_planes = {p['nombre_paquete']: p['clases_totales'] for p in lista_p_db}
                 costos_planes = {p['nombre_paquete']: float(p['costo']) for p in lista_p_db}
+                vigencias_planes = {p['nombre_paquete']: int(p.get('vigencia_dias') or 30) for p in lista_p_db}
             except Exception as e:
-                opciones_locales, opciones_planes, costos_planes = {}, {}, {}
+                opciones_locales, opciones_planes, costos_planes, vigencias_planes = {}, {}, {}, {}
                 
             if st.session_state.admin_migracion_pendiente:
                 st.warning("Tu cuenta conserva acceso completo. Ejecuta supabase_admin_users_migration.sql en Supabase para habilitar la gestión de usuarios y permisos.")
@@ -1896,6 +1905,8 @@ else:
                                 
                     if tipo_p in costos_planes and costos_planes[tipo_p] > 0:
                         st.info(f"💵 **Valor comercial del paquete seleccionado:** S/ {costos_planes[tipo_p]:.2f}")
+                    if tipo_p in vigencias_planes:
+                        st.caption(f"Vigencia de este plan: {vigencias_planes[tipo_p]} días calendario desde la compra.")
 
                     inscripcion_completa = bool(
                         a_nombre.strip() and a_apellido.strip() and a_telefono.strip()
@@ -1904,12 +1915,12 @@ else:
                         and (modalidad != "Fixed" or sede_assigned in opciones_locales)
                     )
                     if inscripcion_completa:
-                        fecha_vencimiento_inscripcion = datetime.now(ZoneInfo("America/Lima")).date() + timedelta(days=30)
+                        fecha_vencimiento_inscripcion = datetime.now(ZoneInfo("America/Lima")).date() + timedelta(days=vigencias_planes.get(tipo_p, 30))
                         sede_resumen = f" · Sede: {sede_assigned}" if modalidad == "Fixed" else ""
                         st.info(
                             f"**Resumen de inscripción**  \n"
                             f"Alumno: {a_nombre.strip()} {a_apellido.strip()} · Paquete: {tipo_p} "
-                            f"({opciones_planes[tipo_p]} clases) · Acceso: {modalidad}{sede_resumen} · "
+                            f"({opciones_planes[tipo_p]} clases, {vigencias_planes.get(tipo_p, 30)} días de vigencia) · Acceso: {modalidad}{sede_resumen} · "
                             f"Vencimiento: {fecha_vencimiento_inscripcion.strftime('%d-%m-%Y')} · "
                             f"Total a pagar: S/ {costos_planes.get(tipo_p, 0):.2f}"
                         )
@@ -1955,7 +1966,7 @@ else:
                                         raise RuntimeError("No se recibió el identificador del alumno.")
                                     id_alumno = nuevo_alumno.data[0]["id"]
                                     total_c = opciones_planes[tipo_p]
-                                    fecha_vence = (datetime.now(ZoneInfo("America/Lima")).date() + timedelta(days=30)).isoformat()
+                                    fecha_vence = (datetime.now(ZoneInfo("America/Lima")).date() + timedelta(days=vigencias_planes.get(tipo_p, 30))).isoformat()
                                     id_local_fijo = opciones_locales[sede_assigned] if modalidad == "Fixed" else None
                                     id_paquete_creado = None
                                     try:
@@ -1988,6 +1999,7 @@ else:
                                                 "local_id_fijo": id_local_fijo,
                                                 "clases_totales": total_c,
                                                 "costo": costos_planes.get(tipo_p, 0),
+                                                "vigencia_dias": vigencias_planes.get(tipo_p, 30),
                                                 "fecha_vencimiento": fecha_vence,
                                                 "fecha_pago": fecha_pago
                                             }
@@ -2060,12 +2072,14 @@ else:
                                     
                             if tipo_p_nuevo in costos_planes and costos_planes[tipo_p_nuevo] > 0:
                                 st.info(f"💵 **Valor comercial de esta renovación:** S/ {costos_planes[tipo_p_nuevo]:.2f}")
+                            if tipo_p_nuevo in vigencias_planes:
+                                st.caption(f"Vigencia de este plan: {vigencias_planes[tipo_p_nuevo]} días calendario desde la renovación.")
 
                             renovacion_completa = bool(
                                 tipo_p_nuevo in opciones_planes and modalidad_nueva
                                 and (modalidad_nueva != "Fixed" or sede_assigned_new in opciones_locales)
                             )
-                            fecha_vencimiento_renovacion = datetime.now(ZoneInfo("America/Lima")).date() + timedelta(days=30)
+                            fecha_vencimiento_renovacion = datetime.now(ZoneInfo("America/Lima")).date() + timedelta(days=vigencias_planes.get(tipo_p_nuevo, 30)) if tipo_p_nuevo else datetime.now(ZoneInfo("America/Lima")).date()
                             if renovacion_completa:
                                 base_resumen_renovacion = opciones_planes[tipo_p_nuevo]
                                 total_resumen_renovacion = base_resumen_renovacion + clases_flotantes
@@ -2073,7 +2087,7 @@ else:
                                 st.info(
                                     f"**Resumen de renovación**  \n"
                                     f"Alumno: {alumno_sel} · Paquete: {tipo_p_nuevo} · "
-                                    f"Clases del plan: {base_resumen_renovacion} · Saldo anterior: {clases_flotantes} · "
+                                    f"Clases del plan: {base_resumen_renovacion} · Vigencia: {vigencias_planes.get(tipo_p_nuevo, 30)} días · Saldo anterior: {clases_flotantes} · "
                                     f"Saldo total: {total_resumen_renovacion} · Acceso: {modalidad_nueva}{sede_resumen_renovacion} · "
                                     f"Vencimiento: {fecha_vencimiento_renovacion.strftime('%d-%m-%Y')} · "
                                     f"Total a pagar: S/ {costos_planes.get(tipo_p_nuevo, 0):.2f}"
@@ -2099,7 +2113,7 @@ else:
                                         else:
                                             base_nuevas = opciones_planes[tipo_p_nuevo]
                                             total_unificado = base_nuevas + clases_flotantes
-                                            fecha_vence_nueva = (datetime.now(ZoneInfo("America/Lima")).date() + timedelta(days=30)).isoformat()
+                                            fecha_vence_nueva = (datetime.now(ZoneInfo("America/Lima")).date() + timedelta(days=vigencias_planes.get(tipo_p_nuevo, 30))).isoformat()
                                             id_local_fijo_nuevo = opciones_locales[sede_assigned_new] if modalidad_nueva == "Fixed" else None
                                             fecha_pago_renovacion = datetime.now(ZoneInfo("America/Lima")).isoformat()
                                             paquete_nuevo = supabase.table("paquetes").insert({
@@ -2128,6 +2142,7 @@ else:
                                                         "clases_plan": base_nuevas,
                                                         "clases_anteriores_sumadas": clases_flotantes,
                                                         "costo": costos_planes.get(tipo_p_nuevo, 0),
+                                                        "vigencia_dias": vigencias_planes.get(tipo_p_nuevo, 30),
                                                         "fecha_vencimiento": fecha_vence_nueva,
                                                         "fecha_pago": fecha_pago_renovacion,
                                                         "paquetes_anteriores": [{"id": p["id"], "estado": p.get("estado")} for p in paquetes_vigentes]
@@ -2166,18 +2181,19 @@ else:
                         p_nombre = st.text_input("Nombre del nuevo paquete (ej: Plan Black 30 clases):", key=f"p_n_{st.session_state.clear_plan}")
                         p_clases = st.number_input("Cantidad exacta de clases asignadas:", min_value=1, max_value=200, value=None, placeholder="Escribe la cantidad", key=f"p_c_{st.session_state.clear_plan}")
                         p_costo = st.number_input("Precio / Costo comercial del plan (S/):", min_value=0.0, max_value=5000.0, value=None, step=10.0, placeholder="Escribe el precio", key=f"p_v_{st.session_state.clear_plan}")
+                        p_vigencia = st.number_input("Vigencia del plan (días)", min_value=1, max_value=3650, value=30, step=1, help="Días calendario desde la compra para consumir las clases antes del vencimiento.", key=f"p_vigencia_{st.session_state.clear_plan}")
                                     
                         col_p1, col_p2 = st.columns(2)
                         with col_p1:
                             if st.button("Dar de Alta Plan"):
                                 if p_nombre.strip() and p_clases is not None and p_costo is not None:
                                     try:
-                                        supabase.table("tipos_paquetes").insert({"nombre_paquete": p_nombre, "clases_totales": p_clases, "costo": p_costo}).execute()
+                                        supabase.table("tipos_paquetes").insert({"nombre_paquete": p_nombre.strip(), "clases_totales": int(p_clases), "costo": float(p_costo), "vigencia_dias": int(p_vigencia)}).execute()
                                         st.session_state.aviso_planes = f"Plan '{p_nombre.strip()}' añadido al catálogo."
                                         st.session_state.clear_plan += 1
                                         st.rerun()
                                     except Exception as e: st.error(f"❌ Error al guardar el plan: {e}")
-                                else: st.error("Completa el nombre, la cantidad de clases y el precio.")
+                                else: st.error("Completa el nombre, la cantidad de clases, el precio y la vigencia del plan.")
                         with col_p2:
                             if st.button("Limpiar Pantalla", key="btn_clear_plan"):
                                 st.session_state.clear_plan += 1
@@ -2189,14 +2205,16 @@ else:
                             plan_a_modificar = st.selectbox("Selecciona el plan que deseas actualizar:", [""] + list(opciones_planes.keys()), key=f"tarifa_plan_{st.session_state.clear_tarifa}", placeholder="Selecciona un plan...")
                             if plan_a_modificar:
                                 nuevo_precio = st.number_input("Establecer nuevo precio (S/):", min_value=0.0, max_value=5000.0, value=costos_planes.get(plan_a_modificar, 0.0), step=5.0, key=f"tarifa_precio_{st.session_state.clear_tarifa}_{plan_a_modificar}")
+                                nueva_vigencia_plan = st.number_input("Vigencia del plan (días)", min_value=1, max_value=3650, value=vigencias_planes.get(plan_a_modificar, 30), step=1, key=f"tarifa_vigencia_{st.session_state.clear_tarifa}_{plan_a_modificar}")
                             else:
                                 nuevo_precio = None
+                                nueva_vigencia_plan = None
                             col_tarifa_1, col_tarifa_2 = st.columns(2)
                             with col_tarifa_1:
-                                if st.button("Actualizar Tarifa Comercial", key=f"actualizar_tarifa_comercial_{st.session_state.clear_tarifa}", disabled=not plan_a_modificar):
+                                if st.button("Guardar precio y vigencia", key=f"actualizar_tarifa_comercial_{st.session_state.clear_tarifa}", disabled=not plan_a_modificar):
                                     try:
-                                        supabase.table("tipos_paquetes").update({"costo": nuevo_precio}).eq("nombre_paquete", plan_a_modificar).execute()
-                                        st.session_state.aviso_planes = f"Precio de '{plan_a_modificar}' actualizado a S/ {nuevo_precio:.2f}."
+                                        supabase.table("tipos_paquetes").update({"costo": float(nuevo_precio), "vigencia_dias": int(nueva_vigencia_plan)}).eq("nombre_paquete", plan_a_modificar).execute()
+                                        st.session_state.aviso_planes = f"Precio y vigencia de '{plan_a_modificar}' actualizados."
                                         st.session_state.clear_tarifa += 1
                                         st.rerun()
                                     except Exception as e: st.error(f"❌ Error al actualizar precio: {e}")
@@ -2208,26 +2226,38 @@ else:
 
                     with sub_tab3:
                         st.markdown("#### Catálogo de planes · precio de menor a mayor")
+                        st.caption("La vigencia configurada se aplicará a las nuevas ventas, renovaciones y cambios de plan. Los paquetes ya vendidos conservan su fecha de vencimiento.")
                         try:
                             todos_planes_res = supabase.table("tipos_paquetes").select("*").order("costo", desc=False).execute()
                             if todos_planes_res.data and len(todos_planes_res.data) > 0:
                                 import pandas as pd
                                 df_catalogo = pd.DataFrame(todos_planes_res.data)
-                                df_catalogo_amigable = df_catalogo[["nombre_paquete", "clases_totales", "costo", "activo"]].rename(columns={
-                                    "nombre_paquete": "Nombre del Paquete", "clases_totales": "Clases que Incluye", "costo": "Precio Comercial (S/)", "activo": "Disponible para Venta"
+                                df_catalogo_amigable = df_catalogo[["nombre_paquete", "clases_totales", "costo", "vigencia_dias", "activo"]].rename(columns={
+                                    "nombre_paquete": "Nombre del Paquete", "clases_totales": "Clases que Incluye", "costo": "Precio Comercial (S/)", "vigencia_dias": "Vigencia (días)", "activo": "Disponible para Venta"
                                 })
                                 editor_catalogo_key = f"editor_catalogo_planes_{st.session_state.clear_catalogo}"
-                                cambios_tabla = st.data_editor(df_catalogo_amigable, hide_index=True, disabled=["Nombre del Paquete", "Clases que Incluye", "Precio Comercial (S/)"], use_container_width=True, key=editor_catalogo_key)
+                                cambios_tabla = st.data_editor(
+                                    df_catalogo_amigable,
+                                    hide_index=True,
+                                    disabled=["Nombre del Paquete", "Clases que Incluye", "Precio Comercial (S/)", "Vigencia (días)"],
+                                    use_container_width=True,
+                                    key=editor_catalogo_key,
+                                )
                                 if st.session_state.get(editor_catalogo_key) and "edited_rows" in st.session_state[editor_catalogo_key]:
                                     filas_editadas = st.session_state[editor_catalogo_key]["edited_rows"]
+                                    planes_actualizados = []
                                     for indice_fila, cambios in filas_editadas.items():
+                                        actualizacion_plan = {}
                                         if "Disponible para Venta" in cambios:
-                                            nuevo_estado = cambios["Disponible para Venta"]
-                                            id_registro = int(df_catalogo.iloc[indice_fila]["id"])
-                                            supabase.table("tipos_paquetes").update({"activo": nuevo_estado}).eq("id", id_registro).execute()
-                                            st.session_state.mensaje_resultado_app = f"La disponibilidad del plan {df_catalogo.iloc[indice_fila]['nombre_paquete']} se actualizó."
-                                            st.session_state.clear_catalogo += 1
-                                            st.rerun()
+                                            actualizacion_plan["activo"] = bool(cambios["Disponible para Venta"])
+                                        if actualizacion_plan:
+                                            fila_catalogo = df_catalogo.iloc[indice_fila]
+                                            supabase.table("tipos_paquetes").update(actualizacion_plan).eq("id", int(fila_catalogo["id"])).execute()
+                                            planes_actualizados.append(str(fila_catalogo["nombre_paquete"]))
+                                    if planes_actualizados:
+                                        st.session_state.mensaje_resultado_app = f"Disponibilidad actualizada para: {', '.join(planes_actualizados)}."
+                                        st.session_state.clear_catalogo += 1
+                                        st.rerun()
                             else: st.info("💡 No se encontraron planes registrados.")
                         except Exception as e: st.error(f"Error: {e}")
                                     
@@ -3196,9 +3226,12 @@ else:
                                                 confirmar_pago_upgrade = False
                                                 if paquete_nuevo_alumno and paquete_nuevo_alumno != "Sin cambio":
                                                     diferencia_upgrade = planes_superiores[paquete_nuevo_alumno] - int(paquete_actual.get("clases_totales") or 0)
+                                                    vigencia_upgrade = vigencias_planes.get(paquete_nuevo_alumno, 30)
+                                                    vencimiento_upgrade = datetime.now(ZoneInfo("America/Lima")).date() + timedelta(days=vigencia_upgrade)
                                                     st.info(
                                                         f"**Resumen del cambio de plan:** {paquete_actual['tipo_paquete']} → {paquete_nuevo_alumno} · "
-                                                        f"Se añadirán {diferencia_upgrade} clases al saldo actual · "
+                                                        f"Se añadirán {diferencia_upgrade} clases al saldo actual · Vigencia: {vigencia_upgrade} días · "
+                                                        f"Vence el: {vencimiento_upgrade.strftime('%d-%m-%Y')} · "
                                                         f"Total a pagar: S/ {costos_planes.get(paquete_nuevo_alumno, 0):.2f}"
                                                     )
                                                     confirmar_pago_upgrade = st.checkbox(
@@ -3247,12 +3280,17 @@ else:
                                                         }
                                                         tipo_evento_paquete = "cambio_modalidad"
                                                         fecha_pago_upgrade = None
+                                                        vigencia_nueva_paquete = None
+                                                        vencimiento_nuevo_paquete = None
                                                         if paquete_nuevo_alumno and paquete_nuevo_alumno != "Sin cambio":
                                                             clases_nuevo_plan = planes_superiores[paquete_nuevo_alumno]
                                                             diferencia_clases = clases_nuevo_plan - int(paquete_actual.get("clases_totales") or 0)
                                                             fecha_pago_upgrade = datetime.now(ZoneInfo("America/Lima")).isoformat()
+                                                            vigencia_nueva_paquete = vigencias_planes.get(paquete_nuevo_alumno, 30)
+                                                            vencimiento_nuevo_paquete = (datetime.now(ZoneInfo("America/Lima")).date() + timedelta(days=vigencia_nueva_paquete)).isoformat()
                                                             actualizacion_paquete.update({
                                                                 "tipo_paquete": paquete_nuevo_alumno,
+                                                                "fecha_vencimiento": vencimiento_nuevo_paquete,
                                                                 "clases_totales": clases_nuevo_plan,
                                                                 "clases_restantes": int(paquete_actual.get("clases_restantes") or 0) + diferencia_clases,
                                                                 "pagado": True,
@@ -3270,6 +3308,8 @@ else:
                                                                 "modalidad_nueva": modalidad_nueva_alumno,
                                                                 "local_id_fijo_nuevo": actualizacion_paquete["local_id_fijo"],
                                                                 "costo": costos_planes.get(paquete_nuevo_alumno, 0) if tipo_evento_paquete == "cambio_plan" else 0,
+                                                                "vigencia_dias": vigencia_nueva_paquete,
+                                                                "fecha_vencimiento_nueva": vencimiento_nuevo_paquete,
                                                                 "fecha_pago": fecha_pago_upgrade
                                                             }
                                                             supabase.table("eventos_paquetes").insert({
@@ -3929,20 +3969,36 @@ else:
                             st.success("Se descartaron los cambios sin guardar. Se muestran los valores actuales de la configuración.")
                         st.caption("Define el horario de atención y las reglas de programación y reserva. Agenda y el portal del alumno tomarán estos valores automáticamente.")
                         with st.form(f"form_config_horarios_{st.session_state.clear_configuracion}"):
-                            col_h1, col_h2, col_h3 = st.columns(3)
+                            columnas_reglas = st.columns([1, 1, 0.035, 1], gap="small")
                             horas_config = horas_configurables(hora_apertura_estudio, hora_cierre_estudio, receso_inicio_estudio, receso_fin_estudio, corte_turno_manana, limite_reserva_manana)
-                            with col_h1:
+                            with columnas_reglas[0]:
                                 hora_apertura_nueva = selector_hora("Apertura del estudio", horas_config, key=f"config_hora_apertura_{st.session_state.clear_configuracion}", valor_inicial=hora_apertura_estudio)
-                                corte_manana_nuevo = selector_hora("Turno mañana hasta", horas_config, key=f"config_corte_manana_{st.session_state.clear_configuracion}", valor_inicial=corte_turno_manana)
-                                limite_manana_nuevo = selector_hora("Reserva/cancelación de mañana hasta", horas_config, key=f"config_limite_manana_{st.session_state.clear_configuracion}", valor_inicial=limite_reserva_manana, ayuda="Se aplica el día anterior a la clase.")
-                            with col_h2:
+                            with columnas_reglas[1]:
                                 hora_cierre_nueva = selector_hora("Cierre del estudio", horas_config, key=f"config_hora_cierre_{st.session_state.clear_configuracion}", valor_inicial=hora_cierre_estudio)
-                                receso_inicio_nuevo = selector_hora("Inicio de receso", horas_config, key=f"config_receso_inicio_{st.session_state.clear_configuracion}", valor_inicial=receso_inicio_estudio)
-                                receso_fin_nuevo = selector_hora("Fin de receso", horas_config, key=f"config_receso_fin_{st.session_state.clear_configuracion}", valor_inicial=receso_fin_estudio)
-                                duracion_clase_nueva = st.number_input("Duración de clase (minutos)", min_value=15, max_value=240, value=duracion_clase_default, step=5, key=f"config_duracion_clase_{st.session_state.clear_configuracion}")
-                                limite_tarde_nuevo = st.number_input("Anticipación para reservar/cancelar clases de tarde (horas)", min_value=1, max_value=24, value=limite_reserva_tarde_horas, step=1, key=f"config_limite_tarde_{st.session_state.clear_configuracion}")
-                            with col_h3:
+                            with columnas_reglas[2]:
+                                st.markdown("<div style='height:5.2rem;border-left:1px solid var(--pilates-border);margin:auto'></div>", unsafe_allow_html=True)
+                            with columnas_reglas[3]:
                                 dias_agenda_nuevos = st.number_input("Programar y mostrar agenda hasta (días)", min_value=1, max_value=180, value=dias_agenda_anticipacion, step=1, key=f"config_dias_agenda_{st.session_state.clear_configuracion}")
+
+                            columnas_reglas = st.columns([1, 1, 0.035, 1], gap="small")
+                            with columnas_reglas[0]:
+                                receso_inicio_nuevo = selector_hora("Inicio de receso", horas_config, key=f"config_receso_inicio_{st.session_state.clear_configuracion}", valor_inicial=receso_inicio_estudio)
+                            with columnas_reglas[1]:
+                                receso_fin_nuevo = selector_hora("Fin de receso", horas_config, key=f"config_receso_fin_{st.session_state.clear_configuracion}", valor_inicial=receso_fin_estudio)
+                            with columnas_reglas[2]:
+                                st.markdown("<div style='height:5.2rem;border-left:1px solid var(--pilates-border);margin:auto'></div>", unsafe_allow_html=True)
+                            with columnas_reglas[3]:
+                                limite_manana_nuevo = selector_hora("Reserva/cancelación de mañana hasta", horas_config, key=f"config_limite_manana_{st.session_state.clear_configuracion}", valor_inicial=limite_reserva_manana, ayuda="Se aplica el día anterior a la clase.")
+
+                            columnas_reglas = st.columns([1, 1, 0.035, 1], gap="small")
+                            with columnas_reglas[0]:
+                                corte_manana_nuevo = selector_hora("Turno mañana hasta", horas_config, key=f"config_corte_manana_{st.session_state.clear_configuracion}", valor_inicial=corte_turno_manana)
+                            with columnas_reglas[1]:
+                                duracion_clase_nueva = st.number_input("Duración de clase (minutos)", min_value=15, max_value=240, value=duracion_clase_default, step=5, key=f"config_duracion_clase_{st.session_state.clear_configuracion}")
+                            with columnas_reglas[2]:
+                                st.markdown("<div style='height:5.2rem;border-left:1px solid var(--pilates-border);margin:auto'></div>", unsafe_allow_html=True)
+                            with columnas_reglas[3]:
+                                limite_tarde_nuevo = st.number_input("Anticipación para reservar/cancelar clases de tarde (horas)", min_value=1, max_value=24, value=limite_reserva_tarde_horas, step=1, key=f"config_limite_tarde_{st.session_state.clear_configuracion}")
                             guardar_horario_config = st.form_submit_button("Guardar configuración de horarios", type="primary")
                             limpiar_horario_config = st.form_submit_button("Restaurar valores guardados")
                         if limpiar_horario_config:
