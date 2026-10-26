@@ -207,6 +207,8 @@ CONFIG_ESTUDIO_DEFAULT = {
     "logo_mime": None,
     "hora_apertura": "06:00:00",
     "hora_cierre": "22:00:00",
+    "receso_inicio": "13:00:00",
+    "receso_fin": "14:00:00",
     "duracion_clase_minutos": 50,
     "dias_agenda_anticipacion": 45,
     "corte_turno_manana": "12:00:00",
@@ -260,11 +262,101 @@ def hora_configuracion(clave):
 
 hora_apertura_estudio = hora_configuracion("hora_apertura")
 hora_cierre_estudio = hora_configuracion("hora_cierre")
+receso_inicio_estudio = hora_configuracion("receso_inicio")
+receso_fin_estudio = hora_configuracion("receso_fin")
 duracion_clase_default = int(configuracion_estudio.get("duracion_clase_minutos") or 50)
 dias_agenda_anticipacion = int(configuracion_estudio.get("dias_agenda_anticipacion") or 45)
 corte_turno_manana = hora_configuracion("corte_turno_manana")
 limite_reserva_manana = hora_configuracion("limite_reserva_manana")
 limite_reserva_tarde_horas = int(configuracion_estudio.get("limite_reserva_tarde_horas") or 4)
+
+def dias_laborables_entre(fecha_inicio, fecha_fin, dias_habilitados, fechas_bloqueadas=None):
+    """Devuelve fechas seleccionables según días abiertos y feriados configurados."""
+    if fecha_inicio is None or fecha_fin is None or fecha_inicio > fecha_fin:
+        return []
+    dias_habilitados = {int(dia) for dia in (dias_habilitados or set())}
+    fechas_bloqueadas = {str(fecha)[:10] for fecha in (fechas_bloqueadas or set())}
+    resultado = []
+    actual = fecha_inicio
+    while actual <= fecha_fin:
+        if actual.weekday() in dias_habilitados and actual.isoformat() not in fechas_bloqueadas:
+            resultado.append(actual)
+        actual += timedelta(days=1)
+    return resultado
+
+def etiqueta_fecha_opcion(fecha):
+    dias = ("Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado", "Domingo")
+    return f"{dias[fecha.weekday()]}, {fecha.strftime('%d-%m-%Y')}"
+
+def selector_fecha_disponible(etiqueta, opciones, key, valor_inicial=None, ayuda=None):
+    opciones = list(opciones or [])
+    if not opciones:
+        st.info("No hay fechas disponibles según los días y cierres configurados.")
+        return None
+    if valor_inicial in opciones:
+        indice = opciones.index(valor_inicial)
+    elif valor_inicial is not None:
+        indice = next((i for i, fecha in enumerate(opciones) if fecha >= valor_inicial), 0)
+    else:
+        indice = 0
+    return st.selectbox(
+        etiqueta,
+        opciones,
+        index=indice,
+        format_func=etiqueta_fecha_opcion,
+        key=key,
+        help=ayuda,
+    )
+
+def horas_configurables(*horas_actuales):
+    opciones = {
+        datetime_time(minuto // 60, minuto % 60)
+        for minuto in range(0, 24 * 60, 15)
+    }
+    opciones.update(hora for hora in horas_actuales if isinstance(hora, datetime_time))
+    return sorted(opciones)
+
+def selector_hora(etiqueta, opciones, key, valor_inicial=None, ayuda=None):
+    opciones = list(opciones or [])
+    if not opciones:
+        st.info("No hay horas disponibles dentro del horario configurado.")
+        return None
+    indice = opciones.index(valor_inicial) if valor_inicial in opciones else 0
+    return st.selectbox(
+        etiqueta,
+        opciones,
+        index=indice,
+        format_func=lambda hora: hora.strftime("%H:%M"),
+        key=key,
+        help=ayuda,
+    )
+
+def horas_inicio_operativas(apertura, cierre, inicio_receso, fin_receso, duracion_minutos, paso_minutos=15):
+    """Horas de inicio que permiten completar la clase antes de cierre y fuera del receso."""
+    inicio_min = apertura.hour * 60 + apertura.minute
+    cierre_min = cierre.hour * 60 + cierre.minute
+    receso_inicio_min = inicio_receso.hour * 60 + inicio_receso.minute
+    receso_fin_min = fin_receso.hour * 60 + fin_receso.minute
+    resultado = []
+    for minuto in range(inicio_min, cierre_min, paso_minutos):
+        fin_clase = minuto + int(duracion_minutos)
+        if fin_clase > cierre_min:
+            continue
+        if inicio_receso < fin_receso and minuto < receso_fin_min and fin_clase > receso_inicio_min:
+            continue
+        resultado.append(datetime_time(minuto // 60, minuto % 60))
+    return resultado
+
+def sesion_en_horario_operativo(hora_inicio, hora_fin):
+    try:
+        inicio = hora_inicio if isinstance(hora_inicio, datetime_time) else datetime_time.fromisoformat(str(hora_inicio))
+        fin = hora_fin if isinstance(hora_fin, datetime_time) else datetime_time.fromisoformat(str(hora_fin))
+    except (TypeError, ValueError):
+        return False
+    return (
+        hora_apertura_estudio <= inicio < fin <= hora_cierre_estudio
+        and not (receso_inicio_estudio < receso_fin_estudio and inicio < receso_fin_estudio and fin > receso_inicio_estudio)
+    )
 
 nombre_estudio = str(configuracion_estudio.get("nombre_estudio") or CONFIG_ESTUDIO_DEFAULT["nombre_estudio"]).strip()
 color_fondo_app = color_hex_seguro(configuracion_estudio.get("color_fondo"), CONFIG_ESTUDIO_DEFAULT["color_fondo"])
@@ -419,6 +511,14 @@ if "instructor_sesion_id" not in st.session_state:
     st.session_state.instructor_sesion_id = None
 if "instructor_sesion_nombre" not in st.session_state:
     st.session_state.instructor_sesion_nombre = ""
+if "instructor_cuenta_id" not in st.session_state:
+    st.session_state.instructor_cuenta_id = None
+if "instructor_debe_cambiar_clave" not in st.session_state:
+    st.session_state.instructor_debe_cambiar_clave = False
+if "instructor_clave_flash" not in st.session_state:
+    st.session_state.instructor_clave_flash = None
+if "clear_clave_instructor" not in st.session_state:
+    st.session_state.clear_clave_instructor = 0
 
 # ------------------------------------------------------------------
 # FLUJO PRINCIPAL DE ACCESO
@@ -492,6 +592,12 @@ else:
     """, unsafe_allow_html=True)
     rol_acceso = st.sidebar.radio("Menú de Perfiles:", ["Alumnos", "Instructores", "Tablet Check-in", "Administrador"])
 
+    if rol_acceso != "Instructores":
+        st.session_state.instructor_sesion_id = None
+        st.session_state.instructor_sesion_nombre = ""
+        st.session_state.instructor_cuenta_id = None
+        st.session_state.pop("instructor_hash_sesion", None)
+        st.session_state.pop("instructor_ultima_actividad", None)
     if rol_acceso != "Alumnos":
         for clave_alumno in ("alumno_portal_id", "alumno_portal_hash", "alumno_portal_telefono", "alumno_portal_ultima_actividad"):
             st.session_state.pop(clave_alumno, None)
@@ -580,15 +686,16 @@ else:
             st.info("Si aún no tienes contraseña, solicítale al estudio una clave temporal. Al ingresar tendrás que crear una propia.")
             st.stop()
 
-        datos_sesion_alumno = datos_sesion_alumno
         id_alumno_portal = datos_sesion_alumno["id"]
         telefono_alumno = datos_sesion_alumno["telefono"]
 
         if datos_sesion_alumno.get("debe_cambiar_contrasena"):
             st.warning("Por seguridad, crea una contraseña personal para continuar.")
-            with st.form("form_primer_cambio_clave_alumno"):
-                clave_temporal_nueva = st.text_input("Nueva contraseña (mínimo 12 caracteres)", type="password")
-                clave_temporal_confirmar = st.text_input("Confirmar nueva contraseña", type="password")
+            if "clear_portal_password" not in st.session_state:
+                st.session_state.clear_portal_password = 0
+            with st.form(f"form_primer_cambio_clave_alumno_{st.session_state.clear_portal_password}"):
+                clave_temporal_nueva = st.text_input("Nueva contraseña (mínimo 12 caracteres)", type="password", key=f"alumno_primer_clave_{st.session_state.clear_portal_password}")
+                clave_temporal_confirmar = st.text_input("Confirmar nueva contraseña", type="password", key=f"alumno_primer_confirmar_{st.session_state.clear_portal_password}")
                 guardar_clave_temporal = st.form_submit_button("Crear mi contraseña", type="primary")
             if guardar_clave_temporal:
                 if len(clave_temporal_nueva) < 12:
@@ -605,7 +712,8 @@ else:
                             "acceso_bloqueado_hasta": None,
                         }).eq("id", id_alumno_portal).execute()
                         st.session_state.alumno_portal_hash = hash_nuevo_alumno
-                        st.success("Contraseña creada. Ya puedes usar el portal.")
+                        st.session_state.alumno_mensaje_password = "¡Listo! Creaste tu contraseña y tu acceso quedó protegido."
+                        st.session_state.clear_portal_password += 1
                         st.rerun()
                     except Exception:
                         st.error("No se pudo guardar la contraseña. Inténtalo nuevamente o contacta al estudio.")
@@ -621,11 +729,15 @@ else:
                 st.session_state.clear_portal_alumno += 1
                 st.rerun()
 
-        with st.expander("Cambiar mi contraseña"):
-            with st.form("form_cambiar_clave_portal_alumno"):
-                clave_actual_alumno = st.text_input("Contraseña actual", type="password")
-                clave_nueva_alumno = st.text_input("Nueva contraseña (mínimo 12 caracteres)", type="password")
-                clave_nueva_confirmar_alumno = st.text_input("Confirmar nueva contraseña", type="password")
+        if "alumno_mensaje_password" in st.session_state:
+            st.success(st.session_state.pop("alumno_mensaje_password"))
+        if "clear_portal_password" not in st.session_state:
+            st.session_state.clear_portal_password = 0
+        with st.expander("Cambiar mi contraseña", expanded=False):
+            with st.form(f"form_cambiar_clave_portal_alumno_{st.session_state.clear_portal_password}"):
+                clave_actual_alumno = st.text_input("Contraseña actual", type="password", key=f"alumno_clave_actual_{st.session_state.clear_portal_password}")
+                clave_nueva_alumno = st.text_input("Nueva contraseña (mínimo 12 caracteres)", type="password", key=f"alumno_clave_nueva_{st.session_state.clear_portal_password}")
+                clave_nueva_confirmar_alumno = st.text_input("Confirmar nueva contraseña", type="password", key=f"alumno_clave_confirmar_{st.session_state.clear_portal_password}")
                 guardar_clave_alumno = st.form_submit_button("Actualizar contraseña", type="primary")
             if guardar_clave_alumno:
                 if len(clave_nueva_alumno) < 12:
@@ -657,7 +769,8 @@ else:
                                 "acceso_bloqueado_hasta": None,
                             }).eq("id", id_alumno_portal).execute()
                             st.session_state.alumno_portal_hash = hash_nuevo_alumno
-                            st.success("Contraseña actualizada correctamente.")
+                            st.session_state.alumno_mensaje_password = "Tu contraseña se actualizó correctamente."
+                            st.session_state.clear_portal_password += 1
                             st.rerun()
                         except Exception:
                             st.error("No se pudo actualizar la contraseña. Inténtalo nuevamente.")
@@ -680,11 +793,10 @@ else:
                     pass
                 alumno = supabase.table("alumnos").select("id,nombre,apellido").eq("telefono", telefono_alumno.strip()).execute()
                 if not alumno.data:
-                    st.error("Teléfono no registrado. Por favor, inscríbete con el administrador.")
+                    st.error("No se pudo cargar la información del alumno. Contacta al estudio.")
                     st.stop()
                 datos_alumno = alumno.data[0]
                 id_alumno_portal = datos_alumno["id"]
-                st.success(f"¡Hola, {datos_alumno.get('nombre', '')} {datos_alumno.get('apellido', '')}!")
                 if st.session_state.pop("aviso_portal", False):
                     st.success(st.session_state.pop("aviso_portal_mensaje", "La operación se completó correctamente."))
 
@@ -784,6 +896,7 @@ else:
                     ).replace(tzinfo=ZoneInfo("America/Lima"))
                     fecha_sesion = inicio_sesion.date()
                     if (inicio_sesion > ahora_portal
+                            and sesion_en_horario_operativo(sesion.get("hora_inicio"), sesion.get("hora_fin"))
                             and fecha_sesion.weekday() in dias_habilitados_portal
                             and fecha_sesion.isoformat() not in fechas_bloqueadas_portal):
                         sesion["_inicio_dt"] = inicio_sesion
@@ -812,12 +925,8 @@ else:
                     if ahora_portal <= limite_reserva_cancelacion(s["_inicio_dt"])
                 ]
                 sesiones_reserva_mostrables = [
-                    s for s in sesiones_futuras
-                    if int(s["id"]) in sesiones_reservadas_alumno
-                    or (
-                        ocupacion.get(s["id"], 0) < int(s.get("capacidad") or 0)
-                        and ahora_portal <= limite_reserva_cancelacion(s["_inicio_dt"])
-                    )
+                    s for s in sesiones_disponibles
+                    if int(s["id"]) not in sesiones_reservadas_alumno
                 ]
                 etiqueta_sesion = lambda s: (
                     f"{fecha_visible(s['fecha_clase'])} · {str(s['hora_inicio'])[:5]} · {s.get('tipo_servicio', 'Clase')} · "
@@ -845,19 +954,16 @@ else:
 
                             sesiones_con_plan = [s for s in sesiones_reserva_mostrables if int(s["id"]) in planes_por_sesion]
                             fechas_con_clases = sorted({sesion["_inicio_dt"].date() for sesion in sesiones_con_plan})
-                            st.caption("Elige un día en el calendario para ver sus clases disponibles. La lista conserva el detalle de horarios, sede, instructor y cupos.")
-                            fecha_reserva = st.date_input(
+                            st.caption("Solo se muestran días abiertos que tienen al menos una clase disponible para reservar.")
+                            fecha_reserva = selector_fecha_disponible(
                                 "Día de la clase",
-                                value=fechas_con_clases[0],
-                                min_value=ahora_portal.date(),
-                                max_value=limite_agenda,
-                                format="DD-MM-YYYY",
+                                fechas_con_clases,
                                 key=f"filtro_fecha_reserva_portal_{id_alumno_portal}_{st.session_state.clear_portal_reserva}",
                             )
-                            sesiones_del_dia = [s for s in sesiones_con_plan if s["_inicio_dt"].date() == fecha_reserva]
+                            sesiones_del_dia = [s for s in sesiones_con_plan if fecha_reserva and s["_inicio_dt"].date() == fecha_reserva]
                             st.caption(f"Hay horarios reservables en {len(fechas_con_clases)} días dentro del periodo disponible.")
                             if not sesiones_del_dia:
-                                st.info("No hay clases disponibles para este día. Elige otra fecha en el calendario.")
+                                st.info("No hay clases disponibles para este día. Elige otra fecha de la lista.")
                             sesion_portal_key = f"portal_sesion_seleccionada_{id_alumno_portal}"
                             columnas_clases = st.columns(2)
                             dias_semana_portal = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado", "Domingo"]
@@ -921,246 +1027,257 @@ else:
                     reservas_alumno = supabase.table("reservas").select(
                         "id,sesion_id,paquete_id,local_id,instructora_id,fecha_clase,hora_clase,tipo_servicio,estado,qr_token"
                     ).eq("alumno_id", id_alumno_portal).order("fecha_clase", desc=False).limit(200).execute().data or []
-                    st.divider()
-                    st.subheader("Mis clases")
-                    if reservas_alumno:
-                        ids_historial = {r.get("sesion_id") for r in reservas_alumno if r.get("sesion_id")}
-                        datos_sesion_historial = {}
-                        if ids_historial:
-                            filas_sesion_historial = supabase.table("sesiones_clase").select(
-                                "id,local_id,instructora_id,fecha_clase,hora_inicio,hora_fin,tipo_servicio,estado"
-                            ).in_("id", list(ids_historial)).execute().data or []
-                            datos_sesion_historial = {s["id"]: s for s in filas_sesion_historial}
-                        filas_historial = []
-                        ids_reservas_historial = []
-                        orden_filas_historial = []
-                        for reserva in reservas_alumno:
-                            sesion_hist = datos_sesion_historial.get(reserva.get("sesion_id"), {})
-                            fecha_hist = sesion_hist.get("fecha_clase") or reserva.get("fecha_clase", "")
-                            hora_hist = sesion_hist.get("hora_inicio") or reserva.get("hora_clase", "")
-                            filas_historial.append({
-                                "Fecha": fecha_visible(fecha_hist),
-                                "Hora": str(hora_hist)[:5] if hora_hist else "—",
-                                "Sede": nombre_local_portal.get(sesion_hist.get("local_id", reserva.get("local_id")), "—"),
-                                "Clase": sesion_hist.get("tipo_servicio") or reserva.get("tipo_servicio", "—"),
-                                "Instructora": nombre_instructora_portal.get(sesion_hist.get("instructora_id", reserva.get("instructora_id")), "—"),
-                                "Estado": reserva.get("estado", "—"),
-                                "Seleccionar": False,
-                            })
-                            ids_reservas_historial.append(reserva.get("id"))
-                            orden_filas_historial.append((str(fecha_hist or ""), str(hora_hist or ""), len(filas_historial) - 1))
-                        orden_indices_historial = [item[2] for item in sorted(orden_filas_historial)]
-                        filas_historial = [filas_historial[i] for i in orden_indices_historial]
-                        ids_reservas_historial = [ids_reservas_historial[i] for i in orden_indices_historial]
-                        selector_mis_clases_key = f"seleccionar_reserva_mis_clases_{id_alumno_portal}_{st.session_state.clear_portal_reserva}"
-                        anchos_columnas_historial = [1.0, 0.55, 1.0, 0.95, 1.05, 0.8, 0.52]
-                        encabezados_historial = ["Fecha", "Hora", "Sede", "Clase", "Instructor", "Estado", "Gestión"]
-                        campos_historial = ["Fecha", "Hora", "Sede", "Clase", "Instructora", "Estado"]
-                        columnas_encabezado = st.columns(anchos_columnas_historial)
-                        for columna, titulo in zip(columnas_encabezado, encabezados_historial):
-                            columna.markdown(
-                                f"<div style='font-size:.78rem;font-weight:700;white-space:nowrap;line-height:2rem'>{html.escape(titulo)}</div>",
-                                unsafe_allow_html=True,
-                            )
-
-                        ids_seleccionados = []
-                        for indice_historial, (fila_historial, id_reserva_historial) in enumerate(zip(filas_historial, ids_reservas_historial)):
-                            reserva_fila = next((r for r in reservas_alumno if str(r.get("id")) == str(id_reserva_historial)), {})
-                            sesion_fila = datos_sesion_historial.get(reserva_fila.get("sesion_id"), {})
-                            puede_gestionar = False
-                            motivo_no_gestion = ""
-                            if reserva_fila.get("estado") != "Programada":
-                                estado_reserva = str(reserva_fila.get("estado") or "sin estado").lower()
-                                motivo_no_gestion = f"La reserva está {estado_reserva}."
-                            elif sesion_fila.get("estado") != "Programada":
-                                motivo_no_gestion = "La clase ya no está programada."
-                            else:
-                                try:
-                                    inicio_fila = datetime.combine(
-                                        datetime.fromisoformat(str(sesion_fila["fecha_clase"])).date(),
-                                        datetime_time.fromisoformat(str(sesion_fila["hora_inicio"])),
-                                    ).replace(tzinfo=ZoneInfo("America/Lima"))
-                                    if inicio_fila <= ahora_portal:
-                                        motivo_no_gestion = "La clase ya pasó."
-                                    elif ahora_portal > limite_reserva_cancelacion(inicio_fila):
-                                        motivo_no_gestion = "Venció el plazo para cancelar o reagendar."
-                                    else:
-                                        puede_gestionar = True
-                                except (KeyError, TypeError, ValueError):
-                                    motivo_no_gestion = "No se pudo validar la fecha de la clase."
-
-                            clave_checkbox_gestion = f"{selector_mis_clases_key}_{id_reserva_historial}"
-                            if not puede_gestionar:
-                                st.session_state.pop(clave_checkbox_gestion, None)
-                            columnas_fila = st.columns(anchos_columnas_historial)
-                            for columna, campo in zip(columnas_fila[:6], campos_historial):
-                                valor_celda = str(fila_historial.get(campo, "—"))
+                    reservas_pasadas = [r for r in reservas_alumno if r.get("estado") in {"Asistencia", "Inasistencia"}]
+                    reservas_canceladas = [r for r in reservas_alumno if r.get("estado") == "Cancelada"]
+                    with st.expander("Clases con asistencia", expanded=False):
+                        if reservas_pasadas:
+                            st.dataframe(pd.DataFrame([{"Fecha": fecha_visible(r.get("fecha_clase")), "Hora": str(r.get("hora_clase") or "")[:5], "Clase": r.get("tipo_servicio") or "—", "Estado": r.get("estado")} for r in reservas_pasadas]), hide_index=True, use_container_width=True)
+                        else:
+                            st.caption("Aún no tienes clases con asistencia registrada.")
+                    with st.expander("Clases canceladas", expanded=False):
+                        if reservas_canceladas:
+                            st.dataframe(pd.DataFrame([{"Fecha": fecha_visible(r.get("fecha_clase")), "Hora": str(r.get("hora_clase") or "")[:5], "Clase": r.get("tipo_servicio") or "—", "Estado": r.get("estado")} for r in reservas_canceladas]), hide_index=True, use_container_width=True)
+                        else:
+                            st.caption("No tienes clases canceladas.")
+                    reservas_alumno = [r for r in reservas_alumno if r.get("estado") == "Programada"]
+                    with st.expander("Clases programadas", expanded=True):
+                        st.divider()
+                        st.subheader("Mis clases")
+                        if reservas_alumno:
+                            ids_historial = {r.get("sesion_id") for r in reservas_alumno if r.get("sesion_id")}
+                            datos_sesion_historial = {}
+                            if ids_historial:
+                                filas_sesion_historial = supabase.table("sesiones_clase").select(
+                                    "id,local_id,instructora_id,fecha_clase,hora_inicio,hora_fin,tipo_servicio,estado"
+                                ).in_("id", list(ids_historial)).execute().data or []
+                                datos_sesion_historial = {s["id"]: s for s in filas_sesion_historial}
+                            filas_historial = []
+                            ids_reservas_historial = []
+                            orden_filas_historial = []
+                            for reserva in reservas_alumno:
+                                sesion_hist = datos_sesion_historial.get(reserva.get("sesion_id"), {})
+                                fecha_hist = sesion_hist.get("fecha_clase") or reserva.get("fecha_clase", "")
+                                hora_hist = sesion_hist.get("hora_inicio") or reserva.get("hora_clase", "")
+                                filas_historial.append({
+                                    "Fecha": fecha_visible(fecha_hist),
+                                    "Hora": str(hora_hist)[:5] if hora_hist else "—",
+                                    "Sede": nombre_local_portal.get(sesion_hist.get("local_id", reserva.get("local_id")), "—"),
+                                    "Clase": sesion_hist.get("tipo_servicio") or reserva.get("tipo_servicio", "—"),
+                                    "Instructora": nombre_instructora_portal.get(sesion_hist.get("instructora_id", reserva.get("instructora_id")), "—"),
+                                    "Estado": reserva.get("estado", "—"),
+                                    "Seleccionar": False,
+                                })
+                                ids_reservas_historial.append(reserva.get("id"))
+                                orden_filas_historial.append((str(fecha_hist or ""), str(hora_hist or ""), len(filas_historial) - 1))
+                            orden_indices_historial = [item[2] for item in sorted(orden_filas_historial)]
+                            filas_historial = [filas_historial[i] for i in orden_indices_historial]
+                            ids_reservas_historial = [ids_reservas_historial[i] for i in orden_indices_historial]
+                            selector_mis_clases_key = f"seleccionar_reserva_mis_clases_{id_alumno_portal}_{st.session_state.clear_portal_reserva}"
+                            anchos_columnas_historial = [1.0, 0.55, 1.0, 0.95, 1.05, 0.8, 0.52]
+                            encabezados_historial = ["Fecha", "Hora", "Sede", "Clase", "Instructor", "Estado", "Gestión"]
+                            campos_historial = ["Fecha", "Hora", "Sede", "Clase", "Instructora", "Estado"]
+                            columnas_encabezado = st.columns(anchos_columnas_historial)
+                            for columna, titulo in zip(columnas_encabezado, encabezados_historial):
                                 columna.markdown(
-                                    f"<div title='{html.escape(valor_celda, quote=True)}' style='font-size:.78rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;line-height:2.35rem'>{html.escape(valor_celda)}</div>",
+                                    f"<div style='font-size:.78rem;font-weight:700;white-space:nowrap;line-height:2rem'>{html.escape(titulo)}</div>",
                                     unsafe_allow_html=True,
                                 )
-                            marcado = columnas_fila[6].checkbox(
-                                "Gestionar",
-                                key=clave_checkbox_gestion,
-                                disabled=not puede_gestionar,
-                                label_visibility="collapsed",
-                                help=motivo_no_gestion or "Marca para cancelar o reagendar esta reserva.",
+
+                            ids_seleccionados = []
+                            for indice_historial, (fila_historial, id_reserva_historial) in enumerate(zip(filas_historial, ids_reservas_historial)):
+                                reserva_fila = next((r for r in reservas_alumno if str(r.get("id")) == str(id_reserva_historial)), {})
+                                sesion_fila = datos_sesion_historial.get(reserva_fila.get("sesion_id"), {})
+                                puede_gestionar = False
+                                motivo_no_gestion = ""
+                                if reserva_fila.get("estado") != "Programada":
+                                    estado_reserva = str(reserva_fila.get("estado") or "sin estado").lower()
+                                    motivo_no_gestion = f"La reserva está {estado_reserva}."
+                                elif sesion_fila.get("estado") != "Programada":
+                                    motivo_no_gestion = "La clase ya no está programada."
+                                else:
+                                    try:
+                                        inicio_fila = datetime.combine(
+                                            datetime.fromisoformat(str(sesion_fila["fecha_clase"])).date(),
+                                            datetime_time.fromisoformat(str(sesion_fila["hora_inicio"])),
+                                        ).replace(tzinfo=ZoneInfo("America/Lima"))
+                                        if inicio_fila <= ahora_portal:
+                                            motivo_no_gestion = "La clase ya pasó."
+                                        elif ahora_portal > limite_reserva_cancelacion(inicio_fila):
+                                            motivo_no_gestion = "Venció el plazo para cancelar o reagendar."
+                                        else:
+                                            puede_gestionar = True
+                                    except (KeyError, TypeError, ValueError):
+                                        motivo_no_gestion = "No se pudo validar la fecha de la clase."
+
+                                clave_checkbox_gestion = f"{selector_mis_clases_key}_{id_reserva_historial}"
+                                if not puede_gestionar:
+                                    st.session_state.pop(clave_checkbox_gestion, None)
+                                columnas_fila = st.columns(anchos_columnas_historial)
+                                for columna, campo in zip(columnas_fila[:6], campos_historial):
+                                    valor_celda = str(fila_historial.get(campo, "—"))
+                                    columna.markdown(
+                                        f"<div title='{html.escape(valor_celda, quote=True)}' style='font-size:.78rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;line-height:2.35rem'>{html.escape(valor_celda)}</div>",
+                                        unsafe_allow_html=True,
+                                    )
+                                marcado = columnas_fila[6].checkbox(
+                                    "Gestionar",
+                                    key=clave_checkbox_gestion,
+                                    disabled=not puede_gestionar,
+                                    label_visibility="collapsed",
+                                    help=motivo_no_gestion or "Marca para cancelar o reagendar esta reserva.",
+                                )
+                                if marcado:
+                                    ids_seleccionados.append(id_reserva_historial)
+
+                            id_reserva_seleccionada = ids_seleccionados[0] if len(ids_seleccionados) == 1 else None
+                            if len(ids_seleccionados) > 1:
+                                st.warning("Marca solo una reserva a la vez para ver sus opciones.")
+                            proximas_reservas = [
+                                r for r in reservas_alumno
+                                if r.get("estado") == "Programada" and r.get("sesion_id") in datos_sesion_historial
+                                and datos_sesion_historial[r["sesion_id"]].get("fecha_clase")
+                            ]
+                            proximas_reservas = [r for r in proximas_reservas if datetime.combine(
+                                datetime.fromisoformat(str(datos_sesion_historial[r["sesion_id"]]["fecha_clase"])).date(),
+                                datetime_time.fromisoformat(str(datos_sesion_historial[r["sesion_id"]]["hora_inicio"]))
+                            ).replace(tzinfo=ZoneInfo("America/Lima")) > ahora_portal]
+                            reservas_cancelables = []
+                            for reserva_cancelable in proximas_reservas:
+                                sesion_cancelable = datos_sesion_historial[reserva_cancelable["sesion_id"]]
+                                inicio_cancelable = datetime.combine(
+                                    datetime.fromisoformat(str(sesion_cancelable["fecha_clase"])).date(),
+                                    datetime_time.fromisoformat(str(sesion_cancelable["hora_inicio"]))
+                                ).replace(tzinfo=ZoneInfo("America/Lima"))
+                                limite_cancelacion = limite_reserva_cancelacion(inicio_cancelable)
+                                reserva_cancelable["_limite_cancelacion"] = limite_cancelacion
+                                if ahora_portal <= limite_cancelacion:
+                                    reservas_cancelables.append(reserva_cancelable)
+                            reserva_seleccionada_cancelable = next(
+                                (r for r in reservas_cancelables if str(r.get("id")) == str(id_reserva_seleccionada)),
+                                None,
                             )
-                            if marcado:
-                                ids_seleccionados.append(id_reserva_historial)
+                            if reserva_seleccionada_cancelable:
+                                pestaña_cancelar, pestaña_reagendar = st.tabs(
+                                    ["Cancelar una Reserva", "Reagendar una Reserva"],
+                                    key=f"tabs_gestion_reserva_{id_alumno_portal}_{id_reserva_seleccionada}_{st.session_state.clear_portal_reserva}",
+                                )
+                                sesion_original = datos_sesion_historial[reserva_seleccionada_cancelable["sesion_id"]]
+                                fecha_limite_reserva = reserva_seleccionada_cancelable["_limite_cancelacion"].strftime("%d-%m-%Y %H:%M")
 
-                        id_reserva_seleccionada = ids_seleccionados[0] if len(ids_seleccionados) == 1 else None
-                        if len(ids_seleccionados) > 1:
-                            st.warning("Marca solo una reserva a la vez para ver sus opciones.")
-                        proximas_reservas = [
-                            r for r in reservas_alumno
-                            if r.get("estado") == "Programada" and r.get("sesion_id") in datos_sesion_historial
-                            and datos_sesion_historial[r["sesion_id"]].get("fecha_clase")
-                        ]
-                        proximas_reservas = [r for r in proximas_reservas if datetime.combine(
-                            datetime.fromisoformat(str(datos_sesion_historial[r["sesion_id"]]["fecha_clase"])).date(),
-                            datetime_time.fromisoformat(str(datos_sesion_historial[r["sesion_id"]]["hora_inicio"]))
-                        ).replace(tzinfo=ZoneInfo("America/Lima")) > ahora_portal]
-                        reservas_cancelables = []
-                        for reserva_cancelable in proximas_reservas:
-                            sesion_cancelable = datos_sesion_historial[reserva_cancelable["sesion_id"]]
-                            inicio_cancelable = datetime.combine(
-                                datetime.fromisoformat(str(sesion_cancelable["fecha_clase"])).date(),
-                                datetime_time.fromisoformat(str(sesion_cancelable["hora_inicio"]))
-                            ).replace(tzinfo=ZoneInfo("America/Lima"))
-                            limite_cancelacion = limite_reserva_cancelacion(inicio_cancelable)
-                            reserva_cancelable["_limite_cancelacion"] = limite_cancelacion
-                            if ahora_portal <= limite_cancelacion:
-                                reservas_cancelables.append(reserva_cancelable)
-                        reserva_seleccionada_cancelable = next(
-                            (r for r in reservas_cancelables if str(r.get("id")) == str(id_reserva_seleccionada)),
-                            None,
-                        )
-                        if reserva_seleccionada_cancelable:
-                            pestaña_cancelar, pestaña_reagendar = st.tabs(
-                                ["Cancelar una Reserva", "Reagendar una Reserva"],
-                                key=f"tabs_gestion_reserva_{id_alumno_portal}_{id_reserva_seleccionada}_{st.session_state.clear_portal_reserva}",
-                            )
-                            sesion_original = datos_sesion_historial[reserva_seleccionada_cancelable["sesion_id"]]
-                            fecha_limite_reserva = reserva_seleccionada_cancelable["_limite_cancelacion"].strftime("%d-%m-%Y %H:%M")
-
-                            with pestaña_cancelar:
-                                st.caption("La clase se devolverá a tu saldo si cancelas antes del plazo indicado.")
-                                columnas_cancelacion = st.columns(2)
-                                dias_semana_cancelacion = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado", "Domingo"]
-                                fecha_clase_cancelar = datetime.fromisoformat(str(sesion_original["fecha_clase"])).date()
-                                with columnas_cancelacion[0]:
-                                    with st.container(border=True):
-                                        st.markdown(f"### {dias_semana_cancelacion[fecha_clase_cancelar.weekday()]}, {fecha_clase_cancelar.strftime('%d-%m-%Y')}")
-                                        st.markdown(f"**{str(sesion_original.get('hora_inicio', ''))[:5]}–{str(sesion_original.get('hora_fin', ''))[:5]} · {sesion_original.get('tipo_servicio', 'Clase')}**")
-                                        st.write(f"📍 {nombre_local_portal.get(sesion_original.get('local_id'), 'Sede')} · 👤 {nombre_instructora_portal.get(sesion_original.get('instructora_id'), 'Instructor')}")
-                                        st.caption(f"Puedes cancelar hasta el {fecha_limite_reserva} (hora de Perú).")
-                                        confirmar_cancelacion = st.checkbox(
-                                            "Confirmo que deseo cancelar esta reserva y devolver la clase a mi saldo.",
-                                            key=f"confirmar_cancelacion_portal_{id_alumno_portal}_{reserva_seleccionada_cancelable['id']}_{st.session_state.clear_portal_reserva}",
-                                        )
-                                        if st.button(
-                                            "Cancelar reserva",
-                                            key=f"cancelar_reserva_portal_{id_alumno_portal}_{reserva_seleccionada_cancelable['id']}_{st.session_state.clear_portal_reserva}",
-                                            type="primary",
-                                            use_container_width=True,
-                                        ):
-                                            if not confirmar_cancelacion:
-                                                st.error("Marca la confirmación para cancelar la reserva.")
-                                            else:
-                                                try:
-                                                    supabase.rpc("cancelar_reserva_portal", {
-                                                        "p_telefono": telefono_alumno.strip(),
-                                                        "p_reserva_id": int(reserva_seleccionada_cancelable["id"]),
-                                                    }).execute()
-                                                    st.session_state["aviso_portal_mensaje"] = "Reserva cancelada. La clase se devolvió al saldo de tu plan."
-                                                    st.session_state["aviso_portal"] = True
-                                                    st.session_state.clear_portal_reserva += 1
-                                                    st.rerun()
-                                                except Exception as error_cancelacion:
-                                                    st.error(f"No se pudo cancelar la reserva: {error_cancelacion}")
-
-                            with pestaña_reagendar:
-                                st.caption("Elige otro horario disponible. Se conserva la clase ya descontada de tu plan y el plazo se valida según Configuración.")
-                                try:
-                                    paquete_reserva = (supabase.table("paquetes")
-                                        .select("id,modalidad_plan,local_id_fijo")
-                                        .eq("id", reserva_seleccionada_cancelable.get("paquete_id"))
-                                        .eq("alumno_id", id_alumno_portal)
-                                        .limit(1).execute().data or [])
-                                    paquete_reagenda = paquete_reserva[0] if paquete_reserva else None
-                                    sesiones_reagendables = [
-                                        s for s in sesiones_disponibles
-                                        if int(s["id"]) != int(reserva_seleccionada_cancelable.get("sesion_id") or 0)
-                                        and int(s["id"]) not in sesiones_reservadas_alumno
-                                        and paquete_reagenda
-                                        and (paquete_reagenda.get("modalidad_plan") != "Fixed"
-                                             or paquete_reagenda.get("local_id_fijo") == s.get("local_id"))
-                                    ]
-                                    if not sesiones_reagendables:
-                                        st.info("No hay otros horarios disponibles que cumplan las reglas de tu plan y de Configuración.")
-                                    else:
-                                        fechas_reagenda = sorted({s["_inicio_dt"].date() for s in sesiones_reagendables})
-                                        dias_semana_reagenda = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado", "Domingo"]
-                                        fecha_reagenda_key = f"fecha_reagenda_portal_{id_alumno_portal}_{reserva_seleccionada_cancelable['id']}_{st.session_state.clear_portal_reserva}"
-                                        fecha_reagenda = st.date_input(
-                                            "Día de la nueva clase",
-                                            value=fechas_reagenda[0],
-                                            min_value=ahora_portal.date(),
-                                            max_value=limite_agenda,
-                                            format="DD-MM-YYYY",
-                                            key=fecha_reagenda_key,
-                                        )
-                                        sesiones_reagenda_dia = [s for s in sesiones_reagendables if s["_inicio_dt"].date() == fecha_reagenda]
-                                        sesion_reagenda_key = f"sesion_reagenda_portal_{id_alumno_portal}_{reserva_seleccionada_cancelable['id']}"
-                                        columnas_reagenda = st.columns(2)
-                                        for indice_reagenda, sesion_nueva in enumerate(sesiones_reagenda_dia):
-                                            seleccion_reagenda = st.session_state.get(sesion_reagenda_key) == int(sesion_nueva["id"])
-                                            cupos_reagenda = int(sesion_nueva.get("capacidad") or 0) - ocupacion.get(sesion_nueva["id"], 0)
-                                            with columnas_reagenda[indice_reagenda % 2]:
-                                                with st.container(border=True):
-                                                    st.markdown(f"### {dias_semana_reagenda[sesion_nueva['_inicio_dt'].weekday()]}, {sesion_nueva['_inicio_dt'].strftime('%d-%m-%Y')}")
-                                                    st.markdown(f"**{str(sesion_nueva['hora_inicio'])[:5]}–{str(sesion_nueva['hora_fin'])[:5]} · {sesion_nueva.get('tipo_servicio', 'Clase')}**")
-                                                    st.write(f"📍 {nombre_local_portal.get(sesion_nueva.get('local_id'), 'Sede')} · 👤 {nombre_instructora_portal.get(sesion_nueva.get('instructora_id'), 'Instructor')}")
-                                                    st.caption(f"{cupos_reagenda} {'cupos disponibles' if cupos_reagenda != 1 else 'cupo disponible'} · Reagenda hasta {limite_reserva_cancelacion(sesion_nueva['_inicio_dt']).strftime('%d-%m-%Y a las %H:%M')}")
-                                                    if st.button(
-                                                        "Horario elegido ✓" if seleccion_reagenda else "Elegir este horario",
-                                                        key=f"elegir_reagenda_{id_alumno_portal}_{reserva_seleccionada_cancelable['id']}_{sesion_nueva['id']}_{st.session_state.clear_portal_reserva}",
-                                                        type="primary" if seleccion_reagenda else "secondary",
-                                                        use_container_width=True,
-                                                    ):
-                                                        st.session_state[sesion_reagenda_key] = int(sesion_nueva["id"])
-                                                        st.rerun()
-                                        if not sesiones_reagenda_dia:
-                                            st.info("No hay horarios disponibles para este día. Elige otra fecha en el calendario.")
-
-                                        sesion_nueva_seleccionada = next(
-                                            (s for s in sesiones_reagenda_dia if int(s["id"]) == st.session_state.get(sesion_reagenda_key)),
-                                            None,
-                                        )
-                                        if sesion_nueva_seleccionada:
-                                            st.info(f"Nueva clase: {etiqueta_sesion(sesion_nueva_seleccionada)}")
+                                with pestaña_cancelar:
+                                    st.caption("La clase se devolverá a tu saldo si cancelas antes del plazo indicado.")
+                                    columnas_cancelacion = st.columns(2)
+                                    dias_semana_cancelacion = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado", "Domingo"]
+                                    fecha_clase_cancelar = datetime.fromisoformat(str(sesion_original["fecha_clase"])).date()
+                                    with columnas_cancelacion[0]:
+                                        with st.container(border=True):
+                                            st.markdown(f"### {dias_semana_cancelacion[fecha_clase_cancelar.weekday()]}, {fecha_clase_cancelar.strftime('%d-%m-%Y')}")
+                                            st.markdown(f"**{str(sesion_original.get('hora_inicio', ''))[:5]}–{str(sesion_original.get('hora_fin', ''))[:5]} · {sesion_original.get('tipo_servicio', 'Clase')}**")
+                                            st.write(f"📍 {nombre_local_portal.get(sesion_original.get('local_id'), 'Sede')} · 👤 {nombre_instructora_portal.get(sesion_original.get('instructora_id'), 'Instructor')}")
+                                            st.caption(f"Puedes cancelar hasta el {fecha_limite_reserva} (hora de Perú).")
+                                            confirmar_cancelacion = st.checkbox(
+                                                "Confirmo que deseo cancelar esta reserva y devolver la clase a mi saldo.",
+                                                key=f"confirmar_cancelacion_portal_{id_alumno_portal}_{reserva_seleccionada_cancelable['id']}_{st.session_state.clear_portal_reserva}",
+                                            )
                                             if st.button(
-                                                "Confirmar cambio de reserva",
-                                                key=f"confirmar_reagenda_{id_alumno_portal}_{reserva_seleccionada_cancelable['id']}_{st.session_state.clear_portal_reserva}",
+                                                "Cancelar reserva",
+                                                key=f"cancelar_reserva_portal_{id_alumno_portal}_{reserva_seleccionada_cancelable['id']}_{st.session_state.clear_portal_reserva}",
                                                 type="primary",
+                                                use_container_width=True,
                                             ):
-                                                try:
-                                                    supabase.rpc("reagendar_clase_portal", {
-                                                        "p_telefono": telefono_alumno.strip(),
-                                                        "p_reserva_id": int(reserva_seleccionada_cancelable["id"]),
-                                                        "p_nueva_sesion_id": int(sesion_nueva_seleccionada["id"]),
-                                                    }).execute()
-                                                    st.session_state["aviso_portal_mensaje"] = "Reserva reagendada. La clase de tu plan se conservó y ya puedes usar el nuevo QR."
-                                                    st.session_state["aviso_portal"] = True
-                                                    st.session_state.clear_portal_reserva += 1
-                                                    st.rerun()
-                                                except Exception as error_reagenda:
-                                                    st.error(f"No se pudo reagendar: {error_reagenda}")
-                                except Exception as error_carga_reagenda:
-                                    st.error(f"No se pudieron cargar los horarios para reagendar: {error_carga_reagenda}")
-                    else:
-                        st.info("Aún no tienes clases reservadas.")
+                                                if not confirmar_cancelacion:
+                                                    st.error("Marca la confirmación para cancelar la reserva.")
+                                                else:
+                                                    try:
+                                                        supabase.rpc("cancelar_reserva_portal", {
+                                                            "p_telefono": telefono_alumno.strip(),
+                                                            "p_reserva_id": int(reserva_seleccionada_cancelable["id"]),
+                                                        }).execute()
+                                                        st.session_state["aviso_portal_mensaje"] = "Reserva cancelada. La clase se devolvió al saldo de tu plan."
+                                                        st.session_state["aviso_portal"] = True
+                                                        st.session_state.clear_portal_reserva += 1
+                                                        st.rerun()
+                                                    except Exception as error_cancelacion:
+                                                        st.error(f"No se pudo cancelar la reserva: {error_cancelacion}")
+
+                                with pestaña_reagendar:
+                                    st.caption("Elige otro horario disponible. Se conserva la clase ya descontada de tu plan y el plazo se valida según Configuración.")
+                                    try:
+                                        paquete_reserva = (supabase.table("paquetes")
+                                            .select("id,modalidad_plan,local_id_fijo")
+                                            .eq("id", reserva_seleccionada_cancelable.get("paquete_id"))
+                                            .eq("alumno_id", id_alumno_portal)
+                                            .limit(1).execute().data or [])
+                                        paquete_reagenda = paquete_reserva[0] if paquete_reserva else None
+                                        sesiones_reagendables = [
+                                            s for s in sesiones_disponibles
+                                            if int(s["id"]) != int(reserva_seleccionada_cancelable.get("sesion_id") or 0)
+                                            and int(s["id"]) not in sesiones_reservadas_alumno
+                                            and paquete_reagenda
+                                            and (paquete_reagenda.get("modalidad_plan") != "Fixed"
+                                                 or paquete_reagenda.get("local_id_fijo") == s.get("local_id"))
+                                        ]
+                                        if not sesiones_reagendables:
+                                            st.info("No hay otros horarios disponibles que cumplan las reglas de tu plan y de Configuración.")
+                                        else:
+                                            fechas_reagenda = sorted({s["_inicio_dt"].date() for s in sesiones_reagendables})
+                                            dias_semana_reagenda = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado", "Domingo"]
+                                            fecha_reagenda_key = f"fecha_reagenda_portal_{id_alumno_portal}_{reserva_seleccionada_cancelable['id']}_{st.session_state.clear_portal_reserva}"
+                                            fecha_reagenda = selector_fecha_disponible(
+                                                "Día de la nueva clase",
+                                                fechas_reagenda,
+                                                key=fecha_reagenda_key,
+                                            )
+                                            sesiones_reagenda_dia = [s for s in sesiones_reagendables if s["_inicio_dt"].date() == fecha_reagenda]
+                                            sesion_reagenda_key = f"sesion_reagenda_portal_{id_alumno_portal}_{reserva_seleccionada_cancelable['id']}"
+                                            columnas_reagenda = st.columns(2)
+                                            for indice_reagenda, sesion_nueva in enumerate(sesiones_reagenda_dia):
+                                                seleccion_reagenda = st.session_state.get(sesion_reagenda_key) == int(sesion_nueva["id"])
+                                                cupos_reagenda = int(sesion_nueva.get("capacidad") or 0) - ocupacion.get(sesion_nueva["id"], 0)
+                                                with columnas_reagenda[indice_reagenda % 2]:
+                                                    with st.container(border=True):
+                                                        st.markdown(f"### {dias_semana_reagenda[sesion_nueva['_inicio_dt'].weekday()]}, {sesion_nueva['_inicio_dt'].strftime('%d-%m-%Y')}")
+                                                        st.markdown(f"**{str(sesion_nueva['hora_inicio'])[:5]}–{str(sesion_nueva['hora_fin'])[:5]} · {sesion_nueva.get('tipo_servicio', 'Clase')}**")
+                                                        st.write(f"📍 {nombre_local_portal.get(sesion_nueva.get('local_id'), 'Sede')} · 👤 {nombre_instructora_portal.get(sesion_nueva.get('instructora_id'), 'Instructor')}")
+                                                        st.caption(f"{cupos_reagenda} {'cupos disponibles' if cupos_reagenda != 1 else 'cupo disponible'} · Reagenda hasta {limite_reserva_cancelacion(sesion_nueva['_inicio_dt']).strftime('%d-%m-%Y a las %H:%M')}")
+                                                        if st.button(
+                                                            "Horario elegido ✓" if seleccion_reagenda else "Elegir este horario",
+                                                            key=f"elegir_reagenda_{id_alumno_portal}_{reserva_seleccionada_cancelable['id']}_{sesion_nueva['id']}_{st.session_state.clear_portal_reserva}",
+                                                            type="primary" if seleccion_reagenda else "secondary",
+                                                            use_container_width=True,
+                                                        ):
+                                                            st.session_state[sesion_reagenda_key] = int(sesion_nueva["id"])
+                                                            st.rerun()
+                                            if not sesiones_reagenda_dia:
+                                                st.info("No hay horarios disponibles para este día. Elige otra fecha en el calendario.")
+
+                                            sesion_nueva_seleccionada = next(
+                                                (s for s in sesiones_reagenda_dia if int(s["id"]) == st.session_state.get(sesion_reagenda_key)),
+                                                None,
+                                            )
+                                            if sesion_nueva_seleccionada:
+                                                st.info(f"Nueva clase: {etiqueta_sesion(sesion_nueva_seleccionada)}")
+                                                if st.button(
+                                                    "Confirmar cambio de reserva",
+                                                    key=f"confirmar_reagenda_{id_alumno_portal}_{reserva_seleccionada_cancelable['id']}_{st.session_state.clear_portal_reserva}",
+                                                    type="primary",
+                                                ):
+                                                    try:
+                                                        supabase.rpc("reagendar_clase_portal", {
+                                                            "p_telefono": telefono_alumno.strip(),
+                                                            "p_reserva_id": int(reserva_seleccionada_cancelable["id"]),
+                                                            "p_nueva_sesion_id": int(sesion_nueva_seleccionada["id"]),
+                                                        }).execute()
+                                                        st.session_state["aviso_portal_mensaje"] = "Reserva reagendada. La clase de tu plan se conservó y ya puedes usar el nuevo QR."
+                                                        st.session_state["aviso_portal"] = True
+                                                        st.session_state.clear_portal_reserva += 1
+                                                        st.rerun()
+                                                    except Exception as error_reagenda:
+                                                        st.error(f"No se pudo reagendar: {error_reagenda}")
+                                    except Exception as error_carga_reagenda:
+                                        st.error(f"No se pudieron cargar los horarios para reagendar: {error_carga_reagenda}")
+                        else:
+                            st.info("Aún no tienes clases reservadas.")
             except Exception as e:
                 st.error(f"Error al consultar el portal: {e}")
 
@@ -1179,16 +1296,26 @@ else:
             if entrar_instructor:
                 try:
                     cuenta_instructor = (supabase.table("usuarios_instructores")
-                        .select("id,usuario,contrasena_encriptada,instructora_id,activo,instructoras(nombre,activo)")
+                        .select("id,usuario,contrasena_encriptada,instructora_id,activo,debe_cambiar_contrasena,acceso_bloqueado_hasta,instructoras(nombre,activo)")
                         .eq("usuario", usuario_instructor_login.strip()).eq("activo", True).limit(1).execute().data or [])
                     cuenta = cuenta_instructor[0] if cuenta_instructor else None
                     persona = (cuenta or {}).get("instructoras") or {}
                     coincide_instructor = False
                     if cuenta and persona.get("activo", True):
+                        bloqueo_inst = convertir_a_datetime_utc(cuenta.get("acceso_bloqueado_hasta"))
+                        if bloqueo_inst and bloqueo_inst > datetime.now(ZoneInfo("UTC")):
+                            st.error("Acceso temporalmente bloqueado por intentos fallidos. Intenta más tarde o contacta a la administración.")
+                            st.stop()
                         coincide_instructor, _ = verificar_contrasena(clave_instructor_login, cuenta["contrasena_encriptada"])
+                        resultado_intento_inst = supabase.rpc("registrar_intento_login_instructor", {"p_usuario_id": int(cuenta["id"]), "p_login_correcto": bool(coincide_instructor)}).execute().data or []
+                        coincide_instructor = coincide_instructor and bool(resultado_intento_inst and resultado_intento_inst[0].get("acceso_permitido"))
                     if coincide_instructor:
                         st.session_state.instructor_sesion_id = cuenta["instructora_id"]
                         st.session_state.instructor_sesion_nombre = persona.get("nombre", cuenta["usuario"])
+                        st.session_state.instructor_cuenta_id = cuenta["id"]
+                        st.session_state.instructor_hash_sesion = cuenta["contrasena_encriptada"]
+                        st.session_state.instructor_ultima_actividad = datetime.now(ZoneInfo("UTC")).timestamp()
+                        st.session_state.instructor_debe_cambiar_clave = bool(cuenta.get("debe_cambiar_contrasena", False))
                         st.rerun()
                     else:
                         st.error("Usuario o contraseña incorrectos, o la cuenta está inactiva. Consulta con la administración.")
@@ -1196,11 +1323,76 @@ else:
                     st.error(f"No se pudo validar el acceso. Ejecuta la migración de cuentas de instructores en Supabase. Detalle: {error_login_instructor}")
         else:
             id_instructor_portal = st.session_state.instructor_sesion_id
+            if datetime.now(ZoneInfo("UTC")).timestamp() - st.session_state.get("instructor_ultima_actividad", 0) > 1800:
+                st.session_state.instructor_sesion_id = None
+                st.session_state.instructor_sesion_nombre = ""
+                st.session_state.instructor_cuenta_id = None
+                st.session_state.pop("instructor_hash_sesion", None)
+                st.warning("Tu sesión expiró por inactividad. Ingresa nuevamente.")
+                st.rerun()
+            st.session_state.instructor_ultima_actividad = datetime.now(ZoneInfo("UTC")).timestamp()
             if st.sidebar.button("Cerrar sesión de instructor", key="salir_sesion_instructor", type="primary"):
                 st.session_state.instructor_sesion_id = None
                 st.session_state.instructor_sesion_nombre = ""
+                st.session_state.instructor_cuenta_id = None
+                st.session_state.pop("instructor_hash_sesion", None)
+                st.session_state.pop("instructor_ultima_actividad", None)
+                st.session_state.instructor_debe_cambiar_clave = False
                 st.rerun()
+            aviso_clave_instructor = st.session_state.pop("instructor_clave_flash", None)
+            if aviso_clave_instructor:
+                st.success(aviso_clave_instructor)
             st.success(f"Hola, {st.session_state.instructor_sesion_nombre}.")
+            cuenta_sesion_inst = (supabase.table("usuarios_instructores").select("id,contrasena_encriptada,activo,debe_cambiar_contrasena")
+                                  .eq("id", st.session_state.instructor_cuenta_id).eq("instructora_id", id_instructor_portal).limit(1).execute().data or [])
+            if (not cuenta_sesion_inst or not cuenta_sesion_inst[0].get("activo", False)
+                    or not hmac.compare_digest(str(cuenta_sesion_inst[0].get("contrasena_encriptada") or ""), str(st.session_state.get("instructor_hash_sesion", "")))):
+                st.session_state.instructor_sesion_id = None
+                st.session_state.instructor_sesion_nombre = ""
+                st.session_state.instructor_cuenta_id = None
+                st.rerun()
+            debe_cambiar_inst = bool(cuenta_sesion_inst[0].get("debe_cambiar_contrasena", False))
+            if debe_cambiar_inst:
+                st.warning("Por seguridad, crea una contraseña personal antes de continuar.")
+                with st.form(f"form_clave_temporal_instructor_{st.session_state.clear_clave_instructor}"):
+                    clave_temp_inst = st.text_input("Nueva contraseña (mínimo 12 caracteres)", type="password")
+                    clave_temp_confirm_inst = st.text_input("Confirma tu nueva contraseña", type="password")
+                    guardar_clave_temp_inst = st.form_submit_button("Guardar contraseña", type="primary")
+                if guardar_clave_temp_inst:
+                    if len(clave_temp_inst) < 12:
+                        st.error("La contraseña debe tener al menos 12 caracteres.")
+                    elif clave_temp_inst != clave_temp_confirm_inst:
+                        st.error("Las contraseñas no coinciden.")
+                    else:
+                        hash_temporal_inst = encriptar_contrasena(clave_temp_inst)
+                        supabase.table("usuarios_instructores").update({"contrasena_encriptada": hash_temporal_inst, "debe_cambiar_contrasena": False, "intentos_login_fallidos": 0, "acceso_bloqueado_hasta": None}).eq("id", st.session_state.instructor_cuenta_id).execute()
+                        st.session_state.instructor_hash_sesion = hash_temporal_inst
+                        st.session_state.instructor_clave_flash = "Tu contraseña se actualizó correctamente. Ya puedes usar el portal."
+                        st.session_state.instructor_debe_cambiar_clave = False
+                        st.session_state.clear_clave_instructor += 1
+                        st.rerun()
+                st.stop()
+            with st.expander("Cambiar mi contraseña", expanded=False):
+                with st.form(f"form_cambiar_clave_instructor_{st.session_state.clear_clave_instructor}"):
+                    clave_actual_inst = st.text_input("Contraseña actual", type="password")
+                    clave_nueva_inst = st.text_input("Nueva contraseña (mínimo 12 caracteres)", type="password")
+                    clave_confirm_inst = st.text_input("Confirma la nueva contraseña", type="password")
+                    guardar_clave_inst = st.form_submit_button("Actualizar contraseña", type="primary")
+                if guardar_clave_inst:
+                    coincide_actual_inst, _ = verificar_contrasena(clave_actual_inst, cuenta_sesion_inst[0]["contrasena_encriptada"])
+                    if not coincide_actual_inst:
+                        st.error("La contraseña actual no coincide.")
+                    elif len(clave_nueva_inst) < 12:
+                        st.error("La nueva contraseña debe tener al menos 12 caracteres.")
+                    elif clave_nueva_inst != clave_confirm_inst:
+                        st.error("Las contraseñas nuevas no coinciden.")
+                    else:
+                        hash_nuevo_inst = encriptar_contrasena(clave_nueva_inst)
+                        supabase.table("usuarios_instructores").update({"contrasena_encriptada": hash_nuevo_inst}).eq("id", st.session_state.instructor_cuenta_id).execute()
+                        st.session_state.instructor_hash_sesion = hash_nuevo_inst
+                        st.session_state.instructor_clave_flash = "Tu contraseña se actualizó correctamente."
+                        st.session_state.clear_clave_instructor += 1
+                        st.rerun()
             try:
                 sesiones_instructor_portal = supabase.table("sesiones_clase").select(
                     "id,local_id,fecha_clase,hora_inicio,hora_fin,tipo_servicio,capacidad,estado,pago_por_clase_aplicado"
@@ -2077,6 +2269,54 @@ else:
                                             except Exception as e:
                                                 st.error(f"No se pudieron guardar los datos: {e}")
 
+                                with st.expander("Crear o restablecer contraseña del portal", expanded=False):
+                                    try:
+                                        cuentas_de_instructora = supabase.table("usuarios_instructores").select("id,usuario").eq("instructora_id", instructora_actual["id"]).limit(1).execute().data or []
+                                        if cuentas_de_instructora:
+                                            cuenta_de_instructora = cuentas_de_instructora[0]
+                                            st.caption(f"Cuenta: {cuenta_de_instructora['usuario']}. La persona deberá elegir una contraseña personal al ingresar.")
+                                            with st.form(f"form_clave_directorio_instructor_{instructora_actual['id']}_{st.session_state.clear_gestion_instructoras}"):
+                                                clave_directorio_inst = st.text_input("Nueva contraseña temporal (mínimo 12 caracteres)", type="password")
+                                                clave_directorio_confirm = st.text_input("Confirmar contraseña", type="password")
+                                                guardar_clave_directorio_inst = st.form_submit_button("Restablecer contraseña", type="primary")
+                                            if guardar_clave_directorio_inst:
+                                                if len(clave_directorio_inst) < 12:
+                                                    st.error("La contraseña debe tener al menos 12 caracteres.")
+                                                elif clave_directorio_inst != clave_directorio_confirm:
+                                                    st.error("Las contraseñas no coinciden.")
+                                                else:
+                                                    supabase.table("usuarios_instructores").update({"contrasena_encriptada": encriptar_contrasena(clave_directorio_inst), "debe_cambiar_contrasena": True, "intentos_login_fallidos": 0, "acceso_bloqueado_hasta": None}).eq("id", cuenta_de_instructora["id"]).execute()
+                                                    st.session_state.aviso_instructora = "Contraseña temporal actualizada. El instructor deberá cambiarla al ingresar."
+                                                    st.session_state.clear_gestion_instructoras += 1
+                                                    st.rerun()
+                                        else:
+                                            st.caption("Crea el usuario del portal y una contraseña temporal para esta persona.")
+                                            with st.form(f"form_crear_acceso_directorio_inst_{instructora_actual['id']}_{st.session_state.clear_gestion_instructoras}"):
+                                                usuario_directorio_inst = st.text_input("Nombre de usuario")
+                                                clave_directorio_inst = st.text_input("Contraseña temporal (mínimo 12 caracteres)", type="password")
+                                                clave_directorio_confirm = st.text_input("Confirmar contraseña", type="password")
+                                                crear_acceso_directorio_inst = st.form_submit_button("Crear acceso y contraseña", type="primary")
+                                            if crear_acceso_directorio_inst:
+                                                if not usuario_directorio_inst.strip():
+                                                    st.error("Escribe un nombre de usuario.")
+                                                elif len(clave_directorio_inst) < 12:
+                                                    st.error("La contraseña debe tener al menos 12 caracteres.")
+                                                elif clave_directorio_inst != clave_directorio_confirm:
+                                                    st.error("Las contraseñas no coinciden.")
+                                                else:
+                                                    usuario_nuevo_inst = usuario_directorio_inst.strip()
+                                                    en_admin_inst = supabase.table("usuarios_admin").select("id").ilike("usuario", usuario_nuevo_inst).limit(1).execute().data or []
+                                                    en_portal_inst = supabase.table("usuarios_instructores").select("id").ilike("usuario", usuario_nuevo_inst).limit(1).execute().data or []
+                                                    if en_admin_inst or en_portal_inst:
+                                                        st.error("Ese nombre de usuario ya está en uso.")
+                                                    else:
+                                                        supabase.table("usuarios_instructores").insert({"usuario": usuario_nuevo_inst, "contrasena_encriptada": encriptar_contrasena(clave_directorio_inst), "debe_cambiar_contrasena": True, "instructora_id": instructora_actual["id"], "activo": True, "creado_por": st.session_state.admin_id}).execute()
+                                                        st.session_state.aviso_instructora = "Acceso del portal creado. El instructor deberá elegir su contraseña personal en el primer ingreso."
+                                                        st.session_state.clear_gestion_instructoras += 1
+                                                        st.rerun()
+                                    except Exception as error_clave_directorio:
+                                        st.error(f"No se pudo administrar la contraseña: {error_clave_directorio}")
+
                                 col_estado_inst, col_ficha_inst = st.columns([1, 2])
                                 with col_estado_inst:
                                     if instructora_actual.get("activo", True):
@@ -2544,10 +2784,13 @@ else:
                                 sede_objeto_agenda = next((l for l in lista_locales if l["nombre"] == sede_agenda), None)
                                 fecha_minima_agenda = datetime.now(ZoneInfo("America/Lima")).date()
                                 fecha_maxima_agenda = fecha_minima_agenda + timedelta(days=dias_agenda_anticipacion)
-                                fecha_inicio = st.date_input("Fecha de Inicio:", value=None, min_value=fecha_minima_agenda, max_value=fecha_maxima_agenda, format="DD-MM-YYYY", key=f"mas_f_ini_{st.session_state.clear_agenda}")
-                                fecha_fin = st.date_input("Fecha de Fin:", value=None, min_value=fecha_minima_agenda, max_value=fecha_maxima_agenda, format="DD-MM-YYYY", key=f"mas_f_fin_{st.session_state.clear_agenda}")
-                                hora_agenda = st.time_input("Hora de inicio:", value=hora_apertura_estudio, key=f"mas_hora_{st.session_state.clear_agenda}")
                                 duracion_agenda = duracion_clase_default
+                                feriados_agenda = supabase.table("feriados").select("fecha").gte("fecha", fecha_minima_agenda.isoformat()).lte("fecha", fecha_maxima_agenda.isoformat()).execute().data or []
+                                fechas_agenda = dias_laborables_entre(fecha_minima_agenda, fecha_maxima_agenda, {d for d, habilitado in dias_habilitados.items() if habilitado}, {f.get("fecha") for f in feriados_agenda})
+                                fecha_inicio = selector_fecha_disponible("Fecha de Inicio:", fechas_agenda, key=f"mas_f_ini_{st.session_state.clear_agenda}", valor_inicial=fecha_minima_agenda)
+                                fecha_fin = selector_fecha_disponible("Fecha de Fin:", fechas_agenda, key=f"mas_f_fin_{st.session_state.clear_agenda}", valor_inicial=fecha_minima_agenda + timedelta(days=7))
+                                horas_agenda = horas_inicio_operativas(hora_apertura_estudio, hora_cierre_estudio, receso_inicio_estudio, receso_fin_estudio, duracion_agenda)
+                                hora_agenda = selector_hora("Hora de inicio:", horas_agenda, key=f"mas_hora_{st.session_state.clear_agenda}", valor_inicial=hora_apertura_estudio)
                                 st.caption(f"Duración de cada clase: {duracion_agenda} minutos (definida en Configuración).")
                             with col_mas2:
                                 inst_agenda = st.selectbox("Asignar instructor:", [""] + list(opciones_inst.keys()), key=f"mas_inst_{st.session_state.clear_agenda}", placeholder="Selecciona un instructor...")
@@ -2572,11 +2815,10 @@ else:
                                 elif not opciones_locales or not opciones_inst: st.error("Se requieren sedes e instructores para programar clases.")
                                 elif fecha_inicio > fecha_fin: st.error("❌ Rango inválido.")
                                 elif fecha_fin > fecha_maxima_agenda: st.error(f"El rango no puede superar {dias_agenda_anticipacion} días desde hoy, según Configuración.")
-                                elif not hora_apertura_estudio <= hora_agenda < hora_cierre_estudio: st.error(f"La hora de inicio debe estar entre {hora_apertura_estudio.strftime('%H:%M')} y antes de {hora_cierre_estudio.strftime('%H:%M')}.")
+                                elif hora_agenda not in horas_inicio_operativas(hora_apertura_estudio, hora_cierre_estudio, receso_inicio_estudio, receso_fin_estudio, duracion_agenda): st.error("El horario debe permitir completar la clase antes del cierre y quedar fuera del receso.")
                                 elif not dias_seleccionados: st.error("❌ Selecciona al menos un día.")
                                 else:
-                                    feriados_db = supabase.table("feriados").select("fecha").execute()
-                                    lista_feriados = [f['fecha'] for f in feriados_db.data] if feriados_db.data else []
+                                    lista_feriados = {str(f.get("fecha"))[:10] for f in feriados_agenda}
                                     instructora = opciones_inst[inst_agenda]
                                     inicio_agenda_dt = datetime.combine(fecha_inicio, hora_agenda)
                                     fin_dt = inicio_agenda_dt + timedelta(minutes=int(duracion_agenda))
@@ -2637,12 +2879,22 @@ else:
                                 st.error(f"No se pudo reintentar el cierre automático. Verifica que ejecutaste supabase_validar_estado_clases.sql en Supabase. Detalle: {error_cierre}")
                         try:
                             col_desde, col_hasta = st.columns(2)
+                            dias_reporte = supabase.table("dias_operativos").select("numero_dia,habilitado").execute().data or []
+                            feriados_reporte = supabase.table("feriados").select("fecha").execute().data or []
+                            hoy_reporte = datetime.now(ZoneInfo("America/Lima")).date()
+                            fechas_reporte = dias_laborables_entre(hoy_reporte - timedelta(days=365 * 5), hoy_reporte + timedelta(days=dias_agenda_anticipacion), {int(d["numero_dia"]) for d in dias_reporte if d.get("habilitado")}, {f.get("fecha") for f in feriados_reporte})
                             with col_desde:
-                                desde = st.date_input("Desde", value=datetime.now(ZoneInfo("America/Lima")).date(), format="DD-MM-YYYY", key="agenda_reporte_desde")
+                                desde = selector_fecha_disponible("Desde", fechas_reporte, key="agenda_reporte_desde", valor_inicial=hoy_reporte)
                             with col_hasta:
-                                hasta = st.date_input("Hasta", value=datetime.now(ZoneInfo("America/Lima")).date() + timedelta(days=6), format="DD-MM-YYYY", key="agenda_reporte_hasta")
-                            sesiones_reporte = supabase.table("sesiones_clase").select("*").gte("fecha_clase", desde.isoformat()).lte("fecha_clase", hasta.isoformat()).order("hora_inicio").order("fecha_clase").execute().data or []
-                            if desde > hasta:
+                                hasta = selector_fecha_disponible("Hasta", fechas_reporte, key="agenda_reporte_hasta", valor_inicial=hoy_reporte + timedelta(days=6))
+                            if desde is None or hasta is None:
+                                st.info("Activa al menos un día laboral en Configuración para consultar la agenda.")
+                                sesiones_reporte = []
+                            else:
+                                sesiones_reporte = supabase.table("sesiones_clase").select("*").gte("fecha_clase", desde.isoformat()).lte("fecha_clase", hasta.isoformat()).order("hora_inicio").order("fecha_clase").execute().data or []
+                            if desde is None or hasta is None:
+                                pass
+                            elif desde > hasta:
                                 st.warning("El rango de fechas no es válido.")
                             elif sesiones_reporte:
                                 locales_nombres = {int(v): k for k, v in opciones_locales.items()}
@@ -3259,6 +3511,7 @@ else:
                                                 supabase.table("usuarios_instructores").insert({
                                                     "usuario": usuario_candidato,
                                                     "contrasena_encriptada": encriptar_contrasena(clave_nueva_instructor),
+                                                    "debe_cambiar_contrasena": True,
                                                     "instructora_id": opciones_instructor[instructor_cuenta_sel],
                                                     "activo": True,
                                                     "creado_por": st.session_state.admin_id
@@ -3343,7 +3596,7 @@ else:
                                         st.error("Las contraseñas no coinciden.")
                                     else:
                                         cuenta_reset = mapa_inst_reset[etiqueta_inst_reset]
-                                        supabase.table("usuarios_instructores").update({"contrasena_encriptada": encriptar_contrasena(nueva_clave_inst_admin)}).eq("id", cuenta_reset["id"]).execute()
+                                        supabase.table("usuarios_instructores").update({"contrasena_encriptada": encriptar_contrasena(nueva_clave_inst_admin), "debe_cambiar_contrasena": True, "intentos_login_fallidos": 0, "acceso_bloqueado_hasta": None}).eq("id", cuenta_reset["id"]).execute()
                                         st.session_state.mensaje_resultado_app = f"Contraseña de {etiqueta_inst_reset} actualizada correctamente."
                                         st.session_state.clear_reset_clave += 1
                                         st.rerun()
@@ -3561,7 +3814,11 @@ else:
                             st.success(aviso_feriado)
                         col_f1, col_f2 = st.columns(2)
                         with col_f1:
-                            fecha_f = st.date_input("Fecha del feriado", value=None, format="DD-MM-YYYY", key=f"input_fecha_feriado_{st.session_state.clear_feriado}")
+                            dias_feriado_db = supabase.table("dias_operativos").select("numero_dia,habilitado").execute().data or []
+                            feriados_existentes = supabase.table("feriados").select("fecha").execute().data or []
+                            hoy_feriado = datetime.now(ZoneInfo("America/Lima")).date()
+                            fechas_feriado = dias_laborables_entre(hoy_feriado, hoy_feriado + timedelta(days=365 * 5), {int(d["numero_dia"]) for d in dias_feriado_db if d.get("habilitado")}, {f.get("fecha") for f in feriados_existentes})
+                            fecha_f = selector_fecha_disponible("Fecha del feriado", fechas_feriado, key=f"input_fecha_feriado_{st.session_state.clear_feriado}", valor_inicial=hoy_feriado)
                             desc_f = st.text_input("Descripción", key=f"input_desc_feriado_{st.session_state.clear_feriado}")
                             if st.button("Registrar feriado", key=f"guardar_feriado_{st.session_state.clear_feriado}"):
                                 if fecha_f is not None and desc_f.strip():
@@ -3603,12 +3860,15 @@ else:
                         st.caption("Define el horario de atención y las reglas de programación y reserva. Agenda y el portal del alumno tomarán estos valores automáticamente.")
                         with st.form(f"form_config_horarios_{st.session_state.clear_configuracion}"):
                             col_h1, col_h2, col_h3 = st.columns(3)
+                            horas_config = horas_configurables(hora_apertura_estudio, hora_cierre_estudio, receso_inicio_estudio, receso_fin_estudio, corte_turno_manana, limite_reserva_manana)
                             with col_h1:
-                                hora_apertura_nueva = st.time_input("Apertura del estudio", value=hora_apertura_estudio, key=f"config_hora_apertura_{st.session_state.clear_configuracion}")
-                                corte_manana_nuevo = st.time_input("Turno mañana hasta", value=corte_turno_manana, key=f"config_corte_manana_{st.session_state.clear_configuracion}")
-                                limite_manana_nuevo = st.time_input("Reserva/cancelación de mañana hasta", value=limite_reserva_manana, key=f"config_limite_manana_{st.session_state.clear_configuracion}", help="Se aplica el día anterior a la clase.")
+                                hora_apertura_nueva = selector_hora("Apertura del estudio", horas_config, key=f"config_hora_apertura_{st.session_state.clear_configuracion}", valor_inicial=hora_apertura_estudio)
+                                corte_manana_nuevo = selector_hora("Turno mañana hasta", horas_config, key=f"config_corte_manana_{st.session_state.clear_configuracion}", valor_inicial=corte_turno_manana)
+                                limite_manana_nuevo = selector_hora("Reserva/cancelación de mañana hasta", horas_config, key=f"config_limite_manana_{st.session_state.clear_configuracion}", valor_inicial=limite_reserva_manana, ayuda="Se aplica el día anterior a la clase.")
                             with col_h2:
-                                hora_cierre_nueva = st.time_input("Cierre del estudio", value=hora_cierre_estudio, key=f"config_hora_cierre_{st.session_state.clear_configuracion}")
+                                hora_cierre_nueva = selector_hora("Cierre del estudio", horas_config, key=f"config_hora_cierre_{st.session_state.clear_configuracion}", valor_inicial=hora_cierre_estudio)
+                                receso_inicio_nuevo = selector_hora("Inicio de receso", horas_config, key=f"config_receso_inicio_{st.session_state.clear_configuracion}", valor_inicial=receso_inicio_estudio)
+                                receso_fin_nuevo = selector_hora("Fin de receso", horas_config, key=f"config_receso_fin_{st.session_state.clear_configuracion}", valor_inicial=receso_fin_estudio)
                                 duracion_clase_nueva = st.number_input("Duración de clase (minutos)", min_value=15, max_value=240, value=duracion_clase_default, step=5, key=f"config_duracion_clase_{st.session_state.clear_configuracion}")
                                 limite_tarde_nuevo = st.number_input("Anticipación para reservar/cancelar clases de tarde (horas)", min_value=1, max_value=24, value=limite_reserva_tarde_horas, step=1, key=f"config_limite_tarde_{st.session_state.clear_configuracion}")
                             with col_h3:
@@ -3624,11 +3884,17 @@ else:
                                 st.error("La hora de cierre debe ser posterior a la hora de apertura.")
                             elif not hora_apertura_nueva < corte_manana_nuevo < hora_cierre_nueva:
                                 st.error("El límite entre mañana y tarde debe quedar dentro del horario del estudio.")
+                            elif not hora_apertura_nueva < receso_inicio_nuevo < receso_fin_nuevo < hora_cierre_nueva:
+                                st.error("El receso debe iniciar y terminar dentro del horario del estudio, y el fin debe ser posterior al inicio.")
+                            elif receso_inicio_nuevo < corte_manana_nuevo:
+                                st.error("El receso debe iniciar a partir del cambio entre el turno de mañana y el de tarde.")
                             else:
                                 try:
                                     supabase.table("configuracion_estudio").update({
                                         "hora_apertura": hora_apertura_nueva.strftime("%H:%M:%S"),
                                         "hora_cierre": hora_cierre_nueva.strftime("%H:%M:%S"),
+                                        "receso_inicio": receso_inicio_nuevo.strftime("%H:%M:%S"),
+                                        "receso_fin": receso_fin_nuevo.strftime("%H:%M:%S"),
                                         "duracion_clase_minutos": int(duracion_clase_nueva),
                                         "dias_agenda_anticipacion": int(dias_agenda_nuevos),
                                         "corte_turno_manana": corte_manana_nuevo.strftime("%H:%M:%S"),
@@ -3639,7 +3905,7 @@ else:
                                     st.session_state.clear_configuracion += 1
                                     st.rerun()
                                 except Exception as e:
-                                    st.error(f"No se pudo guardar la configuración. Ejecuta la migración supabase_configuracion_horarios_instructores.sql en Supabase. Detalle: {e}")
+                                    st.error(f"No se pudo guardar la configuración. Ejecuta supabase_mejoras_portal_instructor_horarios.sql en Supabase. Detalle: {e}")
 
                     with calendario_capacidad:
                         st.caption("Define cuántas camillas grupales puede utilizar cada sede. Agenda tomará este valor automáticamente.")
