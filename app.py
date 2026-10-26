@@ -373,6 +373,28 @@ def verificar_contrasena(password, hash_guardado):
     coincide = bool(hash_guardado) and hmac.compare_digest(anterior, hash_guardado)
     return coincide, coincide
 
+def registrar_intento_login_alumno(alumno_id, login_correcto):
+    """Registra el intento bajo bloqueo de fila; limita fuerza bruta entre sesiones."""
+    respuesta = supabase.rpc("registrar_intento_login_alumno", {
+        "p_alumno_id": int(alumno_id),
+        "p_login_correcto": bool(login_correcto),
+    }).execute()
+    filas = respuesta.data or []
+    if not filas:
+        return False, None
+    return bool(filas[0].get("acceso_permitido")), filas[0].get("bloqueado_hasta")
+
+def convertir_a_datetime_utc(valor):
+    if not valor:
+        return None
+    try:
+        resultado = valor if isinstance(valor, datetime) else datetime.fromisoformat(str(valor).replace("Z", "+00:00"))
+        if resultado.tzinfo is None:
+            resultado = resultado.replace(tzinfo=ZoneInfo("UTC"))
+        return resultado.astimezone(ZoneInfo("UTC"))
+    except (TypeError, ValueError):
+        return None
+
 def verificar_primer_inicio():
     # Un error de conexión/permisos nunca debe habilitar el alta inicial.
     respuesta = supabase.table("usuarios_admin").select("id", count="exact").limit(1).execute()
@@ -469,14 +491,177 @@ else:
     </div>
     """, unsafe_allow_html=True)
     rol_acceso = st.sidebar.radio("Menú de Perfiles:", ["Alumnos", "Instructores", "Tablet Check-in", "Administrador"])
+
+    if rol_acceso != "Alumnos":
+        for clave_alumno in ("alumno_portal_id", "alumno_portal_hash", "alumno_portal_telefono", "alumno_portal_ultima_actividad"):
+            st.session_state.pop(clave_alumno, None)
     
     # --- VISTA ALUMNOS ---
     if rol_acceso == "Alumnos":
         st.title(":material/smartphone: Portal del Alumno")
-        telefono_alumno = st.text_input("Ingresa tu teléfono registrado para ver tu pase de acceso:", key=f"portal_telefono_{st.session_state.clear_portal_alumno}")
-        if st.button("Limpiar búsqueda", key="limpiar_portal_alumno"):
-            st.session_state.clear_portal_alumno += 1
-            st.rerun()
+        ahora_utc = datetime.now(ZoneInfo("UTC"))
+        alumno_portal_id = st.session_state.get("alumno_portal_id")
+        if alumno_portal_id is not None:
+            ultima_actividad = st.session_state.get("alumno_portal_ultima_actividad", 0)
+            if ahora_utc.timestamp() - ultima_actividad > 1800:
+                for clave_alumno in ("alumno_portal_id", "alumno_portal_hash", "alumno_portal_telefono", "alumno_portal_ultima_actividad"):
+                    st.session_state.pop(clave_alumno, None)
+                st.warning("Tu sesión expiró por inactividad. Ingresa nuevamente.")
+                st.rerun()
+            st.session_state.alumno_portal_ultima_actividad = ahora_utc.timestamp()
+            try:
+                cuenta_alumno = (
+                    supabase.table("alumnos")
+                    .select("id,nombre,apellido,telefono,contrasena_encriptada,debe_cambiar_contrasena,acceso_bloqueado_hasta")
+                    .eq("id", alumno_portal_id)
+                    .limit(1)
+                    .execute()
+                )
+                datos_sesion_alumno = cuenta_alumno.data[0] if cuenta_alumno.data else None
+                if (
+                    not datos_sesion_alumno
+                    or not datos_sesion_alumno.get("contrasena_encriptada")
+                    or not hmac.compare_digest(
+                        str(datos_sesion_alumno["contrasena_encriptada"]),
+                        str(st.session_state.get("alumno_portal_hash", "")),
+                    )
+                ):
+                    for clave_alumno in ("alumno_portal_id", "alumno_portal_hash", "alumno_portal_telefono", "alumno_portal_ultima_actividad"):
+                        st.session_state.pop(clave_alumno, None)
+                    st.warning("La sesión se cerró porque cambió la contraseña de la cuenta. Ingresa nuevamente.")
+                    st.rerun()
+            except Exception:
+                st.error("No se pudo validar tu sesión. Comprueba que el SQL de acceso de alumnos ya se ejecutó.")
+                st.stop()
+        else:
+            with st.form(f"form_login_alumno_{st.session_state.clear_portal_alumno}"):
+                telefono_ingresado = st.text_input("Teléfono registrado", key=f"portal_telefono_{st.session_state.clear_portal_alumno}")
+                contrasena_ingresada = st.text_input("Contraseña", type="password", key=f"portal_clave_{st.session_state.clear_portal_alumno}")
+                ingresar_alumno = st.form_submit_button("Ingresar", type="primary")
+            if ingresar_alumno:
+                if not telefono_ingresado.strip() or not contrasena_ingresada:
+                    st.error("Ingresa tu teléfono y contraseña.")
+                else:
+                    try:
+                        consulta_alumno_login = (
+                            supabase.table("alumnos")
+                            .select("id,nombre,apellido,telefono,contrasena_encriptada,debe_cambiar_contrasena,acceso_bloqueado_hasta")
+                            .eq("telefono", telefono_ingresado.strip())
+                            .limit(1)
+                            .execute()
+                        )
+                        if not consulta_alumno_login.data:
+                            st.error("No se pudo iniciar sesión. Verifica tus datos o solicita al estudio habilitar tu acceso.")
+                        else:
+                            cuenta = consulta_alumno_login.data[0]
+                            fecha_bloqueo = convertir_a_datetime_utc(cuenta.get("acceso_bloqueado_hasta"))
+                            if fecha_bloqueo and fecha_bloqueo > ahora_utc:
+                                st.error("Acceso temporalmente bloqueado por intentos fallidos. Intenta más tarde o contacta al estudio.")
+                            else:
+                                contrasena_correcta = bool(cuenta.get("contrasena_encriptada")) and verificar_contrasena(
+                                    contrasena_ingresada, cuenta.get("contrasena_encriptada")
+                                )[0]
+                                acceso_permitido, bloqueado_hasta = registrar_intento_login_alumno(
+                                    cuenta["id"], contrasena_correcta
+                                )
+                                if contrasena_correcta and acceso_permitido:
+                                    st.session_state.alumno_portal_id = cuenta["id"]
+                                    st.session_state.alumno_portal_hash = cuenta["contrasena_encriptada"]
+                                    st.session_state.alumno_portal_telefono = cuenta["telefono"]
+                                    st.session_state.alumno_portal_ultima_actividad = ahora_utc.timestamp()
+                                    st.session_state.clear_portal_alumno += 1
+                                    st.rerun()
+                                else:
+                                    st.error("No se pudo iniciar sesión. Verifica tus datos o solicita al estudio habilitar tu acceso.")
+                    except Exception:
+                        st.error("No se pudo validar el acceso. Verifica que el SQL de acceso de alumnos ya se ejecutó.")
+
+        if st.session_state.get("alumno_portal_id") is None:
+            st.info("Si aún no tienes contraseña, solicítale al estudio una clave temporal. Al ingresar tendrás que crear una propia.")
+            st.stop()
+
+        datos_sesion_alumno = datos_sesion_alumno
+        id_alumno_portal = datos_sesion_alumno["id"]
+        telefono_alumno = datos_sesion_alumno["telefono"]
+
+        if datos_sesion_alumno.get("debe_cambiar_contrasena"):
+            st.warning("Por seguridad, crea una contraseña personal para continuar.")
+            with st.form("form_primer_cambio_clave_alumno"):
+                clave_temporal_nueva = st.text_input("Nueva contraseña (mínimo 12 caracteres)", type="password")
+                clave_temporal_confirmar = st.text_input("Confirmar nueva contraseña", type="password")
+                guardar_clave_temporal = st.form_submit_button("Crear mi contraseña", type="primary")
+            if guardar_clave_temporal:
+                if len(clave_temporal_nueva) < 12:
+                    st.error("La contraseña debe tener al menos 12 caracteres.")
+                elif clave_temporal_nueva != clave_temporal_confirmar:
+                    st.error("Las contraseñas no coinciden.")
+                else:
+                    try:
+                        hash_nuevo_alumno = encriptar_contrasena(clave_temporal_nueva)
+                        supabase.table("alumnos").update({
+                            "contrasena_encriptada": hash_nuevo_alumno,
+                            "debe_cambiar_contrasena": False,
+                            "intentos_login_fallidos": 0,
+                            "acceso_bloqueado_hasta": None,
+                        }).eq("id", id_alumno_portal).execute()
+                        st.session_state.alumno_portal_hash = hash_nuevo_alumno
+                        st.success("Contraseña creada. Ya puedes usar el portal.")
+                        st.rerun()
+                    except Exception:
+                        st.error("No se pudo guardar la contraseña. Inténtalo nuevamente o contacta al estudio.")
+            st.stop()
+
+        col_bienvenida, col_cerrar_portal = st.columns([5, 1])
+        with col_bienvenida:
+            st.success(f"¡Hola, {datos_sesion_alumno.get('nombre', '')} {datos_sesion_alumno.get('apellido', '')}!")
+        with col_cerrar_portal:
+            if st.button("Cerrar sesión", key="cerrar_sesion_portal_alumno"):
+                for clave_alumno in ("alumno_portal_id", "alumno_portal_hash", "alumno_portal_telefono", "alumno_portal_ultima_actividad"):
+                    st.session_state.pop(clave_alumno, None)
+                st.session_state.clear_portal_alumno += 1
+                st.rerun()
+
+        with st.expander("Cambiar mi contraseña"):
+            with st.form("form_cambiar_clave_portal_alumno"):
+                clave_actual_alumno = st.text_input("Contraseña actual", type="password")
+                clave_nueva_alumno = st.text_input("Nueva contraseña (mínimo 12 caracteres)", type="password")
+                clave_nueva_confirmar_alumno = st.text_input("Confirmar nueva contraseña", type="password")
+                guardar_clave_alumno = st.form_submit_button("Actualizar contraseña", type="primary")
+            if guardar_clave_alumno:
+                if len(clave_nueva_alumno) < 12:
+                    st.error("La contraseña nueva debe tener al menos 12 caracteres.")
+                elif clave_nueva_alumno != clave_nueva_confirmar_alumno:
+                    st.error("Las contraseñas nuevas no coinciden.")
+                else:
+                    coincide_clave_actual = verificar_contrasena(
+                        clave_actual_alumno, datos_sesion_alumno.get("contrasena_encriptada")
+                    )[0]
+                    permitido_actualizar, bloqueo_actualizar = registrar_intento_login_alumno(
+                        id_alumno_portal, coincide_clave_actual
+                    )
+                    if not coincide_clave_actual or not permitido_actualizar:
+                        fecha_bloqueo_actualizar = convertir_a_datetime_utc(bloqueo_actualizar)
+                        if fecha_bloqueo_actualizar:
+                            for clave_alumno in ("alumno_portal_id", "alumno_portal_hash", "alumno_portal_telefono", "alumno_portal_ultima_actividad"):
+                                st.session_state.pop(clave_alumno, None)
+                            st.error("La cuenta quedó bloqueada temporalmente por intentos fallidos. Vuelve a ingresar más tarde.")
+                            st.rerun()
+                        st.error("La contraseña actual no es correcta.")
+                    else:
+                        try:
+                            hash_nuevo_alumno = encriptar_contrasena(clave_nueva_alumno)
+                            supabase.table("alumnos").update({
+                                "contrasena_encriptada": hash_nuevo_alumno,
+                                "debe_cambiar_contrasena": False,
+                                "intentos_login_fallidos": 0,
+                                "acceso_bloqueado_hasta": None,
+                            }).eq("id", id_alumno_portal).execute()
+                            st.session_state.alumno_portal_hash = hash_nuevo_alumno
+                            st.success("Contraseña actualizada correctamente.")
+                            st.rerun()
+                        except Exception:
+                            st.error("No se pudo actualizar la contraseña. Inténtalo nuevamente.")
+
         if telefono_alumno:
             try:
                 ahora_portal = datetime.now(ZoneInfo("America/Lima"))
@@ -1427,6 +1612,17 @@ else:
                         a_nombre = st.text_input("Nombre del Alumno:", key=f"ins_nom_{st.session_state.clear_ins}")
                         a_apellido = st.text_input("Apellido del Alumno:", key=f"ins_ape_{st.session_state.clear_ins}")
                         a_telefono = st.text_input("Teléfono (único para acceso móvil):", key=f"ins_tel_{st.session_state.clear_ins}")
+                        a_clave_temporal = st.text_input(
+                            "Contraseña temporal del portal (mínimo 12 caracteres):",
+                            type="password",
+                            key=f"ins_clave_{st.session_state.clear_ins}",
+                            help="Entrégasela al alumno por un canal privado. Se le pedirá cambiarla al primer ingreso.",
+                        )
+                        a_clave_temporal_confirmar = st.text_input(
+                            "Confirmar contraseña temporal:",
+                            type="password",
+                            key=f"ins_clave_confirmar_{st.session_state.clear_ins}",
+                        )
                     with col2:
                         tipo_p = st.selectbox("Selecciona el Paquete:", [""] + list(opciones_planes.keys()), key=f"ins_paq_{st.session_state.clear_ins}", placeholder="Selecciona un plan...")
                         modalidad = st.selectbox("Modalidad de Acceso:", ["", "Fixed", "Flex"], key=f"ins_mod_{st.session_state.clear_ins}", placeholder="Selecciona una modalidad...")
@@ -1441,6 +1637,7 @@ else:
 
                     inscripcion_completa = bool(
                         a_nombre.strip() and a_apellido.strip() and a_telefono.strip()
+                        and len(a_clave_temporal) >= 12 and a_clave_temporal == a_clave_temporal_confirmar
                         and tipo_p and modalidad
                         and (modalidad != "Fixed" or sede_assigned in opciones_locales)
                     )
@@ -1460,13 +1657,17 @@ else:
                         )
                     else:
                         confirmar_pago_inscripcion = False
-                        st.caption("Completa los datos del alumno y del plan para revisar el detalle antes de confirmar el pago.")
+                        st.caption("Completa los datos, crea una contraseña temporal y selecciona el plan para revisar el detalle antes de confirmar.")
                         
                     col_i1, col_i2 = st.columns(2)
                     with col_i1:
                         if st.button("Confirmar pago e inscribir", type="primary", key=f"registrar_alumno_{st.session_state.clear_ins}"):
                             if not a_nombre.strip() or not a_apellido.strip() or not a_telefono.strip():
                                 st.error("❌ Completa el nombre, apellido y teléfono del alumno.")
+                            elif len(a_clave_temporal) < 12:
+                                st.error("❌ La contraseña temporal debe tener al menos 12 caracteres.")
+                            elif a_clave_temporal != a_clave_temporal_confirmar:
+                                st.error("❌ Las contraseñas temporales no coinciden.")
                             elif not opciones_planes:
                                 st.error("❌ No puedes registrar alumnos: primero configura al menos un plan vigente en Planes y precios.")
                             elif not tipo_p or tipo_p not in opciones_planes:
@@ -1484,7 +1685,9 @@ else:
                                     nuevo_alumno = supabase.table("alumnos").insert({
                                         "nombre": a_nombre.strip(),
                                         "apellido": a_apellido.strip(),
-                                        "telefono": a_telefono.strip()
+                                        "telefono": a_telefono.strip(),
+                                        "contrasena_encriptada": encriptar_contrasena(a_clave_temporal),
+                                        "debe_cambiar_contrasena": True,
                                     }).select("id").execute()
                                     if not nuevo_alumno.data:
                                         raise RuntimeError("No se recibió el identificador del alumno.")
@@ -2590,6 +2793,41 @@ else:
                                                     st.error("Ese teléfono ya está registrado para otro alumno.")
                                                 else:
                                                     st.error(f"No se pudieron actualizar los datos: {e}")
+
+                                with st.expander("Crear o restablecer contraseña del portal"):
+                                    st.caption("Genera una clave temporal y entrégasela al alumno por un canal privado. Se le pedirá cambiarla al ingresar.")
+                                    with st.form(f"form_clave_portal_admin_{data_al['id']}_{st.session_state.clear_editar_alumno}"):
+                                        clave_portal_admin = st.text_input(
+                                            "Contraseña temporal (mínimo 12 caracteres)",
+                                            type="password",
+                                            key=f"clave_portal_admin_{data_al['id']}_{st.session_state.clear_editar_alumno}",
+                                        )
+                                        confirmar_clave_portal_admin = st.text_input(
+                                            "Confirmar contraseña temporal",
+                                            type="password",
+                                            key=f"confirmar_clave_portal_admin_{data_al['id']}_{st.session_state.clear_editar_alumno}",
+                                        )
+                                        guardar_clave_portal_admin = st.form_submit_button(
+                                            "Guardar contraseña temporal", type="primary"
+                                        )
+                                    if guardar_clave_portal_admin:
+                                        if len(clave_portal_admin) < 12:
+                                            st.error("La contraseña temporal debe tener al menos 12 caracteres.")
+                                        elif clave_portal_admin != confirmar_clave_portal_admin:
+                                            st.error("Las contraseñas temporales no coinciden.")
+                                        else:
+                                            try:
+                                                supabase.table("alumnos").update({
+                                                    "contrasena_encriptada": encriptar_contrasena(clave_portal_admin),
+                                                    "debe_cambiar_contrasena": True,
+                                                    "intentos_login_fallidos": 0,
+                                                    "acceso_bloqueado_hasta": None,
+                                                }).eq("id", data_al["id"]).execute()
+                                                st.success("Contraseña temporal guardada. El alumno deberá crear una propia al ingresar.")
+                                                st.session_state.clear_editar_alumno += 1
+                                                st.rerun()
+                                            except Exception:
+                                                st.error("No se pudo guardar la contraseña. Verifica que ejecutaste el SQL de acceso de alumnos.")
 
                                 # Permite cambiar la modalidad o hacer upgrade del paquete vigente.
                                 st.markdown("#### :material/swap_horiz: Paquete y modalidad de acceso")
