@@ -2951,7 +2951,7 @@ else:
                                 tipo_serv_agenda = st.selectbox("Tipo de Sesión:", ["", "Grupal", "Privado"], key=f"mas_tipo_{st.session_state.clear_agenda}", placeholder="Selecciona una modalidad...")
                                 if tipo_serv_agenda == "Grupal":
                                     aforo_agenda = int(sede_objeto_agenda.get("max_camillas") or 8) if sede_objeto_agenda else None
-                                    st.caption(f"Aforo grupal de esta sede: **{aforo_agenda if aforo_agenda is not None else '—'} camillas** (se toma de Configuración).")
+                                    st.caption(f"Aforo: **{aforo_agenda if aforo_agenda is not None else '—'} camillas** (según configuración).")
                                 elif tipo_serv_agenda == "Privado": aforo_agenda = 1
                                 else: aforo_agenda = None
                             with col_hora:
