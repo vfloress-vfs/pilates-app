@@ -2957,7 +2957,7 @@ else:
                             with col_hora:
                                 horas_agenda = horas_inicio_operativas(hora_apertura_estudio, hora_cierre_estudio, receso_inicio_estudio, receso_fin_estudio, duracion_agenda)
                                 hora_agenda = selector_hora("Hora de inicio:", horas_agenda, key=f"mas_hora_{st.session_state.clear_agenda}", valor_inicial=hora_apertura_estudio)
-                                st.caption(f"Duración de cada clase: {duracion_agenda} minutos (definida en Configuración).")
+                                st.caption(f"Clases de: {duracion_agenda} minutos (según configuración).")
 
                             col_fecha_inicio, col_fecha_fin = st.columns(2)
                             with col_fecha_inicio:
