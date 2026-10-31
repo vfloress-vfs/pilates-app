@@ -1339,26 +1339,40 @@ else:
                                                 fechas_reagenda,
                                                 key=fecha_reagenda_key,
                                             )
-                                            sesiones_reagenda_dia = [s for s in sesiones_reagendables if s["_inicio_dt"].date() == fecha_reagenda]
+                                            sesiones_reagenda_dia = sorted(
+                                                (s for s in sesiones_reagendables if s["_inicio_dt"].date() == fecha_reagenda),
+                                                key=lambda s: s["_inicio_dt"],
+                                            )
                                             sesion_reagenda_key = f"sesion_reagenda_portal_{id_alumno_portal}_{reserva_seleccionada_cancelable['id']}"
-                                            columnas_reagenda = st.columns(2)
-                                            for indice_reagenda, sesion_nueva in enumerate(sesiones_reagenda_dia):
-                                                seleccion_reagenda = st.session_state.get(sesion_reagenda_key) == int(sesion_nueva["id"])
-                                                cupos_reagenda = int(sesion_nueva.get("capacidad") or 0) - ocupacion.get(sesion_nueva["id"], 0)
-                                                with columnas_reagenda[indice_reagenda % 2]:
-                                                    with st.container(border=True):
-                                                        st.markdown(f"### {dias_semana_reagenda[sesion_nueva['_inicio_dt'].weekday()]}, {sesion_nueva['_inicio_dt'].strftime('%d-%m-%Y')}")
-                                                        st.markdown(f"**{str(sesion_nueva['hora_inicio'])[:5]}–{str(sesion_nueva['hora_fin'])[:5]} · {sesion_nueva.get('tipo_servicio', 'Clase')}**")
-                                                        st.write(f"📍 {nombre_local_portal.get(sesion_nueva.get('local_id'), 'Sede')} · 👤 {nombre_instructora_portal.get(sesion_nueva.get('instructora_id'), 'Instructor')}")
-                                                        st.caption(f"{cupos_reagenda} {'cupos disponibles' if cupos_reagenda != 1 else 'cupo disponible'} · Reagenda hasta {limite_reserva_cancelacion(sesion_nueva['_inicio_dt']).strftime('%d-%m-%Y a las %H:%M')}")
-                                                        if st.button(
-                                                            "Horario elegido ✓" if seleccion_reagenda else "Elegir este horario",
-                                                            key=f"elegir_reagenda_{id_alumno_portal}_{reserva_seleccionada_cancelable['id']}_{sesion_nueva['id']}_{st.session_state.clear_portal_reserva}",
-                                                            type="primary" if seleccion_reagenda else "secondary",
-                                                            use_container_width=True,
-                                                        ):
-                                                            st.session_state[sesion_reagenda_key] = int(sesion_nueva["id"])
-                                                            st.rerun()
+                                            sesiones_reagenda_manana = [
+                                                s for s in sesiones_reagenda_dia
+                                                if s["_inicio_dt"].time().replace(tzinfo=None) < corte_turno_manana
+                                            ]
+                                            sesiones_reagenda_tarde = [
+                                                s for s in sesiones_reagenda_dia
+                                                if s["_inicio_dt"].time().replace(tzinfo=None) >= corte_turno_manana
+                                            ]
+                                            for nombre_turno, sesiones_turno in (("☀️ Mañana", sesiones_reagenda_manana), ("🌤️ Tarde", sesiones_reagenda_tarde)):
+                                                if sesiones_turno:
+                                                    st.markdown(f"#### {nombre_turno}")
+                                                    columnas_reagenda = st.columns(2)
+                                                    for indice_reagenda, sesion_nueva in enumerate(sesiones_turno):
+                                                        seleccion_reagenda = st.session_state.get(sesion_reagenda_key) == int(sesion_nueva["id"])
+                                                        cupos_reagenda = int(sesion_nueva.get("capacidad") or 0) - ocupacion.get(sesion_nueva["id"], 0)
+                                                        with columnas_reagenda[indice_reagenda % 2]:
+                                                            with st.container(border=True):
+                                                                st.markdown(f"### {dias_semana_reagenda[sesion_nueva['_inicio_dt'].weekday()]}, {sesion_nueva['_inicio_dt'].strftime('%d-%m-%Y')}")
+                                                                st.markdown(f"**{str(sesion_nueva['hora_inicio'])[:5]}–{str(sesion_nueva['hora_fin'])[:5]} · {sesion_nueva.get('tipo_servicio', 'Clase')}**")
+                                                                st.write(f"📍 {nombre_local_portal.get(sesion_nueva.get('local_id'), 'Sede')} · 👤 {nombre_instructora_portal.get(sesion_nueva.get('instructora_id'), 'Instructor')}")
+                                                                st.caption(f"{cupos_reagenda} {'cupos disponibles' if cupos_reagenda != 1 else 'cupo disponible'} · Reagenda hasta {limite_reserva_cancelacion(sesion_nueva['_inicio_dt']).strftime('%d-%m-%Y a las %H:%M')}")
+                                                                if st.button(
+                                                                    "Horario elegido ✓" if seleccion_reagenda else "Elegir este horario",
+                                                                    key=f"elegir_reagenda_{id_alumno_portal}_{reserva_seleccionada_cancelable['id']}_{sesion_nueva['id']}_{st.session_state.clear_portal_reserva}",
+                                                                    type="primary" if seleccion_reagenda else "secondary",
+                                                                    use_container_width=True,
+                                                                ):
+                                                                    st.session_state[sesion_reagenda_key] = int(sesion_nueva["id"])
+                                                                    st.rerun()
                                             if not sesiones_reagenda_dia:
                                                 st.info("No hay horarios disponibles para este día. Elige otra fecha en el calendario.")
 
@@ -2922,6 +2936,16 @@ else:
                                 fechas_agenda = dias_laborables_entre(fecha_minima_agenda, fecha_maxima_agenda, {d for d, habilitado in dias_habilitados.items() if habilitado}, {f.get("fecha") for f in feriados_agenda})
                                 fecha_inicio = selector_fecha_disponible("Fecha de Inicio:", fechas_agenda, key=f"mas_f_ini_{st.session_state.clear_agenda}", valor_inicial=fecha_minima_agenda)
                                 fecha_fin = selector_fecha_disponible("Fecha de Fin:", fechas_agenda, key=f"mas_f_fin_{st.session_state.clear_agenda}", valor_inicial=fecha_minima_agenda + timedelta(days=7))
+                                if fecha_inicio is not None and fecha_fin is not None and fecha_inicio <= fecha_fin:
+                                    fechas_operativas_rango = dias_laborables_entre(
+                                        fecha_inicio,
+                                        fecha_fin,
+                                        {d for d, habilitado in dias_habilitados.items() if habilitado},
+                                        {f.get("fecha") for f in feriados_agenda},
+                                    )
+                                else:
+                                    fechas_operativas_rango = []
+                                dias_disponibles_rango = {fecha.weekday() for fecha in fechas_operativas_rango}
                                 horas_agenda = horas_inicio_operativas(hora_apertura_estudio, hora_cierre_estudio, receso_inicio_estudio, receso_fin_estudio, duracion_agenda)
                                 hora_agenda = selector_hora("Hora de inicio:", horas_agenda, key=f"mas_hora_{st.session_state.clear_agenda}", valor_inicial=hora_apertura_estudio)
                                 st.caption(f"Duración de cada clase: {duracion_agenda} minutos (definida en Configuración).")
@@ -2934,14 +2958,31 @@ else:
                                 elif tipo_serv_agenda == "Privado": aforo_agenda = 1
                                 else: aforo_agenda = None
                                             
+                            firma_rango_dias = (
+                                f"{fecha_inicio.isoformat()}:{fecha_fin.isoformat()}"
+                                if fecha_inicio is not None and fecha_fin is not None else "sin-rango"
+                            )
+                            clave_firma_rango_dias = f"firma_rango_dias_{st.session_state.clear_agenda}"
+                            if st.session_state.get(clave_firma_rango_dias) != firma_rango_dias:
+                                for numero_dia in range(7):
+                                    st.session_state.pop(f"dia_{numero_dia}_{st.session_state.clear_agenda}", None)
+                                st.session_state[clave_firma_rango_dias] = firma_rango_dias
+                            for numero_dia in range(7):
+                                if numero_dia not in dias_disponibles_rango:
+                                    st.session_state.pop(f"dia_{numero_dia}_{st.session_state.clear_agenda}", None)
+
                             dias_seleccionados = []
                             nombres_dias = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado", "Domingo"]
                             cols_dias = st.columns(4)
                             for numero_dia, nombre_dia in enumerate(nombres_dias):
                                 with cols_dias[numero_dia % 4]:
-                                    habilitado = bool(dias_habilitados.get(numero_dia, False))
+                                    habilitado = bool(dias_habilitados.get(numero_dia, False)) and numero_dia in dias_disponibles_rango
                                     if st.checkbox(nombre_dia, value=False, disabled=not habilitado, key=f"dia_{numero_dia}_{st.session_state.clear_agenda}"):
                                         dias_seleccionados.append(numero_dia)
+                            if fecha_inicio is not None and fecha_fin is not None and fecha_inicio <= fecha_fin and not fechas_operativas_rango:
+                                st.info("El rango no contiene fechas operativas disponibles según la configuración y los feriados.")
+                            elif fechas_operativas_rango:
+                                st.caption("Solo puedes marcar los días habilitados que aparecen dentro del rango seleccionado.")
                                             
                             if st.button("Programar clases", type="primary", key=f"guardar_agenda_{st.session_state.clear_agenda}"):
                                 if not sede_agenda or not inst_agenda or not tipo_serv_agenda or fecha_inicio is None or fecha_fin is None or hora_agenda is None or (tipo_serv_agenda == "Grupal" and aforo_agenda is None): st.error("Completa sede, fechas, hora, instructor, modalidad y aforo si es grupal.")
@@ -2949,9 +2990,10 @@ else:
                                 elif fecha_inicio > fecha_fin: st.error("❌ Rango inválido.")
                                 elif fecha_fin > fecha_maxima_agenda: st.error(f"El rango no puede superar {dias_agenda_anticipacion} días desde hoy, según Configuración.")
                                 elif hora_agenda not in horas_inicio_operativas(hora_apertura_estudio, hora_cierre_estudio, receso_inicio_estudio, receso_fin_estudio, duracion_agenda): st.error("El horario debe permitir completar la clase antes del cierre y quedar fuera del receso.")
+                                elif not fechas_operativas_rango: st.error("El rango no contiene días operativos disponibles según la configuración y los feriados.")
                                 elif not dias_seleccionados: st.error("❌ Selecciona al menos un día.")
                                 else:
-                                    lista_feriados = {str(f.get("fecha"))[:10] for f in feriados_agenda}
+                                    fechas_operativas_rango_set = set(fechas_operativas_rango)
                                     instructora = opciones_inst[inst_agenda]
                                     inicio_agenda_dt = datetime.combine(fecha_inicio, hora_agenda)
                                     fin_dt = inicio_agenda_dt + timedelta(minutes=int(duracion_agenda))
@@ -2966,7 +3008,7 @@ else:
                                     fecha_actual = fecha_inicio
                                     while fecha_actual <= fecha_fin:
                                         num_dia = fecha_actual.weekday()
-                                        if num_dia in dias_seleccionados and dias_habilitados.get(num_dia, False) and (fecha_actual.isoformat() not in lista_feriados):
+                                        if fecha_actual in fechas_operativas_rango_set and num_dia in dias_seleccionados:
                                             nueva_sesion = {
                                                 "local_id": opciones_locales[sede_agenda],
                                                 "instructora_id": instructora["id"],
