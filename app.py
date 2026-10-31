@@ -17,6 +17,17 @@ from supabase import create_client, Client
 # 1. CONFIGURACIÓN DE LA PÁGINA (Debe ser la primera línea de Streamlit)
 st.set_page_config(page_title="Panel de Control", page_icon="🧘", layout="wide")
 
+# Cuando se elige un día del calendario, oculta su panel durante el rerun
+# mientras se actualiza la disponibilidad desde la base de datos.
+panel_calendario_hider = st.empty()
+panel_calendario_ocultar = st.session_state.pop("_panel_calendario_ocultar_en_rerun", None)
+if panel_calendario_ocultar:
+    clase_panel_calendario = html.escape(panel_calendario_ocultar, quote=True)
+    panel_calendario_hider.markdown(
+        f"<style>div[class*='{clase_panel_calendario}'] {{ display: none !important; }}</style>",
+        unsafe_allow_html=True,
+    )
+
 # Identidad visual: calma, movimiento y claridad para una escuela profesional de Pilates.
 st.markdown("""
 <style>
@@ -294,6 +305,12 @@ def etiqueta_fecha_opcion(fecha):
     dias = ("Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado", "Domingo")
     return f"{dias[fecha.weekday()]}, {fecha.strftime('%d-%m-%Y')}"
 
+def seleccionar_fecha_calendario(clave_fecha, fecha, clave_abierto, clase_panel):
+    """Selecciona el día y oculta el panel mientras se completa el rerun."""
+    st.session_state[clave_fecha] = fecha
+    st.session_state[clave_abierto] = False
+    st.session_state["_panel_calendario_ocultar_en_rerun"] = clase_panel
+
 def seleccionar_solo_una_casilla(claves, clave_activa):
     """Al marcar una fila, desmarca las demás opciones del mismo grupo."""
     if st.session_state.get(clave_activa):
@@ -376,17 +393,16 @@ def selector_fecha_disponible(etiqueta, opciones, key, valor_inicial=None, ayuda
                 fecha = datetime(mes_actual[0], mes_actual[1], numero_dia).date()
                 habilitada = fecha in disponibles_mes
                 seleccionada = fecha == fecha_seleccionada
-                if columna.button(
+                columna.button(
                     f"{numero_dia:02d}",
                     key=f"{key}__dia_{fecha.isoformat()}",
                     disabled=not habilitada,
                     type="primary" if seleccionada else "secondary",
                     use_container_width=True,
                     help=etiqueta_fecha_opcion(fecha) if habilitada else "Día no disponible",
-                ) and habilitada:
-                    st.session_state[clave_fecha] = fecha
-                    st.session_state[clave_abierto] = False
-                    st.rerun()
+                    on_click=seleccionar_fecha_calendario,
+                    args=(clave_fecha, fecha, clave_abierto, f"st-key-{key}__panel"),
+                )
 
     return fecha_seleccionada
 
