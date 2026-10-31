@@ -328,18 +328,23 @@ def selector_fecha_disponible(etiqueta, opciones, key, valor_inicial=None, ayuda
 
     clave_campo_fecha = f"{key}__campo_fecha"
     st.session_state[clave_campo_fecha] = fecha_seleccionada.strftime("%d-%m-%Y")
-    columna_fecha, columna_icono = st.columns([10, 1.4], gap="small", vertical_alignment="bottom")
-    with columna_fecha:
-        st.text_input(
-            etiqueta,
-            disabled=True,
-            key=clave_campo_fecha,
-            help=ayuda,
-        )
-    with columna_icono:
-        if st.button(" ", icon=":material/calendar_month:", key=f"{key}__abrir_calendario"):
-            st.session_state[clave_abierto] = not st.session_state.get(clave_abierto, False)
-            st.rerun()
+    with st.container(key=f"{key}__selector", width=400):
+        columna_fecha, columna_icono = st.columns([10, 1.4], gap="small", vertical_alignment="bottom")
+        with columna_fecha:
+            st.text_input(
+                etiqueta,
+                disabled=True,
+                key=clave_campo_fecha,
+                help=ayuda,
+            )
+        with columna_icono:
+            if st.button(" ", icon=":material/calendar_month:", key=f"{key}__abrir_calendario"):
+                st.session_state[clave_abierto] = not st.session_state.get(clave_abierto, False)
+                st.rerun()
+    st.markdown(
+        f"<style>div[class*='st-key-{key}__selector'] [data-testid='stTextInput'] input {{ height:2.7rem !important; min-height:2.7rem !important; }} div[class*='st-key-{key}__abrir_calendario'] button {{ width:2.7rem !important; min-width:2.7rem !important; height:2.7rem !important; min-height:2.7rem !important; padding:0 !important; border:0 !important; background:transparent !important; box-shadow:none !important; transform:none !important; color:var(--pilates-ink) !important; }} div[class*='st-key-{key}__abrir_calendario'] button:hover {{ border:0 !important; background:transparent !important; box-shadow:none !important; transform:none !important; }}</style>",
+        unsafe_allow_html=True,
+    )
 
     if not st.session_state.get(clave_abierto, False):
         return fecha_seleccionada
