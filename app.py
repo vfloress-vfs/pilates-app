@@ -7,6 +7,7 @@ import html
 import re
 import unicodedata
 import io
+import time as time_module
 import calendar as calendario_lib
 import pandas as pd
 from datetime import datetime, timedelta, time as datetime_time
@@ -248,8 +249,12 @@ def fecha_visible(valor, incluir_hora=False):
     return fecha.strftime("%d-%m-%Y %H:%M" if incluir_hora else "%d-%m-%Y")
 
 try:
-    configuracion_res = supabase.table("configuracion_estudio").select("*").eq("id", 1).limit(1).execute()
-    configuracion_estudio = {**CONFIG_ESTUDIO_DEFAULT, **(configuracion_res.data[0] if configuracion_res.data else {})}
+    @st.cache_data(ttl=60, show_spinner=False)
+    def cargar_configuracion_estudio():
+        respuesta = supabase.schema("StudioPilates").table("configuracion_estudio").select("*").eq("id", 1).limit(1).execute()
+        return respuesta.data[0] if respuesta.data else {}
+
+    configuracion_estudio = {**CONFIG_ESTUDIO_DEFAULT, **(cargar_configuracion_estudio() or {})}
     config_estudio_disponible = True
 except Exception:
     configuracion_estudio = dict(CONFIG_ESTUDIO_DEFAULT)
@@ -553,6 +558,14 @@ def registrar_intento_login_alumno(alumno_id, login_correcto):
         return False, None
     return bool(filas[0].get("acceso_permitido")), filas[0].get("bloqueado_hasta")
 
+def marcar_inasistencias_si_corresponde():
+    """Mantiene el respaldo de cierre sin llamar la RPC en cada rerun de Streamlit."""
+    ahora_monotonic = time_module.monotonic()
+    if ahora_monotonic - st.session_state.get("ultimo_cierre_inasistencias", 0) < 300:
+        return
+    st.session_state.ultimo_cierre_inasistencias = ahora_monotonic
+    supabase.rpc("marcar_inasistencias_vencidas", {}).execute()
+
 def convertir_a_datetime_utc(valor):
     if not valor:
         return None
@@ -566,7 +579,7 @@ def convertir_a_datetime_utc(valor):
 
 def verificar_primer_inicio():
     # Un error de conexión/permisos nunca debe habilitar el alta inicial.
-    respuesta = supabase.table("usuarios_admin").select("id", count="exact").limit(1).execute()
+    respuesta = supabase.schema("StudioPilates").table("usuarios_admin").select("id", count="exact").limit(1).execute()
     if respuesta.count is None:
         raise RuntimeError("Supabase no devolvió el conteo de administradores.")
     return respuesta.count == 0
@@ -630,7 +643,7 @@ if primer_inicio:
         else:
             try:
                 clave_segura = encriptar_contrasena(nueva_clave)
-                nuevo_admin = supabase.table("usuarios_admin").insert({
+                nuevo_admin = supabase.schema("StudioPilates").table("usuarios_admin").insert({
                     "usuario": nuevo_usuario.strip(),
                     "contrasena_encriptada": clave_segura,
                     "es_superadmin": True,
@@ -694,7 +707,7 @@ else:
             st.session_state.alumno_portal_ultima_actividad = ahora_utc.timestamp()
             try:
                 cuenta_alumno = (
-                    supabase.table("alumnos")
+                    supabase.schema("StudioPilates").table("alumnos")
                     .select("id,nombre,apellido,telefono,contrasena_encriptada,debe_cambiar_contrasena,acceso_bloqueado_hasta")
                     .eq("id", alumno_portal_id)
                     .limit(1)
@@ -727,7 +740,7 @@ else:
                 else:
                     try:
                         consulta_alumno_login = (
-                            supabase.table("alumnos")
+                            supabase.schema("StudioPilates").table("alumnos")
                             .select("id,nombre,apellido,telefono,contrasena_encriptada,debe_cambiar_contrasena,acceso_bloqueado_hasta")
                             .eq("telefono", telefono_ingresado.strip())
                             .limit(1)
@@ -782,7 +795,7 @@ else:
                 else:
                     try:
                         hash_nuevo_alumno = encriptar_contrasena(clave_temporal_nueva)
-                        supabase.table("alumnos").update({
+                        supabase.schema("StudioPilates").table("alumnos").update({
                             "contrasena_encriptada": hash_nuevo_alumno,
                             "debe_cambiar_contrasena": False,
                             "intentos_login_fallidos": 0,
@@ -839,7 +852,7 @@ else:
                     else:
                         try:
                             hash_nuevo_alumno = encriptar_contrasena(clave_nueva_alumno)
-                            supabase.table("alumnos").update({
+                            supabase.schema("StudioPilates").table("alumnos").update({
                                 "contrasena_encriptada": hash_nuevo_alumno,
                                 "debe_cambiar_contrasena": False,
                                 "intentos_login_fallidos": 0,
@@ -865,10 +878,10 @@ else:
 
                 # Respaldo para instalaciones sin pg_cron; el cron de la BD sigue siendo el proceso automático principal.
                 try:
-                    supabase.rpc("marcar_inasistencias_vencidas", {}).execute()
+                    marcar_inasistencias_si_corresponde()
                 except Exception:
                     pass
-                alumno = supabase.table("alumnos").select("id,nombre,apellido").eq("telefono", telefono_alumno.strip()).execute()
+                alumno = supabase.schema("StudioPilates").table("alumnos").select("id,nombre,apellido").eq("telefono", telefono_alumno.strip()).execute()
                 if not alumno.data:
                     st.error("No se pudo cargar la información del alumno. Contacta al estudio.")
                     st.stop()
@@ -878,7 +891,7 @@ else:
                     st.success(st.session_state.pop("aviso_portal_mensaje", "La operación se completó correctamente."))
 
                 paquetes_res = (
-                    supabase.table("paquetes")
+                    supabase.schema("StudioPilates").table("paquetes")
                     .select("id,modalidad_plan,tipo_paquete,clases_restantes,fecha_vencimiento,local_id_fijo,pagado")
                     .eq("alumno_id", id_alumno_portal).eq("estado", "Activo")
                     .eq("pagado", True).gte("fecha_vencimiento", ahora_portal.date().isoformat())
@@ -902,7 +915,7 @@ else:
                     st.info("Presenta el QR correspondiente a tu clase de hoy al llegar para marcar tu asistencia. El lector lo acepta desde 30 minutos antes del inicio y hasta el fin de la clase.")
                     try:
                         fecha_hoy_portal = ahora_portal.date().isoformat()
-                        reservas_hoy_portal = (supabase.table("reservas")
+                        reservas_hoy_portal = (supabase.schema("StudioPilates").table("reservas")
                             .select("id,sesion_id,fecha_clase,hora_clase,tipo_servicio,local_id,instructora_id,estado,qr_token")
                             .eq("alumno_id", id_alumno_portal)
                             .eq("fecha_clase", fecha_hoy_portal)
@@ -912,7 +925,7 @@ else:
                         ids_sesiones_hoy = list({r.get("sesion_id") for r in reservas_hoy_portal if r.get("sesion_id")})
                         sesiones_hoy_portal = []
                         if ids_sesiones_hoy:
-                            sesiones_hoy_portal = (supabase.table("sesiones_clase")
+                            sesiones_hoy_portal = (supabase.schema("StudioPilates").table("sesiones_clase")
                                 .select("id,local_id,instructora_id,fecha_clase,hora_inicio,hora_fin,tipo_servicio,estado")
                                 .in_("id", ids_sesiones_hoy)
                                 .eq("fecha_clase", fecha_hoy_portal)
@@ -921,8 +934,8 @@ else:
                         sesiones_hoy_por_id = {int(s["id"]): s for s in sesiones_hoy_portal}
                         reservas_qr_hoy = [r for r in reservas_hoy_portal if r.get("sesion_id") and int(r["sesion_id"]) in sesiones_hoy_por_id]
                         if reservas_qr_hoy:
-                            locales_qr_hoy = supabase.table("locales").select("id,nombre").execute().data or []
-                            instructores_qr_hoy = supabase.table("instructoras").select("id,nombre").execute().data or []
+                            locales_qr_hoy = supabase.schema("StudioPilates").table("locales").select("id,nombre").execute().data or []
+                            instructores_qr_hoy = supabase.schema("StudioPilates").table("instructoras").select("id,nombre").execute().data or []
                             nombres_sedes_qr_hoy = {int(x["id"]): x.get("nombre", "Sede") for x in locales_qr_hoy}
                             nombres_instructores_qr_hoy = {int(x["id"]): x.get("nombre", "Instructor") for x in instructores_qr_hoy}
                             columnas_qr_hoy = st.columns(2)
@@ -954,14 +967,14 @@ else:
                         st.error(f"No se pudieron cargar los pases de hoy: {error_carga_qr_hoy}")
 
                 limite_agenda = ahora_portal.date() + timedelta(days=dias_agenda_anticipacion)
-                sesiones_portal = supabase.table("sesiones_clase").select(
+                sesiones_portal = supabase.schema("StudioPilates").table("sesiones_clase").select(
                     "id,local_id,instructora_id,fecha_clase,hora_inicio,hora_fin,tipo_servicio,capacidad,estado"
                 ).eq("estado", "Programada").gte("fecha_clase", ahora_portal.date().isoformat()).lte(
                     "fecha_clase", limite_agenda.isoformat()
                 ).order("fecha_clase").order("hora_inicio").execute().data or []
-                dias_portal = supabase.table("dias_operativos").select("numero_dia").eq("habilitado", True).execute().data or []
+                dias_portal = supabase.schema("StudioPilates").table("dias_operativos").select("numero_dia").eq("habilitado", True).execute().data or []
                 dias_habilitados_portal = {int(d["numero_dia"]) for d in dias_portal}
-                feriados_portal_res = supabase.table("feriados").select("fecha").gte(
+                feriados_portal_res = supabase.schema("StudioPilates").table("feriados").select("fecha").gte(
                     "fecha", ahora_portal.date().isoformat()
                 ).lte("fecha", limite_agenda.isoformat()).execute()
                 fechas_bloqueadas_portal = {str(f["fecha"]) for f in (feriados_portal_res.data or [])}
@@ -982,15 +995,15 @@ else:
                 reservas_agendadas = []
                 sesiones_reservadas_alumno = set()
                 if ids_sesiones:
-                    reservas_agendadas = supabase.table("reservas").select("sesion_id,estado,alumno_id").in_("sesion_id", ids_sesiones).eq("estado", "Programada").execute().data or []
+                    reservas_agendadas = supabase.schema("StudioPilates").table("reservas").select("sesion_id,estado,alumno_id").in_("sesion_id", ids_sesiones).eq("estado", "Programada").execute().data or []
                 ocupacion = {}
                 for reserva_activa in reservas_agendadas:
                     id_sesion = reserva_activa.get("sesion_id")
                     ocupacion[id_sesion] = ocupacion.get(id_sesion, 0) + 1
                     if str(reserva_activa.get("alumno_id")) == str(id_alumno_portal):
                         sesiones_reservadas_alumno.add(int(id_sesion))
-                locales_portal = supabase.table("locales").select("id,nombre").execute().data or []
-                instructoras_portal = supabase.table("instructoras").select("id,nombre").execute().data or []
+                locales_portal = supabase.schema("StudioPilates").table("locales").select("id,nombre").execute().data or []
+                instructoras_portal = supabase.schema("StudioPilates").table("instructoras").select("id,nombre").execute().data or []
                 nombre_local_portal = {x["id"]: x.get("nombre", "Sede") for x in locales_portal}
                 nombre_instructora_portal = {x["id"]: x.get("nombre", "Instructora") for x in instructoras_portal}
                 sesiones_con_cupo = [
@@ -1096,12 +1109,18 @@ else:
                                         st.session_state.pop(sesion_portal_key, None)
                                         st.rerun()
                                     except Exception as error_reserva:
-                                        st.error(f"No se pudo reservar: {error_reserva}")
+                                        detalle_reserva = str(error_reserva).lower()
+                                        if "ya tienes una reserva" in detalle_reserva or "reserva activa" in detalle_reserva:
+                                            st.info("Ya tienes una reserva para este horario. Puedes verla en ‘Mis clases’.")
+                                        elif "aforo" in detalle_reserva or "completó" in detalle_reserva or "disponible" in detalle_reserva:
+                                            st.warning("Ese horario acaba de dejar de estar disponible. Elige otra clase de la lista actualizada.")
+                                        else:
+                                            st.error("No se pudo completar la reserva. Inténtalo nuevamente o contacta al estudio.")
                         else:
                             st.info("Tus planes de sede fija no coinciden con las sedes de las clases disponibles.")
 
                 with tab_historial_portal:
-                    reservas_alumno = supabase.table("reservas").select(
+                    reservas_alumno = supabase.schema("StudioPilates").table("reservas").select(
                         "id,sesion_id,paquete_id,local_id,instructora_id,fecha_clase,hora_clase,tipo_servicio,estado,qr_token"
                     ).eq("alumno_id", id_alumno_portal).order("fecha_clase", desc=False).limit(200).execute().data or []
                     reservas_pasadas = [r for r in reservas_alumno if r.get("estado") in {"Asistencia", "Inasistencia"}]
@@ -1124,7 +1143,7 @@ else:
                             ids_historial = {r.get("sesion_id") for r in reservas_alumno if r.get("sesion_id")}
                             datos_sesion_historial = {}
                             if ids_historial:
-                                filas_sesion_historial = supabase.table("sesiones_clase").select(
+                                filas_sesion_historial = supabase.schema("StudioPilates").table("sesiones_clase").select(
                                     "id,local_id,instructora_id,fecha_clase,hora_inicio,hora_fin,tipo_servicio,estado"
                                 ).in_("id", list(ids_historial)).execute().data or []
                                 datos_sesion_historial = {s["id"]: s for s in filas_sesion_historial}
@@ -1281,7 +1300,7 @@ else:
                                 with pestaña_reagendar:
                                     st.caption("Elige otro horario disponible. Se conserva la clase ya descontada de tu plan y el plazo se valida según Configuración.")
                                     try:
-                                        paquete_reserva = (supabase.table("paquetes")
+                                        paquete_reserva = (supabase.schema("StudioPilates").table("paquetes")
                                             .select("id,modalidad_plan,local_id_fijo")
                                             .eq("id", reserva_seleccionada_cancelable.get("paquete_id"))
                                             .eq("alumno_id", id_alumno_portal)
@@ -1373,7 +1392,7 @@ else:
                 st.rerun()
             if entrar_instructor:
                 try:
-                    cuenta_instructor = (supabase.table("usuarios_instructores")
+                    cuenta_instructor = (supabase.schema("StudioPilates").table("usuarios_instructores")
                         .select("id,usuario,contrasena_encriptada,instructora_id,activo,debe_cambiar_contrasena,acceso_bloqueado_hasta,instructoras(nombre,activo)")
                         .eq("usuario", usuario_instructor_login.strip()).eq("activo", True).limit(1).execute().data or [])
                     cuenta = cuenta_instructor[0] if cuenta_instructor else None
@@ -1421,7 +1440,7 @@ else:
             if aviso_clave_instructor:
                 st.success(aviso_clave_instructor)
             st.success(f"Hola, {st.session_state.instructor_sesion_nombre}.")
-            cuenta_sesion_inst = (supabase.table("usuarios_instructores").select("id,contrasena_encriptada,activo,debe_cambiar_contrasena")
+            cuenta_sesion_inst = (supabase.schema("StudioPilates").table("usuarios_instructores").select("id,contrasena_encriptada,activo,debe_cambiar_contrasena")
                                   .eq("id", st.session_state.instructor_cuenta_id).eq("instructora_id", id_instructor_portal).limit(1).execute().data or [])
             if (not cuenta_sesion_inst or not cuenta_sesion_inst[0].get("activo", False)
                     or not hmac.compare_digest(str(cuenta_sesion_inst[0].get("contrasena_encriptada") or ""), str(st.session_state.get("instructor_hash_sesion", "")))):
@@ -1443,7 +1462,7 @@ else:
                         st.error("Las contraseñas no coinciden.")
                     else:
                         hash_temporal_inst = encriptar_contrasena(clave_temp_inst)
-                        supabase.table("usuarios_instructores").update({"contrasena_encriptada": hash_temporal_inst, "debe_cambiar_contrasena": False, "intentos_login_fallidos": 0, "acceso_bloqueado_hasta": None}).eq("id", st.session_state.instructor_cuenta_id).execute()
+                        supabase.schema("StudioPilates").table("usuarios_instructores").update({"contrasena_encriptada": hash_temporal_inst, "debe_cambiar_contrasena": False, "intentos_login_fallidos": 0, "acceso_bloqueado_hasta": None}).eq("id", st.session_state.instructor_cuenta_id).execute()
                         st.session_state.instructor_hash_sesion = hash_temporal_inst
                         st.session_state.instructor_clave_flash = "Tu contraseña se actualizó correctamente. Ya puedes usar el portal."
                         st.session_state.instructor_debe_cambiar_clave = False
@@ -1466,20 +1485,20 @@ else:
                         st.error("Las contraseñas nuevas no coinciden.")
                     else:
                         hash_nuevo_inst = encriptar_contrasena(clave_nueva_inst)
-                        supabase.table("usuarios_instructores").update({"contrasena_encriptada": hash_nuevo_inst}).eq("id", st.session_state.instructor_cuenta_id).execute()
+                        supabase.schema("StudioPilates").table("usuarios_instructores").update({"contrasena_encriptada": hash_nuevo_inst}).eq("id", st.session_state.instructor_cuenta_id).execute()
                         st.session_state.instructor_hash_sesion = hash_nuevo_inst
                         st.session_state.instructor_clave_flash = "Tu contraseña se actualizó correctamente."
                         st.session_state.clear_clave_instructor += 1
                         st.rerun()
             try:
-                sesiones_instructor_portal = supabase.table("sesiones_clase").select(
+                sesiones_instructor_portal = supabase.schema("StudioPilates").table("sesiones_clase").select(
                     "id,local_id,fecha_clase,hora_inicio,hora_fin,tipo_servicio,capacidad,estado,pago_por_clase_aplicado"
                 ).eq("instructora_id", id_instructor_portal).order("fecha_clase").order("hora_inicio").limit(1000).execute().data or []
-                sedes_instructor_portal = supabase.table("locales").select("id,nombre").execute().data or []
+                sedes_instructor_portal = supabase.schema("StudioPilates").table("locales").select("id,nombre").execute().data or []
                 sedes_instructor_map = {int(x["id"]): x.get("nombre", "Sede") for x in sedes_instructor_portal}
                 reservas_instructor_portal = []
                 if sesiones_instructor_portal:
-                    reservas_instructor_portal = supabase.table("reservas").select(
+                    reservas_instructor_portal = supabase.schema("StudioPilates").table("reservas").select(
                         "sesion_id,estado"
                     ).in_("sesion_id", [s["id"] for s in sesiones_instructor_portal]).execute().data or []
                 conteo_alumnos_sesion = {}
@@ -1533,11 +1552,11 @@ else:
                     st.caption("Consulta las clases impartidas, las asistencias y las inasistencias registradas.")
                     mostrar_clases_instructor(historial_clases_instructor)
                 with tab_pagos_instructor:
-                    pagos_instructor_portal = supabase.table("pagos_instructoras").select(
+                    pagos_instructor_portal = supabase.schema("StudioPilates").table("pagos_instructoras").select(
                         "id,sesion_id,fecha_pago,importe,referencia"
                     ).eq("instructora_id", id_instructor_portal).order("fecha_pago", desc=True).limit(1000).execute().data or []
                     if pagos_instructor_portal:
-                        sesiones_pago_portal = supabase.table("sesiones_clase").select(
+                        sesiones_pago_portal = supabase.schema("StudioPilates").table("sesiones_clase").select(
                             "id,local_id,fecha_clase,hora_inicio,tipo_servicio"
                         ).in_("id", [p["sesion_id"] for p in pagos_instructor_portal]).execute().data or []
                         sesiones_pago_map = {s["id"]: s for s in sesiones_pago_portal}
@@ -1567,7 +1586,7 @@ else:
         if aviso_checkin:
             st.success(aviso_checkin)
         try:
-            supabase.rpc("marcar_inasistencias_vencidas", {}).execute()
+            marcar_inasistencias_si_corresponde()
         except Exception:
             pass
         foto_qr = st.camera_input("Enfoca el código QR del alumno", key=f"camara_checkin_{st.session_state.clear_checkin}")
@@ -1611,7 +1630,7 @@ else:
                     esquema_antiguo = False
                     try:
                         resultado = (
-                            supabase.table("usuarios_admin")
+                            supabase.schema("StudioPilates").table("usuarios_admin")
                             .select("id,usuario,contrasena_encriptada,es_superadmin,permisos")
                             .eq("usuario", user_input.strip())
                             .limit(1)
@@ -1623,7 +1642,7 @@ else:
                         # Acceso completo temporal para las cuentas existentes mientras se aplica el SQL.
                         esquema_antiguo = True
                         resultado = (
-                            supabase.table("usuarios_admin")
+                            supabase.schema("StudioPilates").table("usuarios_admin")
                             .select("id,usuario,contrasena_encriptada")
                             .eq("usuario", user_input.strip())
                             .limit(1)
@@ -1638,7 +1657,7 @@ else:
                     if coincide:
                         if migrar_hash:
                             try:
-                                supabase.table("usuarios_admin").update({
+                                supabase.schema("StudioPilates").table("usuarios_admin").update({
                                     "contrasena_encriptada": encriptar_contrasena(pass_input)
                                 }).eq("id", admins[0]["id"]).execute()
                             except Exception:
@@ -1698,22 +1717,22 @@ else:
             locales_tiene_baja = True
             try:
                 try:
-                    locales_res = supabase.table("locales").select("id,nombre,direccion,activo,max_camillas").order("nombre").execute()
+                    locales_res = supabase.schema("StudioPilates").table("locales").select("id,nombre,direccion,activo,max_camillas").order("nombre").execute()
                     lista_locales_admin = locales_res.data or []
                 except Exception as error_columna_local:
                     if "42703" not in str(error_columna_local) and getattr(error_columna_local, "code", None) != "42703":
                         raise
                     locales_tiene_baja = False
                     try:
-                        locales_res = supabase.table("locales").select("id,nombre,direccion,activo,max_camillas").order("nombre").execute()
+                        locales_res = supabase.schema("StudioPilates").table("locales").select("id,nombre,direccion,activo,max_camillas").order("nombre").execute()
                         lista_locales_admin = [{**local, "activo": local.get("activo", True)} for local in (locales_res.data or [])]
                     except Exception:
-                        locales_res = supabase.table("locales").select("id,nombre,direccion").order("nombre").execute()
+                        locales_res = supabase.schema("StudioPilates").table("locales").select("id,nombre,direccion").order("nombre").execute()
                         lista_locales_admin = [{**local, "activo": True, "max_camillas": 8} for local in (locales_res.data or [])]
                 lista_locales = [local for local in lista_locales_admin if local.get("activo", True)]
                 opciones_locales = {local['nombre']: local['id'] for local in lista_locales}
                 
-                planes_res = supabase.table("tipos_paquetes").select("nombre_paquete", "clases_totales", "costo", "vigencia_dias").eq("activo", True).execute()
+                planes_res = supabase.schema("StudioPilates").table("tipos_paquetes").select("nombre_paquete", "clases_totales", "costo", "vigencia_dias").eq("activo", True).execute()
                 lista_p_db = planes_res.data if planes_res.data else []
                 opciones_planes = {p['nombre_paquete']: p['clases_totales'] for p in lista_p_db}
                 costos_planes = {p['nombre_paquete']: float(p['costo']) for p in lista_p_db}
@@ -1774,7 +1793,7 @@ else:
                             if st.button("Guardar sede"):
                                 if nombre_local:
                                     try:
-                                        supabase.table("locales").insert({"nombre": nombre_local, "direccion": direccion_local}).execute()
+                                        supabase.schema("StudioPilates").table("locales").insert({"nombre": nombre_local, "direccion": direccion_local}).execute()
                                         st.session_state.mensaje_resultado_app = f"La sede {nombre_local.strip()} quedó registrada."
                                         st.session_state.clear_local += 1
                                         st.rerun()
@@ -1827,7 +1846,7 @@ else:
                                         st.error("El nombre de la sede es obligatorio.")
                                     else:
                                         try:
-                                            supabase.table("locales").update({
+                                            supabase.schema("StudioPilates").table("locales").update({
                                                 "nombre": nombre_local_editado.strip(),
                                                 "direccion": direccion_local_editada.strip()
                                             }).eq("id", local_id).execute()
@@ -1850,7 +1869,7 @@ else:
                                             st.error("Ejecuta primero supabase_locales_migration.sql en Supabase.")
                                         else:
                                             try:
-                                                supabase.table("locales").update({"activo": False}).eq("id", local_id).execute()
+                                                supabase.schema("StudioPilates").table("locales").update({"activo": False}).eq("id", local_id).execute()
                                                 st.session_state.mensaje_resultado_app = f"La sede {local_seleccionado['nombre']} quedó inactiva."
                                                 st.session_state.clear_local += 1
                                                 st.rerun()
@@ -1859,7 +1878,7 @@ else:
                                 elif local_id:
                                     if st.button("Reactivar sede", key=f"reactivar_local_{local_id}_{st.session_state.clear_local}"):
                                         try:
-                                            supabase.table("locales").update({"activo": True}).eq("id", local_id).execute()
+                                            supabase.schema("StudioPilates").table("locales").update({"activo": True}).eq("id", local_id).execute()
                                             st.session_state.mensaje_resultado_app = f"La sede {local_seleccionado['nombre']} volvió a estar activa."
                                             st.session_state.clear_local += 1
                                             st.rerun()
@@ -1955,7 +1974,7 @@ else:
                                 st.error("❌ Confirma que el alumno ya pagó el plan para continuar con la inscripción.")
                             else:
                                 try:
-                                    nuevo_alumno = supabase.table("alumnos").insert({
+                                    nuevo_alumno = supabase.schema("StudioPilates").table("alumnos").insert({
                                         "nombre": a_nombre.strip(),
                                         "apellido": a_apellido.strip(),
                                         "telefono": a_telefono.strip(),
@@ -1971,7 +1990,7 @@ else:
                                     id_paquete_creado = None
                                     try:
                                         fecha_pago = datetime.now(ZoneInfo("America/Lima")).isoformat()
-                                        nuevo_paquete = supabase.table("paquetes").insert({
+                                        nuevo_paquete = supabase.schema("StudioPilates").table("paquetes").insert({
                                             "alumno_id": id_alumno,
                                             "tipo_paquete": tipo_p,
                                             "modalidad_plan": modalidad,
@@ -1987,7 +2006,7 @@ else:
                                         if not nuevo_paquete.data:
                                             raise RuntimeError("No se recibió el identificador del paquete.")
                                         id_paquete_creado = nuevo_paquete.data[0]["id"]
-                                        supabase.table("eventos_paquetes").insert({
+                                        supabase.schema("StudioPilates").table("eventos_paquetes").insert({
                                             "paquete_id": id_paquete_creado,
                                             "alumno_id": id_alumno,
                                             "tipo_evento": "inscripcion",
@@ -2006,8 +2025,8 @@ else:
                                         }).execute()
                                     except Exception:
                                         if id_paquete_creado is not None:
-                                            supabase.table("paquetes").delete().eq("id", id_paquete_creado).execute()
-                                        supabase.table("alumnos").delete().eq("id", id_alumno).execute()
+                                            supabase.schema("StudioPilates").table("paquetes").delete().eq("id", id_paquete_creado).execute()
+                                        supabase.schema("StudioPilates").table("alumnos").delete().eq("id", id_alumno).execute()
                                         raise
                                     st.session_state.aviso_inscripcion = f"Pago confirmado e inscripción registrada para {a_nombre.strip()} {a_apellido.strip()}."
                                     st.session_state.clear_ins += 1
@@ -2031,7 +2050,7 @@ else:
                     if aviso_renovacion:
                         st.success(aviso_renovacion)
                     try:
-                        alumnos_res = supabase.table("alumnos").select("id", "nombre", "apellido", "telefono").order("nombre").execute()
+                        alumnos_res = supabase.schema("StudioPilates").table("alumnos").select("id", "nombre", "apellido", "telefono").order("nombre").execute()
                         lista_alumnos = alumnos_res.data if alumnos_res.data else []
                         etiquetas_alumnos = {
                             al["id"]: f"{al['nombre']} {al['apellido']} — {al['telefono']}"
@@ -2048,7 +2067,7 @@ else:
                             id_alumno_sel = dicc_alumnos[alumno_sel]
                             hoy = datetime.now(ZoneInfo("America/Lima")).date().isoformat()
                             paquete_previo = (
-                                supabase.table("paquetes")
+                                supabase.schema("StudioPilates").table("paquetes")
                                 .select("id,clases_restantes,fecha_vencimiento,estado")
                                 .eq("alumno_id", id_alumno_sel)
                                 .eq("estado", "Activo")
@@ -2116,7 +2135,7 @@ else:
                                             fecha_vence_nueva = (datetime.now(ZoneInfo("America/Lima")).date() + timedelta(days=vigencias_planes.get(tipo_p_nuevo, 30))).isoformat()
                                             id_local_fijo_nuevo = opciones_locales[sede_assigned_new] if modalidad_nueva == "Fixed" else None
                                             fecha_pago_renovacion = datetime.now(ZoneInfo("America/Lima")).isoformat()
-                                            paquete_nuevo = supabase.table("paquetes").insert({
+                                            paquete_nuevo = supabase.schema("StudioPilates").table("paquetes").insert({
                                                 "alumno_id": id_alumno_sel, "tipo_paquete": tipo_p_nuevo, "modalidad_plan": modalidad_nueva,
                                                 "local_id_fijo": id_local_fijo_nuevo, "clases_totales": total_unificado, "clases_restantes": total_unificado,
                                                 "fecha_vencimiento": fecha_vence_nueva, "estado": "Activo", "pagado": True,
@@ -2126,10 +2145,10 @@ else:
                                                 raise RuntimeError("No se recibió el identificador del paquete renovado.")
                                             try:
                                                 if paquetes_vigentes:
-                                                    supabase.table("paquetes").update({"estado": "Agotado"}).in_(
+                                                    supabase.schema("StudioPilates").table("paquetes").update({"estado": "Agotado"}).in_(
                                                         "id", [p["id"] for p in paquetes_vigentes]
                                                     ).execute()
-                                                supabase.table("eventos_paquetes").insert({
+                                                supabase.schema("StudioPilates").table("eventos_paquetes").insert({
                                                     "paquete_id": paquete_nuevo.data[0]["id"],
                                                     "alumno_id": id_alumno_sel,
                                                     "tipo_evento": "renovacion",
@@ -2150,8 +2169,8 @@ else:
                                                 }).execute()
                                             except Exception:
                                                 for paquete_anterior in paquetes_vigentes:
-                                                    supabase.table("paquetes").update({"estado": paquete_anterior.get("estado", "Activo")}).eq("id", paquete_anterior["id"]).execute()
-                                                supabase.table("paquetes").delete().eq("id", paquete_nuevo.data[0]["id"]).execute()
+                                                    supabase.schema("StudioPilates").table("paquetes").update({"estado": paquete_anterior.get("estado", "Activo")}).eq("id", paquete_anterior["id"]).execute()
+                                                supabase.schema("StudioPilates").table("paquetes").delete().eq("id", paquete_nuevo.data[0]["id"]).execute()
                                                 raise
                                             st.session_state.aviso_renovacion = f"Pago confirmado y renovación registrada para {alumno_sel}: {total_unificado} clases disponibles."
                                             st.session_state.clear_ren += 1
@@ -2188,7 +2207,7 @@ else:
                             if st.button("Dar de Alta Plan"):
                                 if p_nombre.strip() and p_clases is not None and p_costo is not None:
                                     try:
-                                        supabase.table("tipos_paquetes").insert({"nombre_paquete": p_nombre.strip(), "clases_totales": int(p_clases), "costo": float(p_costo), "vigencia_dias": int(p_vigencia)}).execute()
+                                        supabase.schema("StudioPilates").table("tipos_paquetes").insert({"nombre_paquete": p_nombre.strip(), "clases_totales": int(p_clases), "costo": float(p_costo), "vigencia_dias": int(p_vigencia)}).execute()
                                         st.session_state.aviso_planes = f"Plan '{p_nombre.strip()}' añadido al catálogo."
                                         st.session_state.clear_plan += 1
                                         st.rerun()
@@ -2213,7 +2232,7 @@ else:
                             with col_tarifa_1:
                                 if st.button("Guardar precio y vigencia", key=f"actualizar_tarifa_comercial_{st.session_state.clear_tarifa}", disabled=not plan_a_modificar):
                                     try:
-                                        supabase.table("tipos_paquetes").update({"costo": float(nuevo_precio), "vigencia_dias": int(nueva_vigencia_plan)}).eq("nombre_paquete", plan_a_modificar).execute()
+                                        supabase.schema("StudioPilates").table("tipos_paquetes").update({"costo": float(nuevo_precio), "vigencia_dias": int(nueva_vigencia_plan)}).eq("nombre_paquete", plan_a_modificar).execute()
                                         st.session_state.aviso_planes = f"Precio y vigencia de '{plan_a_modificar}' actualizados."
                                         st.session_state.clear_tarifa += 1
                                         st.rerun()
@@ -2228,7 +2247,7 @@ else:
                         st.markdown("#### Catálogo de planes · precio de menor a mayor")
                         st.caption("La vigencia configurada se aplicará a las nuevas ventas, renovaciones y cambios de plan. Los paquetes ya vendidos conservan su fecha de vencimiento.")
                         try:
-                            todos_planes_res = supabase.table("tipos_paquetes").select("*").order("costo", desc=False).execute()
+                            todos_planes_res = supabase.schema("StudioPilates").table("tipos_paquetes").select("*").order("costo", desc=False).execute()
                             if todos_planes_res.data and len(todos_planes_res.data) > 0:
                                 import pandas as pd
                                 df_catalogo = pd.DataFrame(todos_planes_res.data)
@@ -2252,7 +2271,7 @@ else:
                                             actualizacion_plan["activo"] = bool(cambios["Disponible para Venta"])
                                         if actualizacion_plan:
                                             fila_catalogo = df_catalogo.iloc[indice_fila]
-                                            supabase.table("tipos_paquetes").update(actualizacion_plan).eq("id", int(fila_catalogo["id"])).execute()
+                                            supabase.schema("StudioPilates").table("tipos_paquetes").update(actualizacion_plan).eq("id", int(fila_catalogo["id"])).execute()
                                             planes_actualizados.append(str(fila_catalogo["nombre_paquete"]))
                                     if planes_actualizados:
                                         st.session_state.mensaje_resultado_app = f"Disponibilidad actualizada para: {', '.join(planes_actualizados)}."
@@ -2276,7 +2295,7 @@ else:
                         "4. Pagos realizados",
                     ], key="tabs_gestion_instructores", on_change="rerun")
                     try:
-                        instructoras_res = supabase.table("instructoras").select("id,nombre,telefono,pago_por_clase,activo").order("nombre").execute()
+                        instructoras_res = supabase.schema("StudioPilates").table("instructoras").select("id,nombre,telefono,pago_por_clase,activo").order("nombre").execute()
                         instructoras_db = instructoras_res.data or []
                     except Exception as e:
                         instructoras_db = []
@@ -2286,7 +2305,7 @@ else:
                         if instructoras_db:
                             try:
                                 sesiones_directorio_instructores = (
-                                    supabase.table("sesiones_clase")
+                                    supabase.schema("StudioPilates").table("sesiones_clase")
                                     .select("instructora_id,local_id")
                                     .limit(5000)
                                     .execute()
@@ -2358,7 +2377,7 @@ else:
                                             st.error("El nombre de la persona es obligatorio.")
                                         else:
                                             try:
-                                                supabase.table("instructoras").update({
+                                                supabase.schema("StudioPilates").table("instructoras").update({
                                                     "nombre": nombre_inst_editado.strip(),
                                                     "telefono": telefono_inst_editado.strip() or None,
                                                     "pago_por_clase": tarifa_inst_editada
@@ -2371,7 +2390,7 @@ else:
 
                                 with st.expander("Crear o restablecer contraseña del portal", expanded=False):
                                     try:
-                                        cuentas_de_instructora = supabase.table("usuarios_instructores").select("id,usuario").eq("instructora_id", instructora_actual["id"]).limit(1).execute().data or []
+                                        cuentas_de_instructora = supabase.schema("StudioPilates").table("usuarios_instructores").select("id,usuario").eq("instructora_id", instructora_actual["id"]).limit(1).execute().data or []
                                         if cuentas_de_instructora:
                                             cuenta_de_instructora = cuentas_de_instructora[0]
                                             st.caption(f"Cuenta: {cuenta_de_instructora['usuario']}. La persona deberá elegir una contraseña personal al ingresar.")
@@ -2385,7 +2404,7 @@ else:
                                                 elif clave_directorio_inst != clave_directorio_confirm:
                                                     st.error("Las contraseñas no coinciden.")
                                                 else:
-                                                    supabase.table("usuarios_instructores").update({"contrasena_encriptada": encriptar_contrasena(clave_directorio_inst), "debe_cambiar_contrasena": True, "intentos_login_fallidos": 0, "acceso_bloqueado_hasta": None}).eq("id", cuenta_de_instructora["id"]).execute()
+                                                    supabase.schema("StudioPilates").table("usuarios_instructores").update({"contrasena_encriptada": encriptar_contrasena(clave_directorio_inst), "debe_cambiar_contrasena": True, "intentos_login_fallidos": 0, "acceso_bloqueado_hasta": None}).eq("id", cuenta_de_instructora["id"]).execute()
                                                     st.session_state.aviso_instructora = "Contraseña temporal actualizada. El instructor deberá cambiarla al ingresar."
                                                     st.session_state.clear_gestion_instructoras += 1
                                                     st.rerun()
@@ -2405,12 +2424,12 @@ else:
                                                     st.error("Las contraseñas no coinciden.")
                                                 else:
                                                     usuario_nuevo_inst = usuario_directorio_inst.strip()
-                                                    en_admin_inst = supabase.table("usuarios_admin").select("id").ilike("usuario", usuario_nuevo_inst).limit(1).execute().data or []
-                                                    en_portal_inst = supabase.table("usuarios_instructores").select("id").ilike("usuario", usuario_nuevo_inst).limit(1).execute().data or []
+                                                    en_admin_inst = supabase.schema("StudioPilates").table("usuarios_admin").select("id").ilike("usuario", usuario_nuevo_inst).limit(1).execute().data or []
+                                                    en_portal_inst = supabase.schema("StudioPilates").table("usuarios_instructores").select("id").ilike("usuario", usuario_nuevo_inst).limit(1).execute().data or []
                                                     if en_admin_inst or en_portal_inst:
                                                         st.error("Ese nombre de usuario ya está en uso.")
                                                     else:
-                                                        supabase.table("usuarios_instructores").insert({"usuario": usuario_nuevo_inst, "contrasena_encriptada": encriptar_contrasena(clave_directorio_inst), "debe_cambiar_contrasena": True, "instructora_id": instructora_actual["id"], "activo": True, "creado_por": st.session_state.admin_id}).execute()
+                                                        supabase.schema("StudioPilates").table("usuarios_instructores").insert({"usuario": usuario_nuevo_inst, "contrasena_encriptada": encriptar_contrasena(clave_directorio_inst), "debe_cambiar_contrasena": True, "instructora_id": instructora_actual["id"], "activo": True, "creado_por": st.session_state.admin_id}).execute()
                                                         st.session_state.aviso_instructora = "Acceso del portal creado. El instructor deberá elegir su contraseña personal en el primer ingreso."
                                                         st.session_state.clear_gestion_instructoras += 1
                                                         st.rerun()
@@ -2426,7 +2445,7 @@ else:
                                         )
                                         if st.button("Dar de baja", key=f"baja_inst_{instructora_actual['id']}_{st.session_state.clear_gestion_instructoras}", disabled=not confirmar_baja_inst):
                                             try:
-                                                supabase.table("instructoras").update({"activo": False}).eq("id", instructora_actual["id"]).execute()
+                                                supabase.schema("StudioPilates").table("instructoras").update({"activo": False}).eq("id", instructora_actual["id"]).execute()
                                                 st.session_state.aviso_instructora = f"{instructora_actual['nombre']} quedó inactivo. Su historial se conserva."
                                                 st.session_state.clear_gestion_instructoras += 1
                                                 st.rerun()
@@ -2435,7 +2454,7 @@ else:
                                     else:
                                         if st.button("Reactivar instructor", key=f"reactivar_inst_{instructora_actual['id']}_{st.session_state.clear_gestion_instructoras}"):
                                             try:
-                                                supabase.table("instructoras").update({"activo": True}).eq("id", instructora_actual["id"]).execute()
+                                                supabase.schema("StudioPilates").table("instructoras").update({"activo": True}).eq("id", instructora_actual["id"]).execute()
                                                 st.session_state.aviso_instructora = f"{instructora_actual['nombre']} volvió a estar activo."
                                                 st.session_state.clear_gestion_instructoras += 1
                                                 st.rerun()
@@ -2444,7 +2463,7 @@ else:
 
                                 try:
                                     sesiones_inst_res = (
-                                        supabase.table("sesiones_clase")
+                                        supabase.schema("StudioPilates").table("sesiones_clase")
                                         .select("id,local_id,instructora_id,fecha_clase,hora_inicio,hora_fin,tipo_servicio,capacidad,estado,pago_por_clase_aplicado")
                                         .eq("instructora_id", instructora_actual["id"])
                                         .order("fecha_clase")
@@ -2454,7 +2473,7 @@ else:
                                     )
                                     sesiones_inst = sesiones_inst_res.data or []
                                     pagos_inst_res = (
-                                        supabase.table("pagos_instructoras")
+                                        supabase.schema("StudioPilates").table("pagos_instructoras")
                                         .select("id,sesion_id,fecha_pago,importe,referencia")
                                         .eq("instructora_id", instructora_actual["id"])
                                         .order("fecha_pago", desc=True)
@@ -2481,7 +2500,7 @@ else:
                                     reservas_activas_por_sesion = {}
                                     if ids_sesiones_inst:
                                         reservas_inst = (
-                                            supabase.table("reservas")
+                                            supabase.schema("StudioPilates").table("reservas")
                                             .select("id,sesion_id,alumno_id,estado")
                                             .in_("sesion_id", ids_sesiones_inst)
                                             .execute()
@@ -2713,7 +2732,7 @@ else:
                                             sesion_pagada = pagos_opciones[pago_sesion_label]
                                             try:
                                                 # Revalidar inmediatamente antes de registrar el pago.
-                                                verificacion_asistencia = supabase.table("reservas").select("id,alumno_id,estado").eq("sesion_id", sesion_pagada["id"]).execute().data or []
+                                                verificacion_asistencia = supabase.schema("StudioPilates").table("reservas").select("id,alumno_id,estado").eq("sesion_id", sesion_pagada["id"]).execute().data or []
                                                 estados_validos = {"asistencia", "asistio", "presente", "inasistencia", "no asistio", "ausente", "falta", "no show", "no-show"}
                                                 existe_evidencia = False
                                                 for reserva in verificacion_asistencia:
@@ -2725,7 +2744,7 @@ else:
                                                 if not existe_evidencia:
                                                     st.error("No se registró el pago: la clase no tiene alumnos con asistencia o inasistencia marcada.")
                                                     st.stop()
-                                                supabase.table("pagos_instructoras").insert({
+                                                supabase.schema("StudioPilates").table("pagos_instructoras").insert({
                                                     "sesion_id": sesion_pagada["id"],
                                                     "instructora_id": instructora_actual["id"],
                                                     "fecha_pago": datetime.now(ZoneInfo("America/Lima")).date().isoformat(),
@@ -2745,7 +2764,7 @@ else:
                                         st.markdown("#### Historial de pagos realizados")
                                         pagos_historial_ordenables = []
                                         ids_sesiones_pagadas = list({p["sesion_id"] for p in pagos_inst})
-                                        sesiones_pago_res = supabase.table("sesiones_clase").select(
+                                        sesiones_pago_res = supabase.schema("StudioPilates").table("sesiones_clase").select(
                                             "id,local_id,fecha_clase,tipo_servicio"
                                         ).in_("id", ids_sesiones_pagadas).execute()
                                         sesiones_por_id = {s["id"]: s for s in (sesiones_pago_res.data or [])}
@@ -2807,7 +2826,7 @@ else:
                                     st.error("Ingresa el pago fijo acordado por clase.")
                                 else:
                                     try:
-                                        supabase.table("instructoras").insert({
+                                        supabase.schema("StudioPilates").table("instructoras").insert({
                                             "nombre": nombre_inst_nueva.strip(),
                                             "telefono": telefono_inst_nueva.strip() or None,
                                             "pago_por_clase": tarifa_inst_nueva,
@@ -2828,11 +2847,11 @@ else:
                         st.caption("Cada fila muestra la clase, sede, duración, importe pagado y referencia.")
                         st.info("En Agenda de clases, las sesiones se cierran automáticamente al terminar si tuvieron reservas. Luego, en Buscar y gestionar, podrás registrar el pago correspondiente.")
                         try:
-                            pagos_globales = supabase.table("pagos_instructoras").select("*").order("fecha_pago", desc=True).limit(1000).execute().data or []
+                            pagos_globales = supabase.schema("StudioPilates").table("pagos_instructoras").select("*").order("fecha_pago", desc=True).limit(1000).execute().data or []
                             if pagos_globales:
-                                sesiones_globales = supabase.table("sesiones_clase").select("id,local_id,fecha_clase,hora_inicio,hora_fin,tipo_servicio").in_("id", list({p["sesion_id"] for p in pagos_globales})).execute().data or []
-                                instructora_global = {int(i["id"]): i["nombre"] for i in (supabase.table("instructoras").select("id,nombre").execute().data or [])}
-                                usuarios_global = {int(u["id"]): u.get("usuario", "—") for u in (supabase.table("usuarios_admin").select("id,usuario").execute().data or [])}
+                                sesiones_globales = supabase.schema("StudioPilates").table("sesiones_clase").select("id,local_id,fecha_clase,hora_inicio,hora_fin,tipo_servicio").in_("id", list({p["sesion_id"] for p in pagos_globales})).execute().data or []
+                                instructora_global = {int(i["id"]): i["nombre"] for i in (supabase.schema("StudioPilates").table("instructoras").select("id,nombre").execute().data or [])}
+                                usuarios_global = {int(u["id"]): u.get("usuario", "—") for u in (supabase.schema("StudioPilates").table("usuarios_admin").select("id,usuario").execute().data or [])}
                                 local_global = {int(l["id"]): l["nombre"] for l in lista_locales_admin}
                                 sesion_global_por_id = {int(s["id"]): s for s in sesiones_globales}
                                 detalle_pagos_global = []
@@ -2871,10 +2890,10 @@ else:
                         if aviso_agenda:
                             st.success(aviso_agenda)
                         try:
-                            dias_db = supabase.table("dias_operativos").select("nombre_dia", "numero_dia", "habilitado").execute()
+                            dias_db = supabase.schema("StudioPilates").table("dias_operativos").select("nombre_dia", "numero_dia", "habilitado").execute()
                             dias_habilitados = {d['numero_dia']: d['habilitado'] for d in dias_db.data} if dias_db.data else {}
                                             
-                            inst_res = supabase.table("instructoras").select("id", "nombre", "pago_por_clase").eq("activo", True).execute()
+                            inst_res = supabase.schema("StudioPilates").table("instructoras").select("id", "nombre", "pago_por_clase").eq("activo", True).execute()
                             lista_inst = inst_res.data if inst_res.data else []
                             opciones_inst = {f"{ins['nombre']} · S/ {float(ins.get('pago_por_clase') or 0):.2f} por clase": ins for ins in lista_inst}
                                             
@@ -2885,7 +2904,7 @@ else:
                                 fecha_minima_agenda = datetime.now(ZoneInfo("America/Lima")).date()
                                 fecha_maxima_agenda = fecha_minima_agenda + timedelta(days=dias_agenda_anticipacion)
                                 duracion_agenda = duracion_clase_default
-                                feriados_agenda = supabase.table("feriados").select("fecha").gte("fecha", fecha_minima_agenda.isoformat()).lte("fecha", fecha_maxima_agenda.isoformat()).execute().data or []
+                                feriados_agenda = supabase.schema("StudioPilates").table("feriados").select("fecha").gte("fecha", fecha_minima_agenda.isoformat()).lte("fecha", fecha_maxima_agenda.isoformat()).execute().data or []
                                 fechas_agenda = dias_laborables_entre(fecha_minima_agenda, fecha_maxima_agenda, {d for d, habilitado in dias_habilitados.items() if habilitado}, {f.get("fecha") for f in feriados_agenda})
                                 fecha_inicio = selector_fecha_disponible("Fecha de Inicio:", fechas_agenda, key=f"mas_f_ini_{st.session_state.clear_agenda}", valor_inicial=fecha_minima_agenda)
                                 fecha_fin = selector_fecha_disponible("Fecha de Fin:", fechas_agenda, key=f"mas_f_fin_{st.session_state.clear_agenda}", valor_inicial=fecha_minima_agenda + timedelta(days=7))
@@ -2947,7 +2966,7 @@ else:
                                                 "creado_por": st.session_state.get("admin_id"),
                                             }
                                             try:
-                                                supabase.table("sesiones_clase").insert(nueva_sesion).execute()
+                                                supabase.schema("StudioPilates").table("sesiones_clase").insert(nueva_sesion).execute()
                                                 creadas += 1
                                             except Exception as error_sesion:
                                                 if "23505" in str(error_sesion) or "duplicate" in str(error_sesion).lower():
@@ -2979,8 +2998,8 @@ else:
                                 st.error(f"No se pudo reintentar el cierre automático. Verifica que ejecutaste supabase_validar_estado_clases.sql en Supabase. Detalle: {error_cierre}")
                         try:
                             col_desde, col_hasta = st.columns(2)
-                            dias_reporte = supabase.table("dias_operativos").select("numero_dia,habilitado").execute().data or []
-                            feriados_reporte = supabase.table("feriados").select("fecha").execute().data or []
+                            dias_reporte = supabase.schema("StudioPilates").table("dias_operativos").select("numero_dia,habilitado").execute().data or []
+                            feriados_reporte = supabase.schema("StudioPilates").table("feriados").select("fecha").execute().data or []
                             hoy_reporte = datetime.now(ZoneInfo("America/Lima")).date()
                             fechas_reporte = dias_laborables_entre(hoy_reporte - timedelta(days=365 * 5), hoy_reporte + timedelta(days=dias_agenda_anticipacion), {int(d["numero_dia"]) for d in dias_reporte if d.get("habilitado")}, {f.get("fecha") for f in feriados_reporte})
                             with col_desde:
@@ -2991,14 +3010,14 @@ else:
                                 st.info("Activa al menos un día laboral en Configuración para consultar la agenda.")
                                 sesiones_reporte = []
                             else:
-                                sesiones_reporte = supabase.table("sesiones_clase").select("*").gte("fecha_clase", desde.isoformat()).lte("fecha_clase", hasta.isoformat()).order("hora_inicio").order("fecha_clase").execute().data or []
+                                sesiones_reporte = supabase.schema("StudioPilates").table("sesiones_clase").select("*").gte("fecha_clase", desde.isoformat()).lte("fecha_clase", hasta.isoformat()).order("hora_inicio").order("fecha_clase").execute().data or []
                             if desde is None or hasta is None:
                                 pass
                             elif desde > hasta:
                                 st.warning("El rango de fechas no es válido.")
                             elif sesiones_reporte:
                                 locales_nombres = {int(v): k for k, v in opciones_locales.items()}
-                                nombres_instructoras = {int(i["id"]): i["nombre"] for i in (supabase.table("instructoras").select("id,nombre").execute().data or [])}
+                                nombres_instructoras = {int(i["id"]): i["nombre"] for i in (supabase.schema("StudioPilates").table("instructoras").select("id,nombre").execute().data or [])}
                                 for sesion in sesiones_reporte:
                                     sesion["Sede"] = locales_nombres.get(int(sesion["local_id"]), "Sede")
                                     sesion["Instructor"] = nombres_instructoras.get(int(sesion["instructora_id"]), "—")
@@ -3035,7 +3054,7 @@ else:
                         st.session_state.kardex_alumno_id = None
 
                     try:
-                        todos_al_res = supabase.table("alumnos").select("id,nombre,apellido,telefono").order("nombre").execute()
+                        todos_al_res = supabase.schema("StudioPilates").table("alumnos").select("id,nombre,apellido,telefono").order("nombre").execute()
                         lista_alumnos_all = todos_al_res.data or []
                     except Exception:
                         lista_alumnos_all = []
@@ -3075,7 +3094,7 @@ else:
 
                         try:
                             al_res = (
-                                supabase.table("alumnos")
+                                supabase.schema("StudioPilates").table("alumnos")
                                 .select("id,nombre,apellido,telefono")
                                 .eq("id", st.session_state.kardex_alumno_id)
                                 .limit(1)
@@ -3131,7 +3150,7 @@ else:
                                             st.error("Nombre, apellido y teléfono son obligatorios.")
                                         else:
                                             try:
-                                                supabase.table("alumnos").update({
+                                                supabase.schema("StudioPilates").table("alumnos").update({
                                                     "nombre": nombre_alumno_editado.strip(),
                                                     "apellido": apellido_alumno_editado.strip(),
                                                     "telefono": telefono_alumno_editado.strip()
@@ -3169,7 +3188,7 @@ else:
                                             st.error("Las contraseñas temporales no coinciden.")
                                         else:
                                             try:
-                                                supabase.table("alumnos").update({
+                                                supabase.schema("StudioPilates").table("alumnos").update({
                                                     "contrasena_encriptada": encriptar_contrasena(clave_portal_admin),
                                                     "debe_cambiar_contrasena": True,
                                                     "intentos_login_fallidos": 0,
@@ -3186,7 +3205,7 @@ else:
                                 st.caption("El paquete solo puede cambiarse por uno de mayor nivel. Al subir de plan se conserva el consumo y se suman al saldo las clases de diferencia.")
                                 try:
                                     paquetes_activos_res = (
-                                        supabase.table("paquetes")
+                                        supabase.schema("StudioPilates").table("paquetes")
                                         .select("id,tipo_paquete,modalidad_plan,local_id_fijo,clases_totales,clases_restantes,fecha_vencimiento,estado,pagado,fecha_pago,pago_confirmado_por,pago_revertido_en,pago_revertido_por")
                                         .eq("alumno_id", data_al["id"])
                                         .eq("estado", "Activo")
@@ -3301,7 +3320,7 @@ else:
                                                             })
                                                             tipo_evento_paquete = "cambio_plan"
                                                         try:
-                                                            supabase.table("paquetes").update(actualizacion_paquete).eq("id", paquete_actual["id"]).execute()
+                                                            supabase.schema("StudioPilates").table("paquetes").update(actualizacion_paquete).eq("id", paquete_actual["id"]).execute()
                                                             detalles_evento = {
                                                                 "paquete_anterior": paquete_anterior_snapshot,
                                                                 "tipo_paquete_nuevo": paquete_nuevo_alumno if tipo_evento_paquete == "cambio_plan" else paquete_actual["tipo_paquete"],
@@ -3312,7 +3331,7 @@ else:
                                                                 "fecha_vencimiento_nueva": vencimiento_nuevo_paquete,
                                                                 "fecha_pago": fecha_pago_upgrade
                                                             }
-                                                            supabase.table("eventos_paquetes").insert({
+                                                            supabase.schema("StudioPilates").table("eventos_paquetes").insert({
                                                                 "paquete_id": paquete_actual["id"],
                                                                 "alumno_id": data_al["id"],
                                                                 "tipo_evento": tipo_evento_paquete,
@@ -3320,7 +3339,7 @@ else:
                                                                 "detalles": detalles_evento
                                                             }).execute()
                                                         except Exception:
-                                                            supabase.table("paquetes").update(paquete_anterior_snapshot).eq("id", paquete_actual["id"]).execute()
+                                                            supabase.schema("StudioPilates").table("paquetes").update(paquete_anterior_snapshot).eq("id", paquete_actual["id"]).execute()
                                                             raise
                                                         st.session_state.mensaje_gestion_alumno = "Pago confirmado y paquete actualizado." if tipo_evento_paquete == "cambio_plan" else "Modalidad de acceso actualizada."
                                                         st.session_state.clear_paquete_alumno += 1
@@ -3331,7 +3350,7 @@ else:
                                     st.error(f"No se pudieron cargar los paquetes activos: {e}")
 
                                 paq_res = (
-                                    supabase.table("paquetes")
+                                    supabase.schema("StudioPilates").table("paquetes")
                                     .select("id,tipo_paquete,modalidad_plan,clases_totales,clases_restantes,fecha_vencimiento,estado,pagado,fecha_pago,pago_revertido_en")
                                     .eq("alumno_id", data_al["id"])
                                     .order("fecha_compra", desc=True)
@@ -3382,7 +3401,7 @@ else:
 
                                 try:
                                     eventos_alumno_res = (
-                                        supabase.table("eventos_paquetes")
+                                        supabase.schema("StudioPilates").table("eventos_paquetes")
                                         .select("id,tipo_evento,fecha_evento,realizado_por,detalles")
                                         .eq("alumno_id", data_al["id"])
                                         .order("fecha_evento", desc=True)
@@ -3399,7 +3418,7 @@ else:
                                         }
                                         eventos_por_id = {str(ev["id"]): ev for ev in eventos_alumno_res.data}
                                         try:
-                                            admins_eventos = supabase.table("usuarios_admin").select("id,usuario").execute().data or []
+                                            admins_eventos = supabase.schema("StudioPilates").table("usuarios_admin").select("id,usuario").execute().data or []
                                             nombres_admin_eventos = {str(admin["id"]): admin["usuario"] for admin in admins_eventos}
                                         except Exception:
                                             nombres_admin_eventos = {}
@@ -3478,7 +3497,7 @@ else:
                                     st.caption("La auditoría estará disponible después de ejecutar supabase_pagos_migration.sql en Supabase.")
 
                                 res_res = (
-                                    supabase.table("reservas")
+                                    supabase.schema("StudioPilates").table("reservas")
                                     .select("fecha_clase,hora_clase,tipo_servicio,estado")
                                     .eq("alumno_id", data_al["id"])
                                     .order("fecha_clase", desc=True)
@@ -3521,7 +3540,7 @@ else:
                         st.error("Las contraseñas nuevas no coinciden.")
                     else:
                         try:
-                            actual_res = supabase.table("usuarios_admin").select("contrasena_encriptada").eq(
+                            actual_res = supabase.schema("StudioPilates").table("usuarios_admin").select("contrasena_encriptada").eq(
                                 "id", st.session_state.admin_id
                             ).limit(1).execute()
                             if not actual_res.data or not verificar_contrasena(
@@ -3529,7 +3548,7 @@ else:
                             )[0]:
                                 st.error("La contraseña actual no es correcta.")
                             else:
-                                supabase.table("usuarios_admin").update({
+                                supabase.schema("StudioPilates").table("usuarios_admin").update({
                                     "contrasena_encriptada": encriptar_contrasena(clave_nueva)
                                 }).eq("id", st.session_state.admin_id).execute()
                                 st.session_state.aviso_clave_cuenta = "Contraseña actualizada correctamente."
@@ -3569,7 +3588,7 @@ else:
                                 st.error("Las contraseñas no coinciden.")
                             else:
                                 try:
-                                    supabase.table("usuarios_admin").insert({
+                                    supabase.schema("StudioPilates").table("usuarios_admin").insert({
                                         "usuario": nuevo_usuario_admin.strip(),
                                         "contrasena_encriptada": encriptar_contrasena(nueva_clave_admin),
                                         "es_superadmin": False,
@@ -3590,8 +3609,8 @@ else:
                         st.markdown("#### Crear acceso para un instructor")
                         st.caption("Este acceso es solo para consultar la agenda y el historial de pagos de la persona seleccionada.")
                         try:
-                            instructores_sin_cuenta = supabase.table("instructoras").select("id,nombre,activo").eq("activo", True).order("nombre").execute().data or []
-                            cuentas_existentes_instructor = supabase.table("usuarios_instructores").select("instructora_id,usuario").execute().data or []
+                            instructores_sin_cuenta = supabase.schema("StudioPilates").table("instructoras").select("id,nombre,activo").eq("activo", True).order("nombre").execute().data or []
+                            cuentas_existentes_instructor = supabase.schema("StudioPilates").table("usuarios_instructores").select("instructora_id,usuario").execute().data or []
                             ids_con_cuenta = {int(c["instructora_id"]) for c in cuentas_existentes_instructor}
                             opciones_instructor = {f"{i['nombre']}" : i["id"] for i in instructores_sin_cuenta if int(i["id"]) not in ids_con_cuenta}
                             if opciones_instructor:
@@ -3613,12 +3632,12 @@ else:
                                     else:
                                         usuario_candidato = usuario_nuevo_instructor.strip()
                                         try:
-                                            en_admin = supabase.table("usuarios_admin").select("id").ilike("usuario", usuario_candidato).limit(1).execute().data
-                                            en_instructores = supabase.table("usuarios_instructores").select("id").ilike("usuario", usuario_candidato).limit(1).execute().data
+                                            en_admin = supabase.schema("StudioPilates").table("usuarios_admin").select("id").ilike("usuario", usuario_candidato).limit(1).execute().data
+                                            en_instructores = supabase.schema("StudioPilates").table("usuarios_instructores").select("id").ilike("usuario", usuario_candidato).limit(1).execute().data
                                             if en_admin or en_instructores:
                                                 st.error("Ese nombre de usuario ya está en uso.")
                                             else:
-                                                supabase.table("usuarios_instructores").insert({
+                                                supabase.schema("StudioPilates").table("usuarios_instructores").insert({
                                                     "usuario": usuario_candidato,
                                                     "contrasena_encriptada": encriptar_contrasena(clave_nueva_instructor),
                                                     "debe_cambiar_contrasena": True,
@@ -3645,7 +3664,7 @@ else:
                         if aviso_clave_restablecida:
                             st.success(aviso_clave_restablecida)
                         try:
-                            usuarios_claves_res = supabase.table("usuarios_admin").select("id,usuario").order("usuario").execute()
+                            usuarios_claves_res = supabase.schema("StudioPilates").table("usuarios_admin").select("id,usuario").order("usuario").execute()
                             usuarios_claves = usuarios_claves_res.data or []
                             if usuarios_claves:
                                 usuarios_clave_labels = {f"{u['usuario']}" : u["id"] for u in usuarios_claves}
@@ -3677,7 +3696,7 @@ else:
                                     elif clave_admin_nueva != confirmar_clave_admin_nueva:
                                         st.error("Las contraseñas no coinciden.")
                                     else:
-                                        supabase.table("usuarios_admin").update({
+                                        supabase.schema("StudioPilates").table("usuarios_admin").update({
                                             "contrasena_encriptada": encriptar_contrasena(clave_admin_nueva)
                                         }).eq("id", usuarios_clave_labels[usuario_clave_sel]).execute()
                                         st.session_state.aviso_clave_restablecida = f"Contraseña de {usuario_clave_sel} cambiada correctamente."
@@ -3691,7 +3710,7 @@ else:
                         st.divider()
                         st.markdown("#### Cambiar contraseña de un instructor")
                         try:
-                            cuentas_inst_reset = supabase.table("usuarios_instructores").select("id,usuario,instructora_id,instructoras(nombre)").order("usuario").execute().data or []
+                            cuentas_inst_reset = supabase.schema("StudioPilates").table("usuarios_instructores").select("id,usuario,instructora_id,instructoras(nombre)").order("usuario").execute().data or []
                             mapa_inst_reset = {f"{cuenta.get('instructoras', {}).get('nombre', 'Instructor')} — {cuenta['usuario']}": cuenta for cuenta in cuentas_inst_reset}
                             if mapa_inst_reset:
                                 etiqueta_inst_reset = st.selectbox("Cuenta de instructor", [""] + list(mapa_inst_reset), key=f"seleccion_reset_cuenta_inst_{st.session_state.clear_reset_clave}", placeholder="Selecciona una cuenta...")
@@ -3706,7 +3725,7 @@ else:
                                         st.error("Las contraseñas no coinciden.")
                                     else:
                                         cuenta_reset = mapa_inst_reset[etiqueta_inst_reset]
-                                        supabase.table("usuarios_instructores").update({"contrasena_encriptada": encriptar_contrasena(nueva_clave_inst_admin), "debe_cambiar_contrasena": True, "intentos_login_fallidos": 0, "acceso_bloqueado_hasta": None}).eq("id", cuenta_reset["id"]).execute()
+                                        supabase.schema("StudioPilates").table("usuarios_instructores").update({"contrasena_encriptada": encriptar_contrasena(nueva_clave_inst_admin), "debe_cambiar_contrasena": True, "intentos_login_fallidos": 0, "acceso_bloqueado_hasta": None}).eq("id", cuenta_reset["id"]).execute()
                                         st.session_state.mensaje_resultado_app = f"Contraseña de {etiqueta_inst_reset} actualizada correctamente."
                                         st.session_state.clear_reset_clave += 1
                                         st.rerun()
@@ -3721,7 +3740,7 @@ else:
                         if aviso_permisos:
                             st.success(aviso_permisos)
                         try:
-                            usuarios_res = supabase.table("usuarios_admin").select(
+                            usuarios_res = supabase.schema("StudioPilates").table("usuarios_admin").select(
                                 "id,usuario,es_superadmin,permisos"
                             ).order("usuario").execute()
                             usuarios_db = usuarios_res.data or []
@@ -3745,7 +3764,7 @@ else:
                                         key=f"permisos_editar_{usuario_obj['id']}_{st.session_state.clear_permisos}"
                                     )
                                     if st.button("Guardar permisos", key=f"guardar_permisos_usuario_{st.session_state.clear_permisos}", type="primary"):
-                                        supabase.table("usuarios_admin").update({
+                                        supabase.schema("StudioPilates").table("usuarios_admin").update({
                                             "permisos": permisos_editados
                                         }).eq("id", usuario_obj["id"]).execute()
                                         st.session_state.aviso_permisos = f"Permisos de {usuario_editar} actualizados."
@@ -3766,7 +3785,7 @@ else:
                             st.success(aviso_usuario_eliminado)
                         st.caption("La eliminación es permanente. No puedes eliminar la cuenta con la que tienes la sesión abierta ni el último superusuario.")
                         try:
-                            usuarios_borrar_res = supabase.table("usuarios_admin").select(
+                            usuarios_borrar_res = supabase.schema("StudioPilates").table("usuarios_admin").select(
                                 "id,usuario,es_superadmin"
                             ).order("usuario").execute()
                             usuarios_borrar = usuarios_borrar_res.data or []
@@ -3801,7 +3820,7 @@ else:
                                     if usuario_borrar.get("es_superadmin") and len(superusuarios) <= 1:
                                         st.error("No se puede eliminar el último superusuario.")
                                     else:
-                                        supabase.table("usuarios_admin").delete().eq("id", usuario_borrar["id"]).execute()
+                                        supabase.schema("StudioPilates").table("usuarios_admin").delete().eq("id", usuario_borrar["id"]).execute()
                                         st.session_state.aviso_usuario_eliminado = f"La cuenta {usuario_borrar['usuario']} fue eliminada."
                                         st.session_state.clear_eliminar_usuario += 1
                                         st.rerun()
@@ -3882,7 +3901,7 @@ else:
                                         logo_base64_nuevo = base64.b64encode(logo_subido.getvalue()).decode("ascii")
                                         logo_mime_nuevo = logo_subido.type or "image/png"
                                     try:
-                                        supabase.table("configuracion_estudio").upsert({
+                                        supabase.schema("StudioPilates").table("configuracion_estudio").upsert({
                                             "id": 1,
                                             "nombre_estudio": nombre_nuevo_estudio.strip(),
                                             "color_fondo": fondo_nuevo,
@@ -3891,6 +3910,7 @@ else:
                                             "logo_base64": logo_base64_nuevo,
                                             "logo_mime": logo_mime_nuevo,
                                         }, on_conflict="id").execute()
+                                        cargar_configuracion_estudio.clear()
                                         st.session_state.configuracion_guardada = True
                                         st.session_state.clear_configuracion += 1
                                         st.rerun()
@@ -3900,7 +3920,7 @@ else:
                     with calendario_dias:
                         st.caption("Indica los días de la semana en que el estudio abre.")
                         try:
-                            dias_consulta = supabase.table("dias_operativos").select("*").order("numero_dia").execute()
+                            dias_consulta = supabase.schema("StudioPilates").table("dias_operativos").select("*").order("numero_dia").execute()
                             if dias_consulta.data:
                                 df_dias = pd.DataFrame(dias_consulta.data)
                                 df_dias_amigable = df_dias[["nombre_dia", "habilitado"]].rename(columns={"nombre_dia": "Día de la semana", "habilitado": "Estudio abierto"})
@@ -3909,7 +3929,7 @@ else:
                                 cambios_dias = st.session_state.get(editor_dias_key, {}).get("edited_rows", {})
                                 for idx_fila, cambio_dia in cambios_dias.items():
                                     if "Estudio abierto" in cambio_dia:
-                                        supabase.table("dias_operativos").update({"habilitado": cambio_dia["Estudio abierto"]}).eq("id", int(df_dias.iloc[idx_fila]["id"])).execute()
+                                        supabase.schema("StudioPilates").table("dias_operativos").update({"habilitado": cambio_dia["Estudio abierto"]}).eq("id", int(df_dias.iloc[idx_fila]["id"])).execute()
                                         st.session_state.mensaje_resultado_app = f"La disponibilidad de {df_dias.iloc[idx_fila]['nombre_dia']} se actualizó."
                                         st.session_state.clear_dias_operativos += 1
                                         st.rerun()
@@ -3924,8 +3944,8 @@ else:
                             st.success(aviso_feriado)
                         col_f1, col_f2 = st.columns(2)
                         with col_f1:
-                            dias_feriado_db = supabase.table("dias_operativos").select("numero_dia,habilitado").execute().data or []
-                            feriados_existentes = supabase.table("feriados").select("fecha").execute().data or []
+                            dias_feriado_db = supabase.schema("StudioPilates").table("dias_operativos").select("numero_dia,habilitado").execute().data or []
+                            feriados_existentes = supabase.schema("StudioPilates").table("feriados").select("fecha").execute().data or []
                             hoy_feriado = datetime.now(ZoneInfo("America/Lima")).date()
                             fechas_feriado = dias_laborables_entre(hoy_feriado, hoy_feriado + timedelta(days=365 * 5), {int(d["numero_dia"]) for d in dias_feriado_db if d.get("habilitado")}, {f.get("fecha") for f in feriados_existentes})
                             fecha_f = selector_fecha_disponible("Fecha del feriado", fechas_feriado, key=f"input_fecha_feriado_{st.session_state.clear_feriado}", valor_inicial=hoy_feriado)
@@ -3933,7 +3953,7 @@ else:
                             if st.button("Registrar feriado", key=f"guardar_feriado_{st.session_state.clear_feriado}"):
                                 if fecha_f is not None and desc_f.strip():
                                     try:
-                                        supabase.table("feriados").insert({"fecha": fecha_f.isoformat(), "descripcion": desc_f.strip()}).execute()
+                                        supabase.schema("StudioPilates").table("feriados").insert({"fecha": fecha_f.isoformat(), "descripcion": desc_f.strip()}).execute()
                                         st.session_state.aviso_feriado = f"Feriado del {fecha_f.strftime('%d-%m-%Y')} guardado."
                                         st.session_state.clear_feriado += 1
                                         st.rerun()
@@ -3944,7 +3964,7 @@ else:
                                 st.rerun()
                         with col_f2:
                             try:
-                                feriados_res = supabase.table("feriados").select("*").order("fecha").execute()
+                                feriados_res = supabase.schema("StudioPilates").table("feriados").select("*").order("fecha").execute()
                                 if feriados_res.data:
                                     df_fer = pd.DataFrame(feriados_res.data)
                                     df_fer["Eliminar"] = False
@@ -3956,7 +3976,7 @@ else:
                                     filas_edit_fer = st.session_state.get(editor_feriados_key, {}).get("edited_rows", {})
                                     for idx_f, cambio_f in filas_edit_fer.items():
                                         if cambio_f.get("Eliminar") is True:
-                                            supabase.table("feriados").delete().eq("id", int(df_fer.iloc[idx_f]["id"])).execute()
+                                            supabase.schema("StudioPilates").table("feriados").delete().eq("id", int(df_fer.iloc[idx_f]["id"])).execute()
                                             st.session_state.mensaje_resultado_app = f"Se eliminó el feriado del {fecha_visible(df_fer.iloc[idx_f]['fecha'])}."
                                             st.session_state.clear_feriados_tabla += 1
                                             st.rerun()
@@ -4016,7 +4036,7 @@ else:
                                 st.error("El receso debe iniciar a partir del cambio entre el turno de mañana y el de tarde.")
                             else:
                                 try:
-                                    supabase.table("configuracion_estudio").update({
+                                    supabase.schema("StudioPilates").table("configuracion_estudio").update({
                                         "hora_apertura": hora_apertura_nueva.strftime("%H:%M:%S"),
                                         "hora_cierre": hora_cierre_nueva.strftime("%H:%M:%S"),
                                         "receso_inicio": receso_inicio_nuevo.strftime("%H:%M:%S"),
@@ -4027,6 +4047,7 @@ else:
                                         "limite_reserva_manana": limite_manana_nuevo.strftime("%H:%M:%S"),
                                         "limite_reserva_tarde_horas": int(limite_tarde_nuevo),
                                     }).eq("id", 1).execute()
+                                    cargar_configuracion_estudio.clear()
                                     st.session_state.mensaje_resultado_app = "La configuración de horarios se guardó y se aplicará a la programación y al portal."
                                     st.session_state.clear_configuracion += 1
                                     st.rerun()
@@ -4043,7 +4064,7 @@ else:
                                 maximo_sede_config = st.number_input("Máximo de camillas", min_value=1, max_value=50, value=int(sede_config.get("max_camillas") or 8), key=f"max_camillas_config_{sede_config['id']}_{st.session_state.clear_configuracion}")
                                 if st.button("Guardar capacidad de la sede", key=f"guardar_capacidad_sede_{sede_config['id']}_{st.session_state.clear_configuracion}", type="primary"):
                                     try:
-                                        supabase.table("locales").update({"max_camillas": int(maximo_sede_config)}).eq("id", sede_config["id"]).execute()
+                                        supabase.schema("StudioPilates").table("locales").update({"max_camillas": int(maximo_sede_config)}).eq("id", sede_config["id"]).execute()
                                         st.session_state.mensaje_resultado_app = f"Aforo de {sede_config['nombre']} actualizado a {int(maximo_sede_config)} camillas."
                                         st.session_state.clear_configuracion += 1
                                         st.rerun()
