@@ -337,7 +337,7 @@ def selector_fecha_disponible(etiqueta, opciones, key, valor_inicial=None, ayuda
             help=ayuda,
         )
     with columna_icono:
-        if st.button(" ", icon=":material/calendar_month:", key=f"{key}__abrir_calendario", help="Elegir fecha"):
+        if st.button(" ", icon=":material/calendar_month:", key=f"{key}__abrir_calendario"):
             st.session_state[clave_abierto] = not st.session_state.get(clave_abierto, False)
             st.rerun()
 
@@ -2929,8 +2929,8 @@ else:
                             lista_inst = inst_res.data if inst_res.data else []
                             opciones_inst = {f"{ins['nombre']} · S/ {float(ins.get('pago_por_clase') or 0):.2f} por clase": ins for ins in lista_inst}
                                             
-                            col_mas1, col_mas2 = st.columns(2)
-                            with col_mas1:
+                            col_sede, col_instructora = st.columns(2)
+                            with col_sede:
                                 sede_agenda = st.selectbox("Selecciona Sede:", [""] + list(opciones_locales.keys()), key=f"mas_sede_{st.session_state.clear_agenda}", placeholder="Selecciona una sede...")
                                 sede_objeto_agenda = next((l for l in lista_locales if l["nombre"] == sede_agenda), None)
                                 fecha_minima_agenda = datetime.now(ZoneInfo("America/Lima")).date()
@@ -2938,29 +2938,37 @@ else:
                                 duracion_agenda = duracion_clase_default
                                 feriados_agenda = supabase.schema("StudioPilates").table("feriados").select("fecha").gte("fecha", fecha_minima_agenda.isoformat()).lte("fecha", fecha_maxima_agenda.isoformat()).execute().data or []
                                 fechas_agenda = dias_laborables_entre(fecha_minima_agenda, fecha_maxima_agenda, {d for d, habilitado in dias_habilitados.items() if habilitado}, {f.get("fecha") for f in feriados_agenda})
-                                fecha_inicio = selector_fecha_disponible("Fecha de Inicio:", fechas_agenda, key=f"mas_f_ini_{st.session_state.clear_agenda}", valor_inicial=fecha_minima_agenda)
-                                fecha_fin = selector_fecha_disponible("Fecha de Fin:", fechas_agenda, key=f"mas_f_fin_{st.session_state.clear_agenda}", valor_inicial=fecha_minima_agenda + timedelta(days=7))
-                                if fecha_inicio is not None and fecha_fin is not None and fecha_inicio <= fecha_fin:
-                                    fechas_operativas_rango = dias_laborables_entre(
-                                        fecha_inicio,
-                                        fecha_fin,
-                                        {d for d, habilitado in dias_habilitados.items() if habilitado},
-                                        {f.get("fecha") for f in feriados_agenda},
-                                    )
-                                else:
-                                    fechas_operativas_rango = []
-                                dias_disponibles_rango = {fecha.weekday() for fecha in fechas_operativas_rango}
-                                horas_agenda = horas_inicio_operativas(hora_apertura_estudio, hora_cierre_estudio, receso_inicio_estudio, receso_fin_estudio, duracion_agenda)
-                                hora_agenda = selector_hora("Hora de inicio:", horas_agenda, key=f"mas_hora_{st.session_state.clear_agenda}", valor_inicial=hora_apertura_estudio)
-                                st.caption(f"Duración de cada clase: {duracion_agenda} minutos (definida en Configuración).")
-                            with col_mas2:
+                            with col_instructora:
                                 inst_agenda = st.selectbox("Asignar instructor:", [""] + list(opciones_inst.keys()), key=f"mas_inst_{st.session_state.clear_agenda}", placeholder="Selecciona un instructor...")
+
+                            col_tipo, col_hora = st.columns(2)
+                            with col_tipo:
                                 tipo_serv_agenda = st.selectbox("Tipo de Sesión:", ["", "Grupal", "Privado"], key=f"mas_tipo_{st.session_state.clear_agenda}", placeholder="Selecciona una modalidad...")
                                 if tipo_serv_agenda == "Grupal":
                                     aforo_agenda = int(sede_objeto_agenda.get("max_camillas") or 8) if sede_objeto_agenda else None
                                     st.caption(f"Aforo grupal de esta sede: **{aforo_agenda if aforo_agenda is not None else '—'} camillas** (se toma de Configuración).")
                                 elif tipo_serv_agenda == "Privado": aforo_agenda = 1
                                 else: aforo_agenda = None
+                            with col_hora:
+                                horas_agenda = horas_inicio_operativas(hora_apertura_estudio, hora_cierre_estudio, receso_inicio_estudio, receso_fin_estudio, duracion_agenda)
+                                hora_agenda = selector_hora("Hora de inicio:", horas_agenda, key=f"mas_hora_{st.session_state.clear_agenda}", valor_inicial=hora_apertura_estudio)
+                                st.caption(f"Duración de cada clase: {duracion_agenda} minutos (definida en Configuración).")
+
+                            col_fecha_inicio, col_fecha_fin = st.columns(2)
+                            with col_fecha_inicio:
+                                fecha_inicio = selector_fecha_disponible("Fecha de Inicio:", fechas_agenda, key=f"mas_f_ini_{st.session_state.clear_agenda}", valor_inicial=fecha_minima_agenda)
+                            with col_fecha_fin:
+                                fecha_fin = selector_fecha_disponible("Fecha de Fin:", fechas_agenda, key=f"mas_f_fin_{st.session_state.clear_agenda}", valor_inicial=fecha_minima_agenda + timedelta(days=7))
+                            if fecha_inicio is not None and fecha_fin is not None and fecha_inicio <= fecha_fin:
+                                fechas_operativas_rango = dias_laborables_entre(
+                                    fecha_inicio,
+                                    fecha_fin,
+                                    {d for d, habilitado in dias_habilitados.items() if habilitado},
+                                    {f.get("fecha") for f in feriados_agenda},
+                                )
+                            else:
+                                fechas_operativas_rango = []
+                            dias_disponibles_rango = {fecha.weekday() for fecha in fechas_operativas_rango}
                                             
                             firma_rango_dias = (
                                 f"{fecha_inicio.isoformat()}:{fecha_fin.isoformat()}"
