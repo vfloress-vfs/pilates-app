@@ -1050,37 +1050,51 @@ else:
                                 fechas_con_clases,
                                 key=f"filtro_fecha_reserva_portal_{id_alumno_portal}_{st.session_state.clear_portal_reserva}",
                             )
-                            sesiones_del_dia = [s for s in sesiones_con_plan if fecha_reserva and s["_inicio_dt"].date() == fecha_reserva]
+                            sesiones_del_dia = sorted(
+                                (s for s in sesiones_con_plan if fecha_reserva and s["_inicio_dt"].date() == fecha_reserva),
+                                key=lambda s: s["_inicio_dt"],
+                            )
                             st.caption(f"Hay horarios reservables en {len(fechas_con_clases)} días dentro del periodo disponible.")
                             if not sesiones_del_dia:
                                 st.info("No hay clases disponibles para este día. Elige otra fecha de la lista.")
                             sesion_portal_key = f"portal_sesion_seleccionada_{id_alumno_portal}"
-                            columnas_clases = st.columns(2)
                             dias_semana_portal = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado", "Domingo"]
-                            for idx_sesion, sesion in enumerate(sesiones_del_dia):
-                                fecha_sesion_card = sesion["_inicio_dt"].date()
-                                cupos_sesion = int(sesion.get("capacidad") or 0) - ocupacion.get(sesion["id"], 0)
-                                with columnas_clases[idx_sesion % 2]:
-                                    with st.container(border=True):
-                                        st.markdown(f"### {dias_semana_portal[fecha_sesion_card.weekday()]}, {fecha_sesion_card.strftime('%d-%m-%Y')}")
-                                        st.markdown(f"**{str(sesion['hora_inicio'])[:5]}–{str(sesion['hora_fin'])[:5]} · {sesion.get('tipo_servicio', 'Clase')}**")
-                                        st.write(f"📍 {nombre_local_portal.get(sesion.get('local_id'), 'Sede')}  ·  👤 {nombre_instructora_portal.get(sesion.get('instructora_id'), 'Instructor')}")
-                                        plazo_reserva = limite_reserva_cancelacion(sesion["_inicio_dt"])
-                                        ya_reservada = int(sesion["id"]) in sesiones_reservadas_alumno
-                                        if ya_reservada:
-                                            st.info("Ya tienes esta clase reservada.")
-                                        else:
-                                            st.caption(f"{cupos_sesion} {'cupos disponibles' if cupos_sesion != 1 else 'cupo disponible'} · Reserva hasta {plazo_reserva.strftime('%d-%m-%Y a las %H:%M')}")
-                                        seleccionada = not ya_reservada and st.session_state.get(sesion_portal_key) == int(sesion["id"])
-                                        if st.button(
-                                            "Ya tienes esta clase reservada" if ya_reservada else ("Horario elegido ✓" if seleccionada else "Elegir este horario"),
-                                            key=f"elegir_sesion_portal_{id_alumno_portal}_{sesion['id']}_{st.session_state.clear_portal_reserva}",
-                                            type="primary" if seleccionada else "secondary",
-                                            use_container_width=True,
-                                            disabled=ya_reservada,
-                                        ):
-                                            st.session_state[sesion_portal_key] = int(sesion["id"])
-                                            st.rerun()
+                            sesiones_manana = [
+                                s for s in sesiones_del_dia
+                                if s["_inicio_dt"].time().replace(tzinfo=None) < corte_turno_manana
+                            ]
+                            sesiones_tarde = [
+                                s for s in sesiones_del_dia
+                                if s["_inicio_dt"].time().replace(tzinfo=None) >= corte_turno_manana
+                            ]
+                            for nombre_turno, sesiones_turno in (("☀️ Mañana", sesiones_manana), ("🌤️ Tarde", sesiones_tarde)):
+                                if sesiones_turno:
+                                    st.markdown(f"#### {nombre_turno}")
+                                    columnas_clases = st.columns(2)
+                                    for idx_sesion, sesion in enumerate(sesiones_turno):
+                                        fecha_sesion_card = sesion["_inicio_dt"].date()
+                                        cupos_sesion = int(sesion.get("capacidad") or 0) - ocupacion.get(sesion["id"], 0)
+                                        with columnas_clases[idx_sesion % 2]:
+                                            with st.container(border=True):
+                                                st.markdown(f"### {dias_semana_portal[fecha_sesion_card.weekday()]}, {fecha_sesion_card.strftime('%d-%m-%Y')}")
+                                                st.markdown(f"**{str(sesion['hora_inicio'])[:5]}–{str(sesion['hora_fin'])[:5]} · {sesion.get('tipo_servicio', 'Clase')}**")
+                                                st.write(f"📍 {nombre_local_portal.get(sesion.get('local_id'), 'Sede')}  ·  👤 {nombre_instructora_portal.get(sesion.get('instructora_id'), 'Instructor')}")
+                                                plazo_reserva = limite_reserva_cancelacion(sesion["_inicio_dt"])
+                                                ya_reservada = int(sesion["id"]) in sesiones_reservadas_alumno
+                                                if ya_reservada:
+                                                    st.info("Ya tienes esta clase reservada.")
+                                                else:
+                                                    st.caption(f"{cupos_sesion} {'cupos disponibles' if cupos_sesion != 1 else 'cupo disponible'} · Reserva hasta {plazo_reserva.strftime('%d-%m-%Y a las %H:%M')}")
+                                                seleccionada = not ya_reservada and st.session_state.get(sesion_portal_key) == int(sesion["id"])
+                                                if st.button(
+                                                    "Ya tienes esta clase reservada" if ya_reservada else ("Horario elegido ✓" if seleccionada else "Elegir este horario"),
+                                                    key=f"elegir_sesion_portal_{id_alumno_portal}_{sesion['id']}_{st.session_state.clear_portal_reserva}",
+                                                    type="primary" if seleccionada else "secondary",
+                                                    use_container_width=True,
+                                                    disabled=ya_reservada,
+                                                ):
+                                                    st.session_state[sesion_portal_key] = int(sesion["id"])
+                                                    st.rerun()
 
                             sesion_seleccionada = next(
                                 (s for s in sesiones_del_dia if int(s["id"]) == st.session_state.get(sesion_portal_key)),
@@ -3380,22 +3394,56 @@ else:
                                         "fecha_pago": "Fecha de pago"
                                     })
                                     st.dataframe(df_reporte_paq, use_container_width=True, hide_index=True)
+                                    ids_paquetes_historial = [int(p["id"]) for p in paq_res.data]
+                                    try:
+                                        reservas_paquetes = (
+                                            supabase.schema("StudioPilates").table("reservas")
+                                            .select("paquete_id")
+                                            .in_("paquete_id", ids_paquetes_historial)
+                                            .execute().data or []
+                                        )
+                                        paquetes_con_reservas = {
+                                            int(r["paquete_id"]) for r in reservas_paquetes if r.get("paquete_id") is not None
+                                        }
+                                        verificacion_reservas_ok = True
+                                    except Exception:
+                                        # Ante una falla al verificar, no ofrecer una acción que la BD va a rechazar.
+                                        paquetes_con_reservas = set(ids_paquetes_historial)
+                                        verificacion_reservas_ok = False
+                                        st.warning("No se pudo verificar si los paquetes tienen reservas; la reversión quedará deshabilitada por seguridad.")
                                     for paquete_historial in paq_res.data:
                                         if paquete_historial.get("pagado") and not paquete_historial.get("pago_revertido_en"):
-                                            if st.button(
-                                                f"Revertir pago confirmado · {paquete_historial['tipo_paquete']}",
-                                                key=f"revertir_pago_{paquete_historial['id']}_{st.session_state.clear_paquete_alumno}"
-                                            ):
+                                            id_paquete_historial = int(paquete_historial["id"])
+                                            tiene_reservas = id_paquete_historial in paquetes_con_reservas
+                                            boton_reversion = st.button(
+                                                "Pago confirmado · no reversible (tiene reservas)"
+                                                if tiene_reservas else (
+                                                    "Reversión deshabilitada (no se pudo verificar)"
+                                                    if not verificacion_reservas_ok else
+                                                    f"Revertir pago confirmado · {paquete_historial['tipo_paquete']}"
+                                                ),
+                                                key=f"revertir_pago_{id_paquete_historial}_{st.session_state.clear_paquete_alumno}",
+                                                disabled=tiene_reservas or not verificacion_reservas_ok,
+                                                help="La base de datos no permite revertir un paquete que ya tiene reservas asociadas."
+                                                if tiene_reservas else (
+                                                    "No se pudo comprobar el historial de reservas."
+                                                    if not verificacion_reservas_ok else None
+                                                ),
+                                            )
+                                            if boton_reversion:
                                                 try:
                                                     supabase.rpc("revertir_pago_paquete", {
-                                                        "p_paquete_id": paquete_historial["id"],
+                                                        "p_paquete_id": id_paquete_historial,
                                                         "p_usuario_id": st.session_state.admin_id
                                                     }).execute()
                                                     st.session_state.mensaje_gestion_alumno = "Se revirtió la confirmación de pago. La operación quedó registrada en auditoría."
                                                     st.session_state.clear_paquete_alumno += 1
                                                     st.rerun()
                                                 except Exception as e:
-                                                    st.error(f"No se pudo revertir el pago. Verifica que supabase_pagos_migration.sql esté aplicado y que el paquete no tenga reservas: {e}")
+                                                    if "reservas asociadas" in str(e).lower():
+                                                        st.warning("No se puede revertir: el paquete tiene reservas asociadas. Actualiza la ficha para ver su estado actual.")
+                                                    else:
+                                                        st.error(f"No se pudo revertir el pago. Revisa los permisos y el estado del paquete: {e}")
                                 else:
                                     st.info("Este alumno aún no tiene paquetes registrados.")
 
