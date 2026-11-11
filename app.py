@@ -1242,7 +1242,11 @@ else:
                                                     parejas_inscritas = parejas_por_sesion.get(sesion["id"], 0)
                                                     parejas_faltantes = max(0, 3 - parejas_inscritas)
                                                     if parejas_faltantes:
-                                                        st.warning(f"Faltan {parejas_faltantes} {'pareja' if parejas_faltantes == 1 else 'parejas'} para habilitar este horario ({parejas_inscritas} de 3 inscritas).")
+                                                        st.warning(
+                                                            f"Faltan {parejas_faltantes} {'pareja' if parejas_faltantes == 1 else 'parejas'} "
+                                                            f"para habilitar este horario ({parejas_inscritas} de 3). Puedes reservar desde ahora; "
+                                                            "si no se completa el mínimo antes del plazo, se cancelará la clase y se devolverá tu crédito."
+                                                        )
                                                     else:
                                                         st.success("Horario habilitado: ya se inscribieron 3 parejas.")
                                                 elif sesion.get("tipo_servicio") == "Grupal":
@@ -1289,13 +1293,30 @@ else:
                                         st.session_state.pop(sesion_portal_key, None)
                                         st.rerun()
                                     except Exception as error_reserva:
-                                        detalle_reserva = str(error_reserva).lower()
-                                        if "ya tienes una reserva" in detalle_reserva or "reserva activa" in detalle_reserva:
-                                            st.info("Ya tienes una reserva para este horario. Puedes verla en ‘Mis clases’.")
-                                        elif "aforo" in detalle_reserva or "completó" in detalle_reserva or "disponible" in detalle_reserva:
-                                            st.warning("Ese horario acaba de dejar de estar disponible. Elige otra clase de la lista actualizada.")
+                                        detalle_reserva = str(
+                                            getattr(error_reserva, "message", None)
+                                            or getattr(error_reserva, "details", None)
+                                            or error_reserva
+                                        )
+                                        detalle_normalizado = normalizar_texto_regla(detalle_reserva)
+                                        if "ya tienes una reserva" in detalle_normalizado or "reserva activa" in detalle_normalizado:
+                                            st.info("Ya tienes una reserva para este horario. Puedes consultarla en ‘Mis clases’.")
+                                        elif "par sabado" in detalle_normalizado and ("manana" in detalle_normalizado or "grupal" in detalle_normalizado):
+                                            st.warning("Este plan solo permite clases grupales de sábado por la mañana. Elige un horario que cumpla esas condiciones.")
+                                        elif "paquete seleccionado" in detalle_normalizado or "paquete no permite" in detalle_normalizado:
+                                            st.warning("No se pudo usar ese plan: puede estar vencido, sin créditos disponibles o no corresponder a la sede de la clase. Revisa ‘Mi plan’ o elige otro plan.")
+                                        elif "minima para 6 reformers" in detalle_normalizado:
+                                            st.warning("Este horario todavía no tiene capacidad para las 3 parejas requeridas. El estudio debe revisar la programación de la clase.")
+                                        elif "dia operativo" in detalle_normalizado or "fecha no es un dia" in detalle_normalizado:
+                                            st.warning("La fecha de esta clase no está habilitada en el calendario del estudio. Elige otra fecha o consulta con el estudio.")
+                                        elif "plazo para reservar" in detalle_normalizado:
+                                            st.warning("Ya venció el plazo para reservar este horario. Elige una clase con el plazo vigente.")
+                                        elif "completo su capacidad" in detalle_normalizado or "aforo" in detalle_normalizado or "disponible para reservar" in detalle_normalizado:
+                                            st.warning("Ese horario acaba de ocuparse o dejó de estar disponible. Actualiza la lista y elige otra clase.")
+                                        elif "could not find the function" in detalle_normalizado or "schema cache" in detalle_normalizado or "function public.reservar_clase_portal" in detalle_normalizado:
+                                            st.error("La reserva no está habilitada en el servidor todavía. El administrador debe aplicar la migración de reservas y revisar que la función esté expuesta a la API.")
                                         else:
-                                            st.error("No se pudo completar la reserva. Inténtalo nuevamente o contacta al estudio.")
+                                            st.error("No se pudo guardar la reserva por una validación del sistema. Tu crédito no se descontó; vuelve a cargar el portal y, si continúa, contacta al estudio indicando el horario elegido.")
                         else:
                             if hay_plan_par_sabado:
                                 st.info(
