@@ -294,10 +294,13 @@ def etiqueta_fecha_opcion(fecha):
     dias = ("Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado", "Domingo")
     return f"{dias[fecha.weekday()]}, {fecha.strftime('%d-%m-%Y')}"
 
+def normalizar_texto_regla(valor):
+    texto = unicodedata.normalize("NFKD", str(valor or "")).casefold()
+    return "".join(caracter for caracter in texto if not unicodedata.combining(caracter)).strip()
+
 def es_paquete_par_sabado(nombre_paquete):
-    nombre = unicodedata.normalize("NFKD", str(nombre_paquete or "")).casefold()
-    nombre = "".join(caracter for caracter in nombre if not unicodedata.combining(caracter))
-    return nombre.strip() == "par sabado"
+    # Acepta el nombre exacto y etiquetas que incluyan el nombre del plan.
+    return "par sabado" in normalizar_texto_regla(nombre_paquete)
 
 def dibujar_filas_agenda_instructora(sesiones, id_instructora, pagos_por_sesion, reservas_por_sesion, reservas_activas_por_sesion, reformers_ocupados_por_sesion, locales_por_id):
     """Dibuja una tabla de sesiones y devuelve las filas marcadas para gestión."""
@@ -1166,16 +1169,26 @@ else:
                         st.info(f"No hay clases con cupos y dentro del plazo de reserva. Las clases de mañana se reservan hasta las {limite_reserva_manana.strftime('%H:%M')} del día anterior; las de tarde, hasta {limite_reserva_tarde_horas} horas antes.")
                     else:
                         opciones_reserva = []
+                        hay_plan_par_sabado = any(
+                            es_paquete_par_sabado(plan.get("tipo_paquete")) for plan in paquetes_portal
+                        )
+                        hay_candidato_sede_fija = False
                         for plan in paquetes_portal:
                             for sesion in sesiones_reserva_mostrables:
                                 es_par_plan = es_paquete_par_sabado(plan.get("tipo_paquete"))
                                 es_sabado = sesion["_inicio_dt"].weekday() == 5
                                 es_manana = sesion["_inicio_dt"].time().replace(tzinfo=None) < corte_turno_manana
                                 reglas_dia_plan = (
-                                    es_par_plan and es_sabado and es_manana and sesion.get("tipo_servicio") == "Grupal"
+                                    es_par_plan and es_sabado and es_manana
+                                    and normalizar_texto_regla(sesion.get("tipo_servicio")) == "grupal"
                                 ) or (not es_par_plan and not es_sabado)
-                                if reglas_dia_plan and (plan.get("modalidad_plan") != "Fixed" or plan.get("local_id_fijo") == sesion.get("local_id")):
-                                    opciones_reserva.append((plan, sesion))
+                                if reglas_dia_plan:
+                                    modalidad_fija = normalizar_texto_regla(plan.get("modalidad_plan")) == "fixed"
+                                    misma_sede = str(plan.get("local_id_fijo") or "") == str(sesion.get("local_id") or "")
+                                    if modalidad_fija and not misma_sede:
+                                        hay_candidato_sede_fija = True
+                                    else:
+                                        opciones_reserva.append((plan, sesion))
                         if opciones_reserva:
                             planes_por_sesion = {}
                             for plan, sesion in opciones_reserva:
@@ -1284,7 +1297,16 @@ else:
                                         else:
                                             st.error("No se pudo completar la reserva. Inténtalo nuevamente o contacta al estudio.")
                         else:
-                            st.info("Tus planes de sede fija no coinciden con las sedes de las clases disponibles.")
+                            if hay_plan_par_sabado:
+                                st.info(
+                                    "Tu plan Par Sábado permite reservar solo clases grupales de sábado por la mañana. "
+                                    "Todavía no hay una clase de ese tipo con cupo dentro del plazo de reserva. "
+                                    "Revisa que el sábado esté habilitado en Configuración y que la clase esté programada."
+                                )
+                            elif hay_candidato_sede_fija:
+                                st.info("Tus planes de sede fija no coinciden con las sedes de las clases disponibles.")
+                            else:
+                                st.info("No hay clases disponibles que correspondan a tus planes dentro del plazo de reserva.")
 
                 with tab_historial_portal:
                     reservas_alumno = supabase.schema("StudioPilates").table("reservas").select(
