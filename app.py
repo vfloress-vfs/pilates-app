@@ -299,8 +299,10 @@ def normalizar_texto_regla(valor):
     return "".join(caracter for caracter in texto if not unicodedata.combining(caracter)).strip()
 
 def es_paquete_par_sabado(nombre_paquete):
-    # Acepta el nombre exacto y etiquetas que incluyan el nombre del plan.
-    return "par sabado" in normalizar_texto_regla(nombre_paquete)
+    # Tolera acentos, guiones y etiquetas adicionales del catálogo.
+    nombre = normalizar_texto_regla(nombre_paquete)
+    nombre = " ".join("".join(caracter if caracter.isalnum() else " " for caracter in nombre).split())
+    return "par sabado" in nombre
 
 def minimo_reservas_grupales_sesion(sesion, reformers_por_sede):
     """Mínimo de parejas o alumnos según la mitad de los Reformers disponibles."""
@@ -711,6 +713,9 @@ def expirar_sesiones_app():
     st.session_state.pop("alumno_portal_hash", None)
     st.session_state.pop("alumno_portal_telefono", None)
     st.session_state.pop("alumno_portal_ultima_actividad", None)
+    st.session_state.pop("aviso_portal_mensaje", None)
+    st.session_state.pop("aviso_portal_alumno_id", None)
+    st.session_state.pop("aviso_portal", None)
     st.session_state.pop("instructor_ultima_actividad", None)
     st.session_state.pop("admin_ultima_actividad", None)
     st.session_state["_app_ultima_actividad"] = None
@@ -947,6 +952,8 @@ else:
             if st.button("Cerrar sesión", key="cerrar_sesion_portal_alumno"):
                 for clave_alumno in ("alumno_portal_id", "alumno_portal_hash", "alumno_portal_telefono", "alumno_portal_ultima_actividad"):
                     st.session_state.pop(clave_alumno, None)
+                for clave_aviso in ("aviso_portal_mensaje", "aviso_portal_alumno_id", "aviso_portal"):
+                    st.session_state.pop(clave_aviso, None)
                 st.session_state.clear_portal_alumno += 1
                 st.rerun()
 
@@ -1018,13 +1025,11 @@ else:
                     st.stop()
                 datos_alumno = alumno.data[0]
                 id_alumno_portal = datos_alumno["id"]
-                mensaje_aviso_portal = st.session_state.get("aviso_portal_mensaje")
-                if mensaje_aviso_portal:
+                id_aviso_portal = st.session_state.pop("aviso_portal_alumno_id", None)
+                st.session_state.pop("aviso_portal", None)
+                mensaje_aviso_portal = st.session_state.pop("aviso_portal_mensaje", None)
+                if mensaje_aviso_portal and str(id_aviso_portal) == str(id_alumno_portal):
                     st.success(mensaje_aviso_portal)
-                    if st.button("Cerrar aviso", key=f"cerrar_aviso_portal_{id_alumno_portal}"):
-                        st.session_state.pop("aviso_portal_mensaje", None)
-                        st.session_state.pop("aviso_portal", None)
-                        st.rerun()
 
                 paquetes_res = (
                     supabase.schema("StudioPilates").table("paquetes")
@@ -1312,7 +1317,12 @@ else:
                                             "p_sesion_id": int(sesion_seleccionada["id"]),
                                             "p_paquete_id": int(plan_seleccionado["id"]),
                                         }).execute()
-                                        if es_paquete_par_sabado(plan_seleccionado.get("tipo_paquete")):
+                                        inicio_seleccionado_reserva = sesion_seleccionada.get("_inicio_dt")
+                                        es_reserva_par_sabado = (
+                                            es_paquete_par_sabado(plan_seleccionado.get("tipo_paquete"))
+                                            or bool(inicio_seleccionado_reserva and inicio_seleccionado_reserva.weekday() == 5)
+                                        )
+                                        if es_reserva_par_sabado:
                                             mensaje_confirmacion_reserva = (
                                                 'Se ha reservado la Clase, la cual se habilitará en "Mis clases", '
                                                 "cuando se completen las parejas requeridas."
@@ -1571,6 +1581,7 @@ else:
                                                             "p_reserva_id": int(reserva_seleccionada_cancelable["id"]),
                                                         }).execute()
                                                         st.session_state["aviso_portal_mensaje"] = "Reserva cancelada. La clase se devolvió al saldo de tu plan."
+                                                        st.session_state["aviso_portal_alumno_id"] = id_alumno_portal
                                                         st.session_state["aviso_portal"] = True
                                                         st.session_state.clear_portal_reserva += 1
                                                         st.rerun()
@@ -1662,6 +1673,7 @@ else:
                                                             "p_nueva_sesion_id": int(sesion_nueva_seleccionada["id"]),
                                                         }).execute()
                                                         st.session_state["aviso_portal_mensaje"] = "Reserva reagendada. La clase de tu plan se conservó y ya puedes usar el nuevo QR."
+                                                        st.session_state["aviso_portal_alumno_id"] = id_alumno_portal
                                                         st.session_state["aviso_portal"] = True
                                                         st.session_state.clear_portal_reserva += 1
                                                         st.rerun()
@@ -2867,9 +2879,12 @@ else:
                                         ahora_gestion = datetime.now(ZoneInfo("America/Lima"))
                                         hoy_gestion = ahora_gestion.date()
                                         limite_recientes = hoy_gestion - timedelta(days=15)
+                                        limite_recientes_dt = datetime.combine(
+                                            limite_recientes, datetime_time.min
+                                        ).replace(tzinfo=ZoneInfo("America/Lima"))
                                         sesiones_recientes = [
                                             s for s in sesiones_inst
-                                            if limite_recientes <= datetime.combine(
+                                            if limite_recientes_dt <= datetime.combine(
                                                 datetime.fromisoformat(str(s["fecha_clase"])).date(),
                                                 datetime_time.fromisoformat(str(s["hora_inicio"])),
                                             ).replace(tzinfo=ZoneInfo("America/Lima")) < ahora_gestion
@@ -3119,8 +3134,10 @@ else:
                                             pagos_historial_ordenables.append((orden_pago, fila_pago))
                                         pagos_historial = [fila for _, fila in sorted(pagos_historial_ordenables, key=lambda elemento: elemento[0])]
                                         st.dataframe(pd.DataFrame(pagos_historial), use_container_width=True, hide_index=True)
+                                except TypeError as e:
+                                    st.error(f"No se pudo organizar la agenda por un error en el formato de las fechas. La migración no corrige este error de la aplicación. Detalle: {e}")
                                 except Exception as e:
-                                    st.warning(f"Para consultar clases y pagos, ejecuta supabase_gestion_instructoras_migration.sql en Supabase. Detalle: {e}")
+                                    st.warning(f"No se pudieron consultar clases o pagos. Verifica si supabase_gestion_instructoras_migration.sql está aplicado y revisa los permisos. Detalle: {e}")
                         else:
                             st.info("Registra a una persona del equipo para abrir su ficha y llevar su historial.")
 
