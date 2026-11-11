@@ -302,6 +302,15 @@ def es_paquete_par_sabado(nombre_paquete):
     # Acepta el nombre exacto y etiquetas que incluyan el nombre del plan.
     return "par sabado" in normalizar_texto_regla(nombre_paquete)
 
+def parejas_requeridas_sesion(sesion, reformers_por_sede):
+    """Parejas necesarias para llenar la capacidad efectiva configurada de una sesión."""
+    capacidad_sesion = max(0, int(sesion.get("capacidad") or 0))
+    id_sede = int(sesion.get("local_id") or 0)
+    capacidad_configurada = reformers_por_sede.get(id_sede)
+    capacidad_sede = capacidad_sesion if capacidad_configurada is None else max(0, int(capacidad_configurada))
+    capacidad_efectiva = min(capacidad_sesion, capacidad_sede)
+    return max(1, capacidad_efectiva // 2)
+
 def dibujar_filas_agenda_instructora(sesiones, id_instructora, pagos_por_sesion, reservas_por_sesion, reservas_activas_por_sesion, reformers_ocupados_por_sesion, locales_por_id):
     """Dibuja una tabla de sesiones y devuelve las filas marcadas para gestión."""
     anchos = [0.9, 0.95, 1.0, 0.9, 0.7, 0.8, 0.8, 0.6]
@@ -1021,8 +1030,12 @@ else:
                     .execute()
                 )
                 paquetes_portal = paquetes_res.data or []
-                locales_portal = supabase.schema("StudioPilates").table("locales").select("id,nombre").execute().data or []
+                locales_portal = supabase.schema("StudioPilates").table("locales").select("id,nombre,max_camillas").execute().data or []
                 nombre_local_portal = {int(local["id"]): local.get("nombre", "Sede") for local in locales_portal}
+                reformers_por_sede_portal = {
+                    int(local["id"]): (int(local["max_camillas"]) if local.get("max_camillas") is not None else None)
+                    for local in locales_portal
+                }
                 tab_plan_portal, tab_reserva_portal, tab_historial_portal = st.tabs(["1. Mi plan", "2. Reservar clase", "3. Mis clases"], key="tabs_portal_alumno", on_change="rerun")
                 with tab_plan_portal:
                     st.subheader("Tu plan")
@@ -1240,15 +1253,16 @@ else:
                                                 es_sabado_par = fecha_sesion_card.weekday() == 5
                                                 if es_sabado_par:
                                                     parejas_inscritas = parejas_por_sesion.get(sesion["id"], 0)
-                                                    parejas_faltantes = max(0, 3 - parejas_inscritas)
+                                                    parejas_requeridas = parejas_requeridas_sesion(sesion, reformers_por_sede_portal)
+                                                    parejas_faltantes = max(0, parejas_requeridas - parejas_inscritas)
                                                     if parejas_faltantes:
                                                         st.warning(
                                                             f"Faltan {parejas_faltantes} {'pareja' if parejas_faltantes == 1 else 'parejas'} "
-                                                            f"para habilitar este horario ({parejas_inscritas} de 3). Puedes reservar desde ahora; "
+                                                            f"para completar este horario ({parejas_inscritas} de {parejas_requeridas}). Puedes reservar desde ahora; "
                                                             "si no se completa el mínimo antes del plazo, se cancelará la clase y se devolverá tu crédito."
                                                         )
                                                     else:
-                                                        st.success("Horario habilitado: ya se inscribieron 3 parejas.")
+                                                        st.success(f"Horario habilitado: ya se inscribieron las {parejas_requeridas} parejas requeridas.")
                                                 elif sesion.get("tipo_servicio") == "Grupal":
                                                     alumnos_inscritos = ocupacion.get(sesion["id"], 0)
                                                     if alumnos_inscritos < 3:
@@ -1310,7 +1324,7 @@ else:
                                         elif "paquete seleccionado" in detalle_normalizado or "paquete no permite" in detalle_normalizado:
                                             st.warning("No se pudo usar ese plan: puede estar vencido, sin créditos disponibles o no corresponder a la sede de la clase. Revisa ‘Mi plan’ o elige otro plan.")
                                         elif "minima para 6 reformers" in detalle_normalizado:
-                                            st.warning("Este horario todavía no tiene capacidad para las 3 parejas requeridas. El estudio debe revisar la programación de la clase.")
+                                            st.warning("El servidor todavía tiene la regla anterior y está bloqueando las primeras reservas de Par Sábado. El administrador debe volver a ejecutar la migración actualizada supabase_mejoras_planes_y_pagos.sql en Supabase.")
                                         elif "dia operativo" in detalle_normalizado or "fecha no es un dia" in detalle_normalizado:
                                             st.warning("La fecha de esta clase no está habilitada en el calendario del estudio. Elige otra fecha o consulta con el estudio.")
                                         elif "plazo para reservar" in detalle_normalizado:
@@ -1369,7 +1383,7 @@ else:
                             datos_sesion_historial = {}
                             if ids_historial:
                                 filas_sesion_historial = supabase.schema("StudioPilates").table("sesiones_clase").select(
-                                    "id,local_id,instructora_id,fecha_clase,hora_inicio,hora_fin,tipo_servicio,estado"
+                                    "id,local_id,instructora_id,fecha_clase,hora_inicio,hora_fin,tipo_servicio,capacidad,estado"
                                 ).in_("id", list(ids_historial)).execute().data or []
                                 datos_sesion_historial = {s["id"]: s for s in filas_sesion_historial}
                             filas_historial = []
@@ -1383,7 +1397,8 @@ else:
                                 fecha_hist_dt = datetime.fromisoformat(str(fecha_hist)).date() if fecha_hist else None
                                 if fecha_hist_dt and fecha_hist_dt.weekday() == 5:
                                     parejas = parejas_por_sesion.get(reserva.get("sesion_id"), 0)
-                                    estado_historial = "Horario habilitado" if parejas >= 3 else f"Faltan {3 - parejas} parejas"
+                                    parejas_requeridas = parejas_requeridas_sesion(sesion_hist, reformers_por_sede_portal)
+                                    estado_historial = "Horario habilitado" if parejas >= parejas_requeridas else f"Faltan {parejas_requeridas - parejas} parejas"
                                 elif sesion_hist.get("tipo_servicio") == "Grupal" and reserva.get("estado") == "Programada":
                                     alumnos = ocupacion.get(reserva.get("sesion_id"), 0)
                                     estado_historial = "Clase habilitada" if alumnos >= 3 else f"Faltan {3 - alumnos} alumnos"
