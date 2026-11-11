@@ -302,8 +302,8 @@ def es_paquete_par_sabado(nombre_paquete):
     # Acepta el nombre exacto y etiquetas que incluyan el nombre del plan.
     return "par sabado" in normalizar_texto_regla(nombre_paquete)
 
-def parejas_requeridas_sesion(sesion, reformers_por_sede):
-    """Parejas necesarias para llenar la capacidad efectiva configurada de una sesión."""
+def minimo_reservas_grupales_sesion(sesion, reformers_por_sede):
+    """Mínimo de parejas o alumnos según la mitad de los Reformers disponibles."""
     capacidad_sesion = max(0, int(sesion.get("capacidad") or 0))
     id_sede = int(sesion.get("local_id") or 0)
     capacidad_configurada = reformers_por_sede.get(id_sede)
@@ -1018,8 +1018,13 @@ else:
                     st.stop()
                 datos_alumno = alumno.data[0]
                 id_alumno_portal = datos_alumno["id"]
-                if st.session_state.pop("aviso_portal", False):
-                    st.success(st.session_state.pop("aviso_portal_mensaje", "La operación se completó correctamente."))
+                mensaje_aviso_portal = st.session_state.get("aviso_portal_mensaje")
+                if mensaje_aviso_portal:
+                    st.success(mensaje_aviso_portal)
+                    if st.button("Cerrar aviso", key=f"cerrar_aviso_portal_{id_alumno_portal}"):
+                        st.session_state.pop("aviso_portal_mensaje", None)
+                        st.session_state.pop("aviso_portal", None)
+                        st.rerun()
 
                 paquetes_res = (
                     supabase.schema("StudioPilates").table("paquetes")
@@ -1253,7 +1258,7 @@ else:
                                                 es_sabado_par = fecha_sesion_card.weekday() == 5
                                                 if es_sabado_par:
                                                     parejas_inscritas = parejas_por_sesion.get(sesion["id"], 0)
-                                                    parejas_requeridas = parejas_requeridas_sesion(sesion, reformers_por_sede_portal)
+                                                    parejas_requeridas = minimo_reservas_grupales_sesion(sesion, reformers_por_sede_portal)
                                                     parejas_faltantes = max(0, parejas_requeridas - parejas_inscritas)
                                                     if parejas_faltantes:
                                                         st.warning(
@@ -1265,10 +1270,16 @@ else:
                                                         st.success(f"Horario habilitado: ya se inscribieron las {parejas_requeridas} parejas requeridas.")
                                                 elif sesion.get("tipo_servicio") == "Grupal":
                                                     alumnos_inscritos = ocupacion.get(sesion["id"], 0)
-                                                    if alumnos_inscritos < 3:
-                                                        st.warning(f"Faltan {3 - alumnos_inscritos} alumnos para completar el mínimo. Si no se alcanza antes del plazo indicado, se cancelará la clase y se devolverá el crédito.")
+                                                    alumnos_requeridos = minimo_reservas_grupales_sesion(sesion, reformers_por_sede_portal)
+                                                    if alumnos_inscritos < alumnos_requeridos:
+                                                        st.warning(
+                                                            f"Faltan {alumnos_requeridos - alumnos_inscritos} "
+                                                            f"{'alumno' if alumnos_requeridos - alumnos_inscritos == 1 else 'alumnos'} "
+                                                            f"para completar la clase ({alumnos_inscritos} de {alumnos_requeridos}). Puedes reservar desde ahora; "
+                                                            "si no se alcanza el mínimo antes del plazo, se cancelará la clase y se devolverá tu crédito."
+                                                        )
                                                     else:
-                                                        st.success("Clase habilitada: ya se alcanzó el mínimo de 3 alumnos.")
+                                                        st.success(f"Clase habilitada: ya se alcanzó el mínimo de {alumnos_requeridos} alumnos.")
                                                 seleccionada = not ya_reservada and st.session_state.get(sesion_portal_key) == int(sesion["id"])
                                                 if st.button(
                                                     "Ya tienes esta clase reservada" if ya_reservada else ("Horario elegido ✓" if seleccionada else "Elegir este horario"),
@@ -1301,11 +1312,22 @@ else:
                                             "p_sesion_id": int(sesion_seleccionada["id"]),
                                             "p_paquete_id": int(plan_seleccionado["id"]),
                                         }).execute()
-                                        st.session_state["aviso_portal_mensaje"] = (
-                                            'Se ha reservado la Clase, la cual se habilitará en "Mis clases", cuando se completen las parejas requeridas.'
-                                            if es_paquete_par_sabado(plan_seleccionado.get("tipo_paquete"))
-                                            else "Reserva confirmada. La clase ya se descontó de tu plan."
-                                        )
+                                        if es_paquete_par_sabado(plan_seleccionado.get("tipo_paquete")):
+                                            st.session_state["aviso_portal_mensaje"] = (
+                                                'Se ha reservado la Clase, la cual se habilitará en "Mis clases", '
+                                                "cuando se completen las parejas requeridas."
+                                            )
+                                        elif sesion_seleccionada.get("tipo_servicio") == "Grupal":
+                                            alumnos_requeridos_reserva = minimo_reservas_grupales_sesion(
+                                                sesion_seleccionada, reformers_por_sede_portal
+                                            )
+                                            st.session_state["aviso_portal_mensaje"] = (
+                                                'Se ha reservado la clase grupal. Su habilitación se actualizará en "Mis clases" '
+                                                f"cuando se complete el mínimo de {alumnos_requeridos_reserva} alumnos. "
+                                                "Si no se completa antes del plazo, se cancelará la clase y se devolverá tu crédito."
+                                            )
+                                        else:
+                                            st.session_state["aviso_portal_mensaje"] = "Reserva confirmada. La clase ya se descontó de tu plan."
                                         st.session_state["aviso_portal"] = True
                                         st.session_state.clear_portal_reserva += 1
                                         st.session_state.pop(sesion_portal_key, None)
@@ -1397,11 +1419,12 @@ else:
                                 fecha_hist_dt = datetime.fromisoformat(str(fecha_hist)).date() if fecha_hist else None
                                 if fecha_hist_dt and fecha_hist_dt.weekday() == 5:
                                     parejas = parejas_por_sesion.get(reserva.get("sesion_id"), 0)
-                                    parejas_requeridas = parejas_requeridas_sesion(sesion_hist, reformers_por_sede_portal)
+                                    parejas_requeridas = minimo_reservas_grupales_sesion(sesion_hist, reformers_por_sede_portal)
                                     estado_historial = "Horario habilitado" if parejas >= parejas_requeridas else f"Faltan {parejas_requeridas - parejas} parejas"
                                 elif sesion_hist.get("tipo_servicio") == "Grupal" and reserva.get("estado") == "Programada":
                                     alumnos = ocupacion.get(reserva.get("sesion_id"), 0)
-                                    estado_historial = "Clase habilitada" if alumnos >= 3 else f"Faltan {3 - alumnos} alumnos"
+                                    alumnos_requeridos = minimo_reservas_grupales_sesion(sesion_hist, reformers_por_sede_portal)
+                                    estado_historial = "Clase habilitada" if alumnos >= alumnos_requeridos else f"Faltan {alumnos_requeridos - alumnos} alumnos"
                                 filas_historial.append({
                                     "Fecha": fecha_visible(fecha_hist),
                                     "Hora": str(hora_hist)[:5] if hora_hist else "—",
