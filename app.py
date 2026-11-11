@@ -1287,7 +1287,11 @@ else:
                                             "p_sesion_id": int(sesion_seleccionada["id"]),
                                             "p_paquete_id": int(plan_seleccionado["id"]),
                                         }).execute()
-                                        st.session_state["aviso_portal_mensaje"] = "Reserva confirmada. La clase ya se descontó de tu plan."
+                                        st.session_state["aviso_portal_mensaje"] = (
+                                            'Se ha reservado la Clase, la cual se habilitará en "Mis clases", cuando se completen las parejas requeridas.'
+                                            if es_paquete_par_sabado(plan_seleccionado.get("tipo_paquete"))
+                                            else "Reserva confirmada. La clase ya se descontó de tu plan."
+                                        )
                                         st.session_state["aviso_portal"] = True
                                         st.session_state.clear_portal_reserva += 1
                                         st.session_state.pop(sesion_portal_key, None)
@@ -1399,7 +1403,7 @@ else:
                             ids_reservas_historial = [ids_reservas_historial[i] for i in orden_indices_historial]
                             selector_mis_clases_key = f"seleccionar_reserva_mis_clases_{id_alumno_portal}_{st.session_state.clear_portal_reserva}"
                             claves_checkbox_reserva = [f"{selector_mis_clases_key}_{id_reserva}" for id_reserva in ids_reservas_historial]
-                            anchos_columnas_historial = [1.0, 0.55, 1.0, 0.95, 1.05, 0.8, 0.52]
+                            anchos_columnas_historial = [1.0, 0.55, 1.0, 0.95, 1.05, 1.45, 0.52]
                             encabezados_historial = ["Fecha", "Hora", "Sede", "Clase", "Instructor", "Estado", "Gestión"]
                             campos_historial = ["Fecha", "Hora", "Sede", "Clase", "Instructora", "Estado"]
                             columnas_encabezado = st.columns(anchos_columnas_historial)
