@@ -294,6 +294,63 @@ def etiqueta_fecha_opcion(fecha):
     dias = ("Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado", "Domingo")
     return f"{dias[fecha.weekday()]}, {fecha.strftime('%d-%m-%Y')}"
 
+def es_paquete_par_sabado(nombre_paquete):
+    nombre = unicodedata.normalize("NFKD", str(nombre_paquete or "")).casefold()
+    nombre = "".join(caracter for caracter in nombre if not unicodedata.combining(caracter))
+    return nombre.strip() == "par sabado"
+
+def dibujar_filas_agenda_instructora(sesiones, id_instructora, pagos_por_sesion, reservas_por_sesion, reservas_activas_por_sesion, reformers_ocupados_por_sesion, locales_por_id):
+    """Dibuja una tabla de sesiones y devuelve las filas marcadas para gestión."""
+    anchos = [0.9, 0.95, 1.0, 0.9, 0.7, 0.8, 0.8, 0.6]
+    encabezados = ["Fecha", "Horario", "Sede", "Clase", "Reformers", "Estado", "Asistencia", "Gestión"]
+    columnas = st.columns(anchos)
+    for columna, titulo in zip(columnas, encabezados):
+        columna.markdown(
+            f"<div style='font-size:.82rem;font-weight:700;white-space:normal;line-height:1.4rem'>{html.escape(titulo)}</div>",
+            unsafe_allow_html=True,
+        )
+    ids_seleccionadas = []
+    ahora_local = datetime.now(ZoneInfo("America/Lima"))
+    for sesion in sesiones:
+        motivo_bloqueo = ""
+        inicio = datetime.combine(
+            datetime.fromisoformat(str(sesion["fecha_clase"])).date(),
+            datetime_time.fromisoformat(str(sesion["hora_inicio"])),
+        ).replace(tzinfo=ZoneInfo("America/Lima"))
+        if sesion.get("estado") != "Programada":
+            motivo_bloqueo = f"La clase está {str(sesion.get('estado') or 'sin estado').lower()}."
+        elif inicio <= ahora_local:
+            motivo_bloqueo = "La clase ya empezó o pasó."
+        elif sesion["id"] in pagos_por_sesion:
+            motivo_bloqueo = "La clase ya tiene un pago registrado."
+        elif reservas_por_sesion.get(sesion["id"]):
+            motivo_bloqueo = "La clase ya tiene asistencia registrada."
+        columnas_fila = st.columns(anchos)
+        valores = [
+            fecha_visible(sesion["fecha_clase"]),
+            f"{str(sesion['hora_inicio'])[:5]}–{str(sesion['hora_fin'])[:5]}",
+            locales_por_id.get(int(sesion["local_id"]), "Sede"),
+            sesion.get("tipo_servicio", "—"),
+            f"{reformers_ocupados_por_sesion.get(sesion['id'], 0)}/{int(sesion.get('capacidad') or 0)}",
+            sesion.get("estado", "—"),
+            ", ".join(sorted({r["estado"] for r in reservas_por_sesion.get(sesion["id"], [])})) or "—",
+        ]
+        for columna, valor in zip(columnas_fila[:7], valores):
+            texto = str(valor)
+            columna.markdown(
+                f"<div title='{html.escape(texto, quote=True)}' style='font-size:.82rem;white-space:normal;overflow-wrap:anywhere;line-height:1.35rem;min-height:2.2rem;padding:.3rem 0'>{html.escape(texto)}</div>",
+                unsafe_allow_html=True,
+            )
+        clave = f"gestion_sesion_{id_instructora}_{sesion['id']}_{st.session_state.clear_estado_sesion}"
+        marcada = columnas_fila[7].checkbox(
+            "Gestión", key=clave, disabled=bool(motivo_bloqueo),
+            label_visibility="collapsed",
+            help=motivo_bloqueo or "Marca para cancelar la clase o modificar su instructor y modalidad.",
+        )
+        if marcada:
+            ids_seleccionadas.append(sesion["id"])
+    return ids_seleccionadas
+
 def seleccionar_fecha_calendario(clave_fecha, fecha, clave_abierto):
     """Selecciona la fecha y cierra el calendario en el siguiente render."""
     st.session_state[clave_fecha] = fecha
@@ -626,12 +683,64 @@ for llave_limpieza in ("clear_bootstrap", "clear_login", "clear_portal_alumno", 
     if llave_limpieza not in st.session_state:
         st.session_state[llave_limpieza] = 0
 
+def expirar_sesiones_app():
+    st.session_state.logged_in = False
+    st.session_state.admin_id = None
+    st.session_state.admin_usuario = ""
+    st.session_state.admin_es_superadmin = False
+    st.session_state.admin_permisos = []
+    st.session_state.admin_migracion_pendiente = False
+    st.session_state.instructor_sesion_id = None
+    st.session_state.instructor_sesion_nombre = ""
+    st.session_state.instructor_cuenta_id = None
+    st.session_state.instructor_debe_cambiar_clave = False
+    st.session_state.pop("instructor_hash_sesion", None)
+    st.session_state.pop("alumno_portal_id", None)
+    st.session_state.pop("alumno_portal_hash", None)
+    st.session_state.pop("alumno_portal_telefono", None)
+    st.session_state.pop("alumno_portal_ultima_actividad", None)
+    st.session_state.pop("instructor_ultima_actividad", None)
+    st.session_state.pop("admin_ultima_actividad", None)
+    st.session_state["_app_ultima_actividad"] = None
+    st.session_state["_app_sesion_expirada"] = True
+
+def hay_sesion_autenticada():
+    return bool(
+        st.session_state.get("logged_in")
+        or st.session_state.get("alumno_portal_id")
+        or st.session_state.get("instructor_sesion_id")
+    )
+
+@st.fragment(run_every="10s")
+def vigilar_inactividad_app():
+    if not hay_sesion_autenticada():
+        return
+    ultima_actividad = st.session_state.get("_app_ultima_actividad")
+    ahora = datetime.now(ZoneInfo("UTC")).timestamp()
+    if ultima_actividad and ahora - ultima_actividad >= 300:
+        expirar_sesiones_app()
+        st.rerun(scope="app")
+
+vigilar_inactividad_app()
+if hay_sesion_autenticada():
+    ahora_actividad = datetime.now(ZoneInfo("UTC")).timestamp()
+    ultima_actividad = st.session_state.get("_app_ultima_actividad")
+    if ultima_actividad and ahora_actividad - ultima_actividad >= 300:
+        expirar_sesiones_app()
+        st.rerun()
+    st.session_state["_app_ultima_actividad"] = ahora_actividad
+else:
+    st.session_state["_app_ultima_actividad"] = None
+
 # CASO 1: CONFIGURACIÓN INICIAL (solo si se confirma que no existen administradores)
 try:
     primer_inicio = verificar_primer_inicio()
 except Exception:
     st.error("No se pudo verificar la cuenta administradora. Revisa la conexión y los permisos de Supabase.")
     st.stop()
+
+if st.session_state.pop("_app_sesion_expirada", False):
+    st.warning("Tu sesión se cerró automáticamente después de 5 minutos sin actividad. Ingresa nuevamente.")
 
 if primer_inicio:
     st.title(":material/admin_panel_settings: Configuración Inicial del Sistema")
@@ -666,6 +775,7 @@ if primer_inicio:
                 st.session_state.admin_es_superadmin = True
                 st.session_state.admin_permisos = list(VENTANAS_ADMIN.keys())
                 st.session_state.logged_in = True
+                st.session_state.admin_ultima_actividad = datetime.now(ZoneInfo("UTC")).timestamp()
                 st.session_state.mensaje_resultado_app = "Sistema activado. Ya puedes administrar el estudio."
                 st.success("¡Sistema activado con éxito! Abriendo el panel...")
                 st.rerun()
@@ -708,7 +818,7 @@ else:
         alumno_portal_id = st.session_state.get("alumno_portal_id")
         if alumno_portal_id is not None:
             ultima_actividad = st.session_state.get("alumno_portal_ultima_actividad", 0)
-            if ahora_utc.timestamp() - ultima_actividad > 1800:
+            if ahora_utc.timestamp() - ultima_actividad >= 300:
                 for clave_alumno in ("alumno_portal_id", "alumno_portal_hash", "alumno_portal_telefono", "alumno_portal_ultima_actividad"):
                     st.session_state.pop(clave_alumno, None)
                 st.warning("Tu sesión expiró por inactividad. Ingresa nuevamente.")
@@ -901,13 +1011,15 @@ else:
 
                 paquetes_res = (
                     supabase.schema("StudioPilates").table("paquetes")
-                    .select("id,modalidad_plan,tipo_paquete,clases_restantes,fecha_vencimiento,local_id_fijo,pagado")
+                    .select("id,modalidad_plan,tipo_paquete,clases_totales,clases_restantes,fecha_vencimiento,local_id_fijo,pagado")
                     .eq("alumno_id", id_alumno_portal).eq("estado", "Activo")
                     .eq("pagado", True).gte("fecha_vencimiento", ahora_portal.date().isoformat())
                     .gt("clases_restantes", 0).order("fecha_vencimiento")
                     .execute()
                 )
                 paquetes_portal = paquetes_res.data or []
+                locales_portal = supabase.schema("StudioPilates").table("locales").select("id,nombre").execute().data or []
+                nombre_local_portal = {int(local["id"]): local.get("nombre", "Sede") for local in locales_portal}
                 tab_plan_portal, tab_reserva_portal, tab_historial_portal = st.tabs(["1. Mi plan", "2. Reservar clase", "3. Mis clases"], key="tabs_portal_alumno", on_change="rerun")
                 with tab_plan_portal:
                     st.subheader("Tu plan")
@@ -915,8 +1027,16 @@ else:
                         cols_plan = st.columns(min(3, len(paquetes_portal)))
                         for idx_plan, plan in enumerate(paquetes_portal):
                             with cols_plan[idx_plan % len(cols_plan)]:
-                                st.metric(f"{plan.get('modalidad_plan', '')} · {plan.get('tipo_paquete', '')}", f"{plan.get('clases_restantes', 0)} clases")
-                                st.caption(f"Vence el {fecha_visible(plan.get('fecha_vencimiento'))}")
+                                modalidad_plan_visible = plan.get("modalidad_plan") or "—"
+                                sede_plan_visible = (
+                                    nombre_local_portal.get(int(plan.get("local_id_fijo") or 0), "Sede no asignada")
+                                    if modalidad_plan_visible == "Fixed" else "Todas las sedes"
+                                )
+                                st.markdown(
+                                    f"**{html.escape(str(modalidad_plan_visible))} - {int(plan.get('clases_totales') or 0)} clases - {html.escape(str(sede_plan_visible))}**"
+                                )
+                                st.metric("Clases disponibles", int(plan.get("clases_restantes") or 0))
+                                st.caption(f"Paquete: {plan.get('tipo_paquete', '—')} · Vence el {fecha_visible(plan.get('fecha_vencimiento'))}")
                     else:
                         st.warning("No tienes planes pagados y vigentes con clases disponibles.")
 
@@ -1001,23 +1121,27 @@ else:
                         sesion["_inicio_dt"] = inicio_sesion
                         sesiones_futuras.append(sesion)
                 ids_sesiones = [s["id"] for s in sesiones_futuras]
+                sesiones_portal_por_id = {int(s["id"]): s for s in sesiones_futuras}
                 reservas_agendadas = []
                 sesiones_reservadas_alumno = set()
                 if ids_sesiones:
                     reservas_agendadas = supabase.schema("StudioPilates").table("reservas").select("sesion_id,estado,alumno_id").in_("sesion_id", ids_sesiones).eq("estado", "Programada").execute().data or []
                 ocupacion = {}
+                parejas_por_sesion = {}
                 for reserva_activa in reservas_agendadas:
                     id_sesion = reserva_activa.get("sesion_id")
-                    ocupacion[id_sesion] = ocupacion.get(id_sesion, 0) + 1
+                    sesion_ocupada = sesiones_portal_por_id.get(int(id_sesion or 0), {})
+                    es_horario_sabado = bool(sesion_ocupada.get("_inicio_dt") and sesion_ocupada["_inicio_dt"].weekday() == 5)
+                    ocupacion[id_sesion] = ocupacion.get(id_sesion, 0) + (2 if es_horario_sabado else 1)
+                    if es_horario_sabado:
+                        parejas_por_sesion[id_sesion] = parejas_por_sesion.get(id_sesion, 0) + 1
                     if str(reserva_activa.get("alumno_id")) == str(id_alumno_portal):
                         sesiones_reservadas_alumno.add(int(id_sesion))
-                locales_portal = supabase.schema("StudioPilates").table("locales").select("id,nombre").execute().data or []
                 instructoras_portal = supabase.schema("StudioPilates").table("instructoras").select("id,nombre").execute().data or []
-                nombre_local_portal = {x["id"]: x.get("nombre", "Sede") for x in locales_portal}
                 nombre_instructora_portal = {x["id"]: x.get("nombre", "Instructora") for x in instructoras_portal}
                 sesiones_con_cupo = [
                     s for s in sesiones_futuras
-                    if ocupacion.get(s["id"], 0) < int(s.get("capacidad") or 0)
+                    if int(s.get("capacidad") or 0) - ocupacion.get(s["id"], 0) >= (2 if s["_inicio_dt"].weekday() == 5 else 1)
                 ]
                 sesiones_disponibles = [
                     s for s in sesiones_con_cupo
@@ -1044,7 +1168,13 @@ else:
                         opciones_reserva = []
                         for plan in paquetes_portal:
                             for sesion in sesiones_reserva_mostrables:
-                                if plan.get("modalidad_plan") != "Fixed" or plan.get("local_id_fijo") == sesion.get("local_id"):
+                                es_par_plan = es_paquete_par_sabado(plan.get("tipo_paquete"))
+                                es_sabado = sesion["_inicio_dt"].weekday() == 5
+                                es_manana = sesion["_inicio_dt"].time().replace(tzinfo=None) < corte_turno_manana
+                                reglas_dia_plan = (
+                                    es_par_plan and es_sabado and es_manana and sesion.get("tipo_servicio") == "Grupal"
+                                ) or (not es_par_plan and not es_sabado)
+                                if reglas_dia_plan and (plan.get("modalidad_plan") != "Fixed" or plan.get("local_id_fijo") == sesion.get("local_id")):
                                     opciones_reserva.append((plan, sesion))
                         if opciones_reserva:
                             planes_por_sesion = {}
@@ -1094,6 +1224,20 @@ else:
                                                     st.info("Ya tienes esta clase reservada.")
                                                 else:
                                                     st.caption(f"{cupos_sesion} {'cupos disponibles' if cupos_sesion != 1 else 'cupo disponible'} · Reserva hasta {plazo_reserva.strftime('%d-%m-%Y a las %H:%M')}")
+                                                es_sabado_par = fecha_sesion_card.weekday() == 5
+                                                if es_sabado_par:
+                                                    parejas_inscritas = parejas_por_sesion.get(sesion["id"], 0)
+                                                    parejas_faltantes = max(0, 3 - parejas_inscritas)
+                                                    if parejas_faltantes:
+                                                        st.warning(f"Faltan {parejas_faltantes} {'pareja' if parejas_faltantes == 1 else 'parejas'} para habilitar este horario ({parejas_inscritas} de 3 inscritas).")
+                                                    else:
+                                                        st.success("Horario habilitado: ya se inscribieron 3 parejas.")
+                                                elif sesion.get("tipo_servicio") == "Grupal":
+                                                    alumnos_inscritos = ocupacion.get(sesion["id"], 0)
+                                                    if alumnos_inscritos < 3:
+                                                        st.warning(f"Faltan {3 - alumnos_inscritos} alumnos para completar el mínimo. Si no se alcanza antes del plazo indicado, se cancelará la clase y se devolverá el crédito.")
+                                                    else:
+                                                        st.success("Clase habilitada: ya se alcanzó el mínimo de 3 alumnos.")
                                                 seleccionada = not ya_reservada and st.session_state.get(sesion_portal_key) == int(sesion["id"])
                                                 if st.button(
                                                     "Ya tienes esta clase reservada" if ya_reservada else ("Horario elegido ✓" if seleccionada else "Elegir este horario"),
@@ -1146,8 +1290,19 @@ else:
                     reservas_alumno = supabase.schema("StudioPilates").table("reservas").select(
                         "id,sesion_id,paquete_id,local_id,instructora_id,fecha_clase,hora_clase,tipo_servicio,estado,qr_token"
                     ).eq("alumno_id", id_alumno_portal).order("fecha_clase", desc=False).limit(200).execute().data or []
+                    ids_paquetes_historial_portal = sorted({int(r["paquete_id"]) for r in reservas_alumno if r.get("paquete_id") is not None})
+                    try:
+                        paquetes_historial_portal = (
+                            supabase.schema("StudioPilates").table("paquetes")
+                            .select("id,tipo_paquete")
+                            .in_("id", ids_paquetes_historial_portal)
+                            .execute().data or []
+                        ) if ids_paquetes_historial_portal else []
+                        nombres_paquetes_historial_portal = {int(p["id"]): p.get("tipo_paquete") for p in paquetes_historial_portal}
+                    except Exception:
+                        nombres_paquetes_historial_portal = {}
                     reservas_pasadas = [r for r in reservas_alumno if r.get("estado") in {"Asistencia", "Inasistencia"}]
-                    reservas_canceladas = [r for r in reservas_alumno if r.get("estado") == "Cancelada"]
+                    reservas_canceladas = [r for r in reservas_alumno if str(r.get("estado") or "").startswith("Cancelada")]
                     with st.expander("Clases con asistencia", expanded=False):
                         if reservas_pasadas:
                             st.dataframe(pd.DataFrame([{"Fecha": fecha_visible(r.get("fecha_clase")), "Hora": str(r.get("hora_clase") or "")[:5], "Clase": r.get("tipo_servicio") or "—", "Estado": r.get("estado")} for r in reservas_pasadas]), hide_index=True, use_container_width=True)
@@ -1155,7 +1310,7 @@ else:
                             st.caption("Aún no tienes clases con asistencia registrada.")
                     with st.expander("Clases canceladas", expanded=False):
                         if reservas_canceladas:
-                            st.dataframe(pd.DataFrame([{"Fecha": fecha_visible(r.get("fecha_clase")), "Hora": str(r.get("hora_clase") or "")[:5], "Clase": r.get("tipo_servicio") or "—", "Estado": r.get("estado")} for r in reservas_canceladas]), hide_index=True, use_container_width=True)
+                            st.dataframe(pd.DataFrame([{"Fecha": fecha_visible(r.get("fecha_clase")), "Hora": str(r.get("hora_clase") or "")[:5], "Clase": r.get("tipo_servicio") or "—", "Estado": "Cancelada por no completar el mínimo; el crédito fue devuelto." if r.get("estado") == "Cancelada por cupo mínimo" else r.get("estado")} for r in reservas_canceladas]), hide_index=True, use_container_width=True)
                         else:
                             st.caption("No tienes clases canceladas.")
                     reservas_alumno = [r for r in reservas_alumno if r.get("estado") == "Programada"]
@@ -1177,13 +1332,21 @@ else:
                                 sesion_hist = datos_sesion_historial.get(reserva.get("sesion_id"), {})
                                 fecha_hist = sesion_hist.get("fecha_clase") or reserva.get("fecha_clase", "")
                                 hora_hist = sesion_hist.get("hora_inicio") or reserva.get("hora_clase", "")
+                                estado_historial = reserva.get("estado", "—")
+                                fecha_hist_dt = datetime.fromisoformat(str(fecha_hist)).date() if fecha_hist else None
+                                if fecha_hist_dt and fecha_hist_dt.weekday() == 5:
+                                    parejas = parejas_por_sesion.get(reserva.get("sesion_id"), 0)
+                                    estado_historial = "Horario habilitado" if parejas >= 3 else f"Faltan {3 - parejas} parejas"
+                                elif sesion_hist.get("tipo_servicio") == "Grupal" and reserva.get("estado") == "Programada":
+                                    alumnos = ocupacion.get(reserva.get("sesion_id"), 0)
+                                    estado_historial = "Clase habilitada" if alumnos >= 3 else f"Faltan {3 - alumnos} alumnos"
                                 filas_historial.append({
                                     "Fecha": fecha_visible(fecha_hist),
                                     "Hora": str(hora_hist)[:5] if hora_hist else "—",
                                     "Sede": nombre_local_portal.get(sesion_hist.get("local_id", reserva.get("local_id")), "—"),
                                     "Clase": sesion_hist.get("tipo_servicio") or reserva.get("tipo_servicio", "—"),
                                     "Instructora": nombre_instructora_portal.get(sesion_hist.get("instructora_id", reserva.get("instructora_id")), "—"),
-                                    "Estado": reserva.get("estado", "—"),
+                                    "Estado": estado_historial,
                                     "Seleccionar": False,
                                 })
                                 ids_reservas_historial.append(reserva.get("id"))
@@ -1212,6 +1375,11 @@ else:
                                 if reserva_fila.get("estado") != "Programada":
                                     estado_reserva = str(reserva_fila.get("estado") or "sin estado").lower()
                                     motivo_no_gestion = f"La reserva está {estado_reserva}."
+                                elif es_paquete_par_sabado(nombres_paquetes_historial_portal.get(int(reserva_fila.get("paquete_id") or 0))) or (
+                                    str(sesion_fila.get("fecha_clase") or "").strip()
+                                    and datetime.fromisoformat(str(sesion_fila["fecha_clase"])).date().weekday() == 5
+                                ):
+                                    motivo_no_gestion = "El plan Par Sábado no permite cancelar ni reagendar."
                                 elif sesion_fila.get("estado") != "Programada":
                                     motivo_no_gestion = "La clase ya no está programada."
                                 else:
@@ -1264,6 +1432,8 @@ else:
                             reservas_cancelables = []
                             for reserva_cancelable in proximas_reservas:
                                 sesion_cancelable = datos_sesion_historial[reserva_cancelable["sesion_id"]]
+                                if es_paquete_par_sabado(nombres_paquetes_historial_portal.get(int(reserva_cancelable.get("paquete_id") or 0))) or datetime.fromisoformat(str(sesion_cancelable["fecha_clase"])).date().weekday() == 5:
+                                    continue
                                 inicio_cancelable = datetime.combine(
                                     datetime.fromisoformat(str(sesion_cancelable["fecha_clase"])).date(),
                                     datetime_time.fromisoformat(str(sesion_cancelable["hora_inicio"]))
@@ -1324,7 +1494,7 @@ else:
                                     st.caption("Elige otro horario disponible. Se conserva la clase ya descontada de tu plan y el plazo se valida según Configuración.")
                                     try:
                                         paquete_reserva = (supabase.schema("StudioPilates").table("paquetes")
-                                            .select("id,modalidad_plan,local_id_fijo")
+                                            .select("id,modalidad_plan,local_id_fijo,tipo_paquete")
                                             .eq("id", reserva_seleccionada_cancelable.get("paquete_id"))
                                             .eq("alumno_id", id_alumno_portal)
                                             .limit(1).execute().data or [])
@@ -1334,6 +1504,8 @@ else:
                                             if int(s["id"]) != int(reserva_seleccionada_cancelable.get("sesion_id") or 0)
                                             and int(s["id"]) not in sesiones_reservadas_alumno
                                             and paquete_reagenda
+                                            and (es_paquete_par_sabado(paquete_reagenda.get("tipo_paquete")) == (s["_inicio_dt"].weekday() == 5))
+                                            and (not es_paquete_par_sabado(paquete_reagenda.get("tipo_paquete")) or (s["_inicio_dt"].time().replace(tzinfo=None) < corte_turno_manana and s.get("tipo_servicio") == "Grupal"))
                                             and (paquete_reagenda.get("modalidad_plan") != "Fixed"
                                                  or paquete_reagenda.get("local_id_fijo") == s.get("local_id"))
                                         ]
@@ -1457,11 +1629,13 @@ else:
                     st.error(f"No se pudo validar el acceso. Ejecuta la migración de cuentas de instructores en Supabase. Detalle: {error_login_instructor}")
         else:
             id_instructor_portal = st.session_state.instructor_sesion_id
-            if datetime.now(ZoneInfo("UTC")).timestamp() - st.session_state.get("instructor_ultima_actividad", 0) > 1800:
+            if datetime.now(ZoneInfo("UTC")).timestamp() - st.session_state.get("instructor_ultima_actividad", 0) >= 300:
                 st.session_state.instructor_sesion_id = None
                 st.session_state.instructor_sesion_nombre = ""
                 st.session_state.instructor_cuenta_id = None
                 st.session_state.pop("instructor_hash_sesion", None)
+                st.session_state.pop("instructor_ultima_actividad", None)
+                st.session_state.instructor_debe_cambiar_clave = False
                 st.warning("Tu sesión expiró por inactividad. Ingresa nuevamente.")
                 st.rerun()
             st.session_state.instructor_ultima_actividad = datetime.now(ZoneInfo("UTC")).timestamp()
@@ -1711,6 +1885,7 @@ else:
                         )
                         st.session_state.admin_migracion_pendiente = esquema_antiguo
                         st.session_state.logged_in = True
+                        st.session_state.admin_ultima_actividad = datetime.now(ZoneInfo("UTC")).timestamp()
                         st.session_state.clear_login += 1
                         # Cada sesión administrativa inicia la Gestión de Alumnos en el directorio.
                         st.session_state.kardex_alumno_id = None
@@ -1722,6 +1897,18 @@ else:
                 except Exception as e:
                     st.error(f"❌ Error al validar credenciales: {e}")
         else:
+            ahora_admin_utc = datetime.now(ZoneInfo("UTC")).timestamp()
+            if ahora_admin_utc - st.session_state.get("admin_ultima_actividad", 0) >= 300:
+                st.session_state.logged_in = False
+                st.session_state.admin_id = None
+                st.session_state.admin_usuario = ""
+                st.session_state.admin_es_superadmin = False
+                st.session_state.admin_permisos = []
+                st.session_state.admin_migracion_pendiente = False
+                st.session_state.pop("admin_ultima_actividad", None)
+                st.warning("Tu sesión expiró por 5 minutos de inactividad. Ingresa nuevamente.")
+                st.rerun()
+            st.session_state.admin_ultima_actividad = ahora_admin_utc
             st.title(":material/dashboard: Panel de Control")
             mensaje_resultado_app = st.session_state.pop("mensaje_resultado_app", None)
             if mensaje_resultado_app:
@@ -1734,6 +1921,7 @@ else:
                 st.session_state.admin_es_superadmin = False
                 st.session_state.admin_permisos = []
                 st.session_state.admin_migracion_pendiente = False
+                st.session_state.pop("admin_ultima_actividad", None)
                 st.session_state.kardex_alumno_id = None
                 st.session_state.pop("selector_predictivo_kardex", None)
                 st.session_state.pop("alumno_en_edicion_id", None)
@@ -2499,16 +2687,21 @@ else:
                                                 st.error(f"No se pudo reactivar: {e}")
 
                                 try:
-                                    sesiones_inst_res = (
-                                        supabase.schema("StudioPilates").table("sesiones_clase")
-                                        .select("id,local_id,instructora_id,fecha_clase,hora_inicio,hora_fin,tipo_servicio,capacidad,estado,pago_por_clase_aplicado")
-                                        .eq("instructora_id", instructora_actual["id"])
-                                        .order("fecha_clase")
-                                        .order("hora_inicio")
-                                        .limit(500)
-                                        .execute()
-                                    )
-                                    sesiones_inst = sesiones_inst_res.data or []
+                                    sesiones_inst = []
+                                    for offset_sesiones in range(0, 10000, 500):
+                                        pagina_sesiones_inst = (
+                                            supabase.schema("StudioPilates").table("sesiones_clase")
+                                            .select("id,local_id,instructora_id,fecha_clase,hora_inicio,hora_fin,tipo_servicio,capacidad,estado,pago_por_clase_aplicado")
+                                            .eq("instructora_id", instructora_actual["id"])
+                                            .order("fecha_clase")
+                                            .order("hora_inicio")
+                                            .order("id")
+                                            .range(offset_sesiones, offset_sesiones + 499)
+                                            .execute().data or []
+                                        )
+                                        sesiones_inst.extend(pagina_sesiones_inst)
+                                        if len(pagina_sesiones_inst) < 500:
+                                            break
                                     pagos_inst_res = (
                                         supabase.schema("StudioPilates").table("pagos_instructoras")
                                         .select("id,sesion_id,fecha_pago,importe,referencia")
@@ -2535,6 +2728,8 @@ else:
                                     ids_sesiones_inst = [s["id"] for s in sesiones_inst]
                                     reservas_por_sesion = {}
                                     reservas_activas_por_sesion = {}
+                                    reformers_ocupados_por_sesion = {}
+                                    sesiones_inst_por_id = {int(s["id"]): s for s in sesiones_inst}
                                     if ids_sesiones_inst:
                                         reservas_inst = (
                                             supabase.schema("StudioPilates").table("reservas")
@@ -2547,6 +2742,10 @@ else:
                                         for reserva in reservas_inst:
                                             if reserva.get("estado") == "Programada":
                                                 reservas_activas_por_sesion[reserva["sesion_id"]] = reservas_activas_por_sesion.get(reserva["sesion_id"], 0) + 1
+                                                sesion_activa = sesiones_inst_por_id.get(int(reserva["sesion_id"]), {})
+                                                fecha_sesion_activa = datetime.fromisoformat(str(sesion_activa.get("fecha_clase"))).date() if sesion_activa.get("fecha_clase") else None
+                                                peso_reformer = 2 if fecha_sesion_activa and fecha_sesion_activa.weekday() == 5 else 1
+                                                reformers_ocupados_por_sesion[reserva["sesion_id"]] = reformers_ocupados_por_sesion.get(reserva["sesion_id"], 0) + peso_reformer
                                             if reserva.get("alumno_id") is None:
                                                 continue
                                             estado_reserva = unicodedata.normalize("NFKD", str(reserva.get("estado") or "").lower())
@@ -2568,73 +2767,63 @@ else:
                                     sesiones_con_evidencia = [s for s in completadas_inst if reservas_por_sesion.get(s["id"])]
                                     sesiones_por_pagar = [s for s in sesiones_con_evidencia if s["id"] not in pagos_por_sesion]
                                     por_pagar_inst = sum(monto_fijo_sesion(s) for s in sesiones_por_pagar)
-                                    pagado_inst = sum(float(p.get("importe") or 0) for p in pagos_inst)
-                                    horas_inst = sum(minutos_sesion(s) for s in completadas_inst) / 60
-                                    met1, met2, met3, met4 = st.columns(4)
-                                    met1.metric("Clases realizadas", len(completadas_inst))
-                                    met2.metric("Horas dictadas", f"{horas_inst:.1f}")
-                                    met3.metric("Pendiente de pago", f"S/ {por_pagar_inst:.2f}")
-                                    met4.metric("Pagos registrados", f"S/ {pagado_inst:.2f}")
+                                    with st.container(key=f"tarjeta_pendiente_pago_{instructora_actual['id']}"):
+                                        st.markdown(
+                                            f"<style>div[class*='st-key-tarjeta_pendiente_pago_{instructora_actual['id']}'] [data-testid='stMetric'] {{ min-height:6rem; padding:1rem 1.2rem; }} div[class*='st-key-tarjeta_pendiente_pago_{instructora_actual['id']}'] [data-testid='stMetricLabel'] {{ font-size:1rem !important; white-space:normal !important; }} div[class*='st-key-tarjeta_pendiente_pago_{instructora_actual['id']}'] [data-testid='stMetricValue'] {{ font-size:clamp(1.35rem, 2.2vw, 2rem) !important; white-space:normal !important; }}</style>",
+                                            unsafe_allow_html=True,
+                                        )
+                                        st.metric("Pendiente de pago", f"S/ {por_pagar_inst:.2f}")
 
                                     if sesiones_inst:
                                         st.markdown("#### Horarios, sedes y clases")
-                                        anchos_grid_sesiones = [0.9, 0.95, 1.0, 0.9, 0.7, 0.8, 0.8, 0.6]
-                                        encabezados_grid_sesiones = ["Fecha", "Horario", "Sede", "Clase", "Aforo", "Estado", "Asistencia", "Gestión"]
-                                        columnas_encabezado_sesiones = st.columns(anchos_grid_sesiones)
-                                        for columna, titulo in zip(columnas_encabezado_sesiones, encabezados_grid_sesiones):
-                                            columna.markdown(
-                                                f"<div style='font-size:.78rem;font-weight:700;white-space:nowrap;line-height:2rem'>{html.escape(titulo)}</div>",
-                                                unsafe_allow_html=True,
-                                            )
                                         id_sesiones_seleccionadas = []
-                                        for sesion in sesiones_inst:
-                                            motivo_bloqueo_gestion = ""
-                                            puede_gestionar_sesion = False
-                                            inicio_sesion_gestion = datetime.combine(
-                                                datetime.fromisoformat(str(sesion["fecha_clase"])).date(),
-                                                datetime_time.fromisoformat(str(sesion["hora_inicio"])),
-                                            ).replace(tzinfo=ZoneInfo("America/Lima"))
-                                            if sesion.get("estado") != "Programada":
-                                                motivo_bloqueo_gestion = f"La clase está {str(sesion.get('estado') or 'sin estado').lower()}."
-                                            elif inicio_sesion_gestion <= datetime.now(ZoneInfo("America/Lima")):
-                                                motivo_bloqueo_gestion = "La clase ya empezó o pasó."
-                                            elif sesion["id"] in pagos_por_sesion:
-                                                motivo_bloqueo_gestion = "La clase ya tiene un pago registrado."
-                                            elif reservas_por_sesion.get(sesion["id"]):
-                                                motivo_bloqueo_gestion = "La clase ya tiene asistencia registrada."
+                                        ahora_gestion = datetime.now(ZoneInfo("America/Lima"))
+                                        hoy_gestion = ahora_gestion.date()
+                                        limite_recientes = hoy_gestion - timedelta(days=15)
+                                        sesiones_recientes = [
+                                            s for s in sesiones_inst
+                                            if limite_recientes <= datetime.combine(
+                                                datetime.fromisoformat(str(s["fecha_clase"])).date(),
+                                                datetime_time.fromisoformat(str(s["hora_inicio"])),
+                                            ).replace(tzinfo=ZoneInfo("America/Lima")) < ahora_gestion
+                                        ]
+                                        sesiones_futuras_gestion = [
+                                            s for s in sesiones_inst
+                                            if datetime.combine(
+                                                datetime.fromisoformat(str(s["fecha_clase"])).date(),
+                                                datetime_time.fromisoformat(str(s["hora_inicio"])),
+                                            ).replace(tzinfo=ZoneInfo("America/Lima")) >= ahora_gestion
+                                        ]
+                                        meses_es = ("enero", "febrero", "marzo", "abril", "mayo", "junio", "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre")
+                                        with st.expander("Clases de los 15 días anteriores", expanded=False):
+                                            if sesiones_recientes:
+                                                meses_recientes = sorted({
+                                                    (datetime.fromisoformat(str(s["fecha_clase"])).date().year, datetime.fromisoformat(str(s["fecha_clase"])).date().month)
+                                                    for s in sesiones_recientes
+                                                })
+                                                for anio_mes in meses_recientes:
+                                                    st.markdown(f"##### {meses_es[anio_mes[1] - 1].capitalize()} {anio_mes[0]}")
+                                                    filas_mes = [s for s in sesiones_recientes if (datetime.fromisoformat(str(s["fecha_clase"])).date().year, datetime.fromisoformat(str(s["fecha_clase"])).date().month) == anio_mes]
+                                                    id_sesiones_seleccionadas.extend(dibujar_filas_agenda_instructora(
+                                                        filas_mes, instructora_actual["id"], pagos_por_sesion,
+                                                        reservas_por_sesion, reservas_activas_por_sesion,
+                                                        reformers_ocupados_por_sesion, locales_por_id_inst,
+                                                    ))
                                             else:
-                                                puede_gestionar_sesion = True
-
-                                            inscritos_sesion = reservas_activas_por_sesion.get(sesion["id"], 0)
-                                            asistencia_sesion = ", ".join(sorted({r["estado"] for r in reservas_por_sesion.get(sesion["id"], [])})) or "—"
-                                            valores_sesion = [
-                                                fecha_visible(sesion["fecha_clase"]),
-                                                f"{str(sesion['hora_inicio'])[:5]}–{str(sesion['hora_fin'])[:5]}",
-                                                locales_por_id_inst.get(int(sesion["local_id"]), "Sede"),
-                                                sesion.get("tipo_servicio", "—"),
-                                                f"{inscritos_sesion}/{int(sesion.get('capacidad') or 0)}",
-                                                sesion.get("estado", "—"),
-                                                asistencia_sesion,
-                                            ]
-                                            columnas_fila_sesiones = st.columns(anchos_grid_sesiones)
-                                            for columna, valor in zip(columnas_fila_sesiones[:7], valores_sesion):
-                                                texto_celda = str(valor)
-                                                columna.markdown(
-                                                    f"<div title='{html.escape(texto_celda, quote=True)}' style='font-size:.78rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;line-height:2.35rem'>{html.escape(texto_celda)}</div>",
-                                                    unsafe_allow_html=True,
-                                                )
-                                            clave_gestion_sesion = f"gestion_sesion_{instructora_actual['id']}_{sesion['id']}_{st.session_state.clear_estado_sesion}"
-                                            if not puede_gestionar_sesion:
-                                                st.session_state.pop(clave_gestion_sesion, None)
-                                            seleccionada_gestion = columnas_fila_sesiones[7].checkbox(
-                                                "Gestión",
-                                                key=clave_gestion_sesion,
-                                                disabled=not puede_gestionar_sesion,
-                                                label_visibility="collapsed",
-                                                help=motivo_bloqueo_gestion or "Marca para cancelar la clase o modificar su instructor y modalidad.",
-                                            )
-                                            if seleccionada_gestion:
-                                                id_sesiones_seleccionadas.append(sesion["id"])
+                                                st.caption("No hay clases en los 15 días anteriores.")
+                                        meses_futuros = sorted({
+                                            (datetime.fromisoformat(str(s["fecha_clase"])).date().year, datetime.fromisoformat(str(s["fecha_clase"])).date().month)
+                                            for s in sesiones_futuras_gestion
+                                        })
+                                        for anio_mes in meses_futuros:
+                                            titulo_mes = f"{meses_es[anio_mes[1] - 1].capitalize()} {anio_mes[0]}"
+                                            filas_mes = [s for s in sesiones_futuras_gestion if (datetime.fromisoformat(str(s["fecha_clase"])).date().year, datetime.fromisoformat(str(s["fecha_clase"])).date().month) == anio_mes]
+                                            with st.expander(f"{titulo_mes} · {len(filas_mes)} clases", expanded=(anio_mes == (hoy_gestion.year, hoy_gestion.month))):
+                                                id_sesiones_seleccionadas.extend(dibujar_filas_agenda_instructora(
+                                                    filas_mes, instructora_actual["id"], pagos_por_sesion,
+                                                    reservas_por_sesion, reservas_activas_por_sesion,
+                                                    reformers_ocupados_por_sesion, locales_por_id_inst,
+                                                ))
                                         if len(id_sesiones_seleccionadas) > 1:
                                             st.warning("Selecciona una sola clase para abrir sus opciones de gestión.")
                                         sesion_seleccionada_gestion = next(
@@ -2653,6 +2842,7 @@ else:
                                             localizacion_sesion = locales_por_id_inst.get(int(sesion_seleccionada_gestion["local_id"]), "Sede")
                                             instructora_sesion_actual = next((i for i in instructoras_db if int(i["id"]) == int(sesion_seleccionada_gestion["instructora_id"])), {})
                                             reservas_sesion_actuales = reservas_activas_por_sesion.get(sesion_seleccionada_gestion["id"], 0)
+                                            reformers_sesion_ocupados = reformers_ocupados_por_sesion.get(sesion_seleccionada_gestion["id"], 0)
 
                                             with pestaña_cancelar_sesion:
                                                 st.caption("Al cancelar, se anularán las reservas activas, se devolverán las clases a los planes y se invalidarán los QR.")
@@ -2719,10 +2909,11 @@ else:
                                                             if nuevo_tipo_sesion == tipo_actual_sesion
                                                             else (1 if nuevo_tipo_sesion == "Privado" else aforo_sede_modificacion)
                                                         )
-                                                        st.caption(f"Aforo resultante: {aforo_nuevo_sesion} · Reservas activas: {reservas_sesion_actuales}")
-                                                        cambio_invalido_aforo = reservas_sesion_actuales > aforo_nuevo_sesion
+                                                        clase_es_sabado = fecha_sesion_seleccionada.weekday() == 5
+                                                        st.caption(f"Aforo resultante: {aforo_nuevo_sesion} Reformers · Ocupados: {reformers_sesion_ocupados}")
+                                                        cambio_invalido_aforo = reformers_sesion_ocupados > aforo_nuevo_sesion or (clase_es_sabado and nuevo_tipo_sesion != "Grupal")
                                                         if cambio_invalido_aforo:
-                                                            st.warning("La modalidad elegida no admite la cantidad actual de reservas.")
+                                                            st.warning("La modalidad elegida no admite la ocupación actual, o el horario sabatino debe seguir siendo grupal para Par Sábado.")
                                                         if st.button(
                                                             "Guardar cambios de la clase",
                                                             key=f"guardar_modificar_sesion_{sesion_seleccionada_gestion['id']}_{st.session_state.clear_estado_sesion}",
@@ -2750,52 +2941,67 @@ else:
                                         )
 
                                     if sesiones_por_pagar:
-                                        st.markdown("#### Registrar pago de una clase con asistencia validada")
-                                        st.caption("El importe por clase es fijo y corresponde al monto acordado para esta persona; no se multiplica ni se prorratea según la duración.")
-                                        pagos_opciones = {
-                                            f"{fecha_visible(s['fecha_clase'])} · {str(s['hora_inicio'])[:5]} · {locales_por_id_inst.get(s['local_id'], 'Sede')} · S/ {monto_fijo_sesion(s):.2f}": s
-                                            for s in sesiones_por_pagar
-                                        }
+                                        st.markdown("#### Registrar pago de clases con asistencia validada")
+                                        st.caption("Selecciona el mes y la sede para registrar en un solo movimiento todas las clases pendientes de pago.")
+                                        grupos_pago = {}
+                                        for sesion_pendiente in sesiones_por_pagar:
+                                            fecha_pendiente = datetime.fromisoformat(str(sesion_pendiente["fecha_clase"])).date()
+                                            id_sede_pago = int(sesion_pendiente["local_id"])
+                                            clave_grupo_pago = (fecha_pendiente.year, fecha_pendiente.month, id_sede_pago)
+                                            grupos_pago.setdefault(clave_grupo_pago, []).append(sesion_pendiente)
+                                        pagos_opciones = {}
+                                        for clave_grupo_pago, sesiones_grupo in sorted(grupos_pago.items()):
+                                            anio_pago, mes_pago, id_sede_pago = clave_grupo_pago
+                                            ultimo_dia_mes = calendario_lib.monthrange(anio_pago, mes_pago)[1]
+                                            inicio_periodo = datetime(anio_pago, mes_pago, 1).date()
+                                            fin_periodo = datetime(anio_pago, mes_pago, ultimo_dia_mes).date()
+                                            nombre_sede_pago = locales_por_id_inst.get(id_sede_pago, "Sede")
+                                            importe_grupo = sum(monto_fijo_sesion(s) for s in sesiones_grupo)
+                                            etiqueta_grupo_pago = (
+                                                f"Del {inicio_periodo.strftime('%d-%m-%Y')} al {fin_periodo.strftime('%d-%m-%Y')} - "
+                                                f"{nombre_sede_pago} - S/ {importe_grupo:.2f}"
+                                            )
+                                            sesiones_grupo.sort(key=lambda s: (str(s["fecha_clase"]), str(s["hora_inicio"])))
+                                            pagos_opciones[etiqueta_grupo_pago] = {
+                                                "sesiones": sesiones_grupo,
+                                                "inicio": inicio_periodo,
+                                                "fin": fin_periodo,
+                                                "sede": nombre_sede_pago,
+                                                "importe": importe_grupo,
+                                            }
                                         pago_sesion_label = st.selectbox(
-                                            "Clase pendiente de pago:",
+                                            "Periodo y sede pendientes de pago:",
                                             [""] + list(pagos_opciones),
                                             key=f"sesion_pago_inst_{instructora_actual['id']}_{st.session_state.clear_pago_instructora}",
-                                            placeholder="Selecciona una clase..."
+                                            placeholder="Selecciona un periodo y una sede..."
                                         )
-                                        pago_referencia = st.text_input("Referencia o nota del pago", key=f"referencia_pago_inst_{instructora_actual['id']}_{st.session_state.clear_pago_instructora}")
+                                        grupo_pago_seleccionado = pagos_opciones.get(pago_sesion_label)
+                                        if grupo_pago_seleccionado:
+                                            texto_periodo_pago = f"del {grupo_pago_seleccionado['inicio'].strftime('%d-%m-%Y')} al {grupo_pago_seleccionado['fin'].strftime('%d-%m-%Y')}"
+                                            referencia_predeterminada = f"Por {len(grupo_pago_seleccionado['sesiones'])} clases - {texto_periodo_pago} - {grupo_pago_seleccionado['sede']}"
+                                            llave_referencia_pago = hashlib.sha256(pago_sesion_label.encode("utf-8")).hexdigest()[:12]
+                                            pago_referencia = st.text_input(
+                                                "Referencia o nota del pago",
+                                                value=referencia_predeterminada,
+                                                key=f"referencia_pago_inst_{instructora_actual['id']}_{st.session_state.clear_pago_instructora}_{llave_referencia_pago}",
+                                            )
+                                        else:
+                                            pago_referencia = ""
                                         if pago_sesion_label:
-                                            st.info(f"Importe a registrar: **S/ {monto_fijo_sesion(pagos_opciones[pago_sesion_label]):.2f}**")
+                                            st.info(f"Importe a registrar: **S/ {grupo_pago_seleccionado['importe']:.2f}**")
                                         if st.button("Registrar pago realizado", key=f"guardar_pago_inst_{instructora_actual['id']}_{st.session_state.clear_pago_instructora}", type="primary", disabled=not pago_sesion_label):
-                                            sesion_pagada = pagos_opciones[pago_sesion_label]
                                             try:
-                                                # Revalidar inmediatamente antes de registrar el pago.
-                                                verificacion_asistencia = supabase.schema("StudioPilates").table("reservas").select("id,alumno_id,estado").eq("sesion_id", sesion_pagada["id"]).execute().data or []
-                                                estados_validos = {"asistencia", "asistio", "presente", "inasistencia", "no asistio", "ausente", "falta", "no show", "no-show"}
-                                                existe_evidencia = False
-                                                for reserva in verificacion_asistencia:
-                                                    estado_reserva = unicodedata.normalize("NFKD", str(reserva.get("estado") or "").lower())
-                                                    estado_reserva = "".join(c for c in estado_reserva if not unicodedata.combining(c)).strip()
-                                                    if reserva.get("alumno_id") is not None and estado_reserva in estados_validos:
-                                                        existe_evidencia = True
-                                                        break
-                                                if not existe_evidencia:
-                                                    st.error("No se registró el pago: la clase no tiene alumnos con asistencia o inasistencia marcada.")
-                                                    st.stop()
-                                                supabase.schema("StudioPilates").table("pagos_instructoras").insert({
-                                                    "sesion_id": sesion_pagada["id"],
-                                                    "instructora_id": instructora_actual["id"],
-                                                    "fecha_pago": datetime.now(ZoneInfo("America/Lima")).date().isoformat(),
-                                                    "pago_por_clase_aplicado": sesion_pagada["pago_por_clase_aplicado"],
-                                                    "duracion_minutos": minutos_sesion(sesion_pagada),
-                                                    "importe": round(monto_fijo_sesion(sesion_pagada), 2),
-                                                    "referencia": pago_referencia.strip() or None,
-                                                    "registrado_por": st.session_state.admin_id
+                                                ids_sesiones_pago = [int(s["id"]) for s in grupo_pago_seleccionado["sesiones"]]
+                                                supabase.rpc("registrar_pago_instructora_lote", {
+                                                    "p_sesion_ids": ids_sesiones_pago,
+                                                    "p_referencia": pago_referencia.strip() or None,
+                                                    "p_admin_id": int(st.session_state.admin_id),
                                                 }).execute()
-                                                st.session_state.aviso_instructora = f"Pago de S/ {monto_fijo_sesion(sesion_pagada):.2f} registrado para {instructora_actual['nombre']}."
+                                                st.session_state.aviso_instructora = f"Pago de S/ {grupo_pago_seleccionado['importe']:.2f} registrado para {instructora_actual['nombre']} ({len(ids_sesiones_pago)} clases)."
                                                 st.session_state.clear_pago_instructora += 1
                                                 st.rerun()
                                             except Exception as e:
-                                                st.error(f"No se pudo registrar el pago: {e}")
+                                                st.error(f"No se pudo registrar el lote de pagos. Ejecuta la migración supabase_mejoras_planes_y_pagos.sql en Supabase: {e}")
 
                                     if pagos_inst:
                                         st.markdown("#### Historial de pagos realizados")
@@ -2881,37 +3087,115 @@ else:
 
                     with tab_pagos_inst:
                         st.markdown("#### Historial de pagos realizados")
-                        st.caption("Cada fila muestra la clase, sede, duración, importe pagado y referencia.")
-                        st.info("En Agenda de clases, las sesiones se cierran automáticamente al terminar si tuvieron reservas. Luego, en Buscar y gestionar, podrás registrar el pago correspondiente.")
+                        st.caption("Filtra por sede y elige un instructor. Los pagos por lote se muestran resumidos; abre cada periodo para ver el detalle clase por clase.")
                         try:
-                            pagos_globales = supabase.schema("StudioPilates").table("pagos_instructoras").select("*").order("fecha_pago", desc=True).limit(1000).execute().data or []
-                            if pagos_globales:
-                                sesiones_globales = supabase.schema("StudioPilates").table("sesiones_clase").select("id,local_id,fecha_clase,hora_inicio,hora_fin,tipo_servicio").in_("id", list({p["sesion_id"] for p in pagos_globales})).execute().data or []
-                                instructora_global = {int(i["id"]): i["nombre"] for i in (supabase.schema("StudioPilates").table("instructoras").select("id,nombre").execute().data or [])}
-                                usuarios_global = {int(u["id"]): u.get("usuario", "—") for u in (supabase.schema("StudioPilates").table("usuarios_admin").select("id,usuario").execute().data or [])}
-                                local_global = {int(l["id"]): l["nombre"] for l in lista_locales_admin}
-                                sesion_global_por_id = {int(s["id"]): s for s in sesiones_globales}
-                                detalle_pagos_global = []
-                                for pago in pagos_globales:
-                                    sesion_pago_global = sesion_global_por_id.get(int(pago["sesion_id"]), {})
-                                    detalle_pagos_global.append({
-                                        "Fecha de pago": fecha_visible(pago.get("fecha_pago")),
-                                    "Instructor": instructora_global.get(int(pago["instructora_id"]), "—"),
-                                        "Fecha de clase": fecha_visible(sesion_pago_global.get("fecha_clase")),
-                                        "Horario": f"{str(sesion_pago_global.get('hora_inicio', ''))[:5]}–{str(sesion_pago_global.get('hora_fin', ''))[:5]}",
-                                        "Sede": local_global.get(int(sesion_pago_global["local_id"]), "—") if sesion_pago_global.get("local_id") is not None else "—",
-                                        "Modalidad": sesion_pago_global.get("tipo_servicio", "—"),
-                                        "Duración": f"{int(pago.get('duracion_minutos') or 0)} min",
-                                        "Importe pagado": f"S/ {float(pago.get('importe') or 0):.2f}",
-                                        "Referencia": pago.get("referencia") or "—",
-                                        "Registrado por": usuarios_global.get(int(pago["registrado_por"]), "—") if pago.get("registrado_por") is not None else "—",
-                                    })
-                                st.dataframe(pd.DataFrame(detalle_pagos_global), hide_index=True, use_container_width=True)
-                                st.metric("Total pagado en el listado", f"S/ {sum(float(p.get('importe') or 0) for p in pagos_globales):.2f}")
+                            sesiones_para_filtro_pagos = (
+                                supabase.schema("StudioPilates").table("sesiones_clase")
+                                .select("id,instructora_id,local_id")
+                                .limit(5000)
+                                .execute().data or []
+                            )
+                            sedes_pagos = sorted({l["nombre"] for l in lista_locales_admin})
+                            sede_pagos_seleccionada = st.selectbox(
+                                "Filtrar instructores por sede",
+                                ["Todas las sedes"] + sedes_pagos,
+                                key=f"filtro_sede_historial_pagos_{st.session_state.clear_gestion_instructoras}",
+                            )
+                            ids_sede_pagos = {
+                                int(local["id"]) for local in lista_locales_admin
+                                if sede_pagos_seleccionada == "Todas las sedes" or local["nombre"] == sede_pagos_seleccionada
+                            }
+                            ids_instructores_pagos = {
+                                int(s["instructora_id"]) for s in sesiones_para_filtro_pagos
+                                if s.get("local_id") is not None and int(s["local_id"]) in ids_sede_pagos
+                            }
+                            instructores_para_pagos = [
+                                i for i in instructoras_db
+                                if sede_pagos_seleccionada == "Todas las sedes" or int(i["id"]) in ids_instructores_pagos
+                            ]
+                            instructores_pagos_opciones = {
+                                f"{i['nombre']} · {'Activa' if i.get('activo', True) else 'Inactiva'}": i
+                                for i in instructores_para_pagos
+                            }
+                            instructor_pago_label = st.selectbox(
+                                "Busca y selecciona un instructor",
+                                [""] + list(instructores_pagos_opciones),
+                                key=f"filtro_instructor_historial_pagos_{st.session_state.clear_gestion_instructoras}_{sede_pagos_seleccionada}",
+                                placeholder="Escribe su nombre...",
+                            )
+                            instructor_pago_seleccionado = instructores_pagos_opciones.get(instructor_pago_label)
+                            if not instructor_pago_seleccionado:
+                                st.info("Selecciona un instructor para consultar su historial de pagos.")
+                                pagos_globales = []
                             else:
-                                st.info("Todavía no hay pagos registrados. Cuando registres el primero, aparecerá en esta lista.")
+                                st.caption(f"Historial de pagos realizados · {instructor_pago_seleccionado['nombre']}")
+                                pagos_globales = (
+                                    supabase.schema("StudioPilates").table("pagos_instructoras")
+                                    .select("*").eq("instructora_id", int(instructor_pago_seleccionado["id"]))
+                                    .order("fecha_pago", desc=True).limit(1000)
+                                    .execute().data or []
+                                )
+                            if pagos_globales:
+                                sesiones_globales = (
+                                    supabase.schema("StudioPilates").table("sesiones_clase")
+                                    .select("id,local_id,fecha_clase,hora_inicio,hora_fin,tipo_servicio")
+                                    .in_("id", list({int(p["sesion_id"]) for p in pagos_globales}))
+                                    .execute().data or []
+                                )
+                                local_global = {int(l["id"]): l["nombre"] for l in lista_locales_admin}
+                                usuarios_global = {
+                                    int(u["id"]): u.get("usuario", "—")
+                                    for u in (supabase.schema("StudioPilates").table("usuarios_admin").select("id,usuario").execute().data or [])
+                                }
+                                sesion_global_por_id = {int(s["id"]): s for s in sesiones_globales}
+                                pagos_filtrados = [
+                                    p for p in pagos_globales
+                                    if int(sesion_global_por_id.get(int(p["sesion_id"]), {}).get("local_id") or 0) in ids_sede_pagos
+                                ]
+                                grupos_historial_pagos = {}
+                                for pago in pagos_filtrados:
+                                    sesion_pago = sesion_global_por_id.get(int(pago["sesion_id"]), {})
+                                    fecha_clase_pago = datetime.fromisoformat(str(sesion_pago["fecha_clase"])).date() if sesion_pago.get("fecha_clase") else datetime.now(ZoneInfo("America/Lima")).date()
+                                    clave_pago_historial = (
+                                        fecha_clase_pago.year,
+                                        fecha_clase_pago.month,
+                                        int(sesion_pago.get("local_id") or 0),
+                                    )
+                                    grupos_historial_pagos.setdefault(clave_pago_historial, []).append((pago, sesion_pago))
+                                for clave_periodo, filas_lote in sorted(
+                                    grupos_historial_pagos.items(),
+                                    key=lambda item: item[0],
+                                    reverse=True,
+                                ):
+                                    anio_periodo, mes_periodo, id_sede_periodo = clave_periodo
+                                    inicio_lote = datetime(anio_periodo, mes_periodo, 1).date()
+                                    fin_lote = inicio_lote.replace(day=calendario_lib.monthrange(anio_periodo, mes_periodo)[1])
+                                    sede_lote = local_global.get(id_sede_periodo, "—")
+                                    importe_lote = sum(float(p.get("importe") or 0) for p, _ in filas_lote)
+                                    resumen_lote = (
+                                        f"Del {inicio_lote.strftime('%d-%m-%Y')} al {fin_lote.strftime('%d-%m-%Y')} - "
+                                        f"{sede_lote} - S/ {importe_lote:.2f}"
+                                    )
+                                    with st.expander(resumen_lote, expanded=False):
+                                        filas_detalle_lote = []
+                                        for pago, sesion_pago in sorted(filas_lote, key=lambda par: (str(par[1].get("fecha_clase") or ""), str(par[1].get("hora_inicio") or ""))):
+                                            filas_detalle_lote.append({
+                                                "Fecha de pago": fecha_visible(pago.get("fecha_pago")),
+                                                "Fecha de clase": fecha_visible(sesion_pago.get("fecha_clase")),
+                                                "Horario": f"{str(sesion_pago.get('hora_inicio', ''))[:5]}–{str(sesion_pago.get('hora_fin', ''))[:5]}",
+                                                "Sede": sede_lote,
+                                                "Modalidad": sesion_pago.get("tipo_servicio", "—"),
+                                                "Duración": f"{int(pago.get('duracion_minutos') or 0)} min",
+                                                "Importe pagado": f"S/ {float(pago.get('importe') or 0):.2f}",
+                                                "Referencia": pago.get("referencia") or "—",
+                                                "Registrado por": usuarios_global.get(int(pago.get("registrado_por") or 0), "—"),
+                                            })
+                                        st.dataframe(pd.DataFrame(filas_detalle_lote), hide_index=True, use_container_width=True)
+                                st.metric("Total pagado en el listado", f"S/ {sum(float(p.get('importe') or 0) for p in pagos_filtrados):.2f}")
+                            elif instructor_pago_seleccionado:
+                                st.info("Todavía no hay pagos registrados para este instructor y sede.")
                         except Exception as e:
-                            st.warning(f"No se pudo cargar el historial. Verifica que ejecutaste supabase_gestion_instructoras_migration.sql en Supabase. Detalle: {e}")
+                            st.warning(f"No se pudo cargar el historial. Ejecuta supabase_mejoras_planes_y_pagos.sql en Supabase y verifica los permisos. Detalle: {e}")
 
             if "agenda" in paneles_admin:
                 with tab_agenda_inst:
@@ -2951,7 +3235,7 @@ else:
                                 tipo_serv_agenda = st.selectbox("Tipo de Sesión:", ["", "Grupal", "Privado"], key=f"mas_tipo_{st.session_state.clear_agenda}", placeholder="Selecciona una modalidad...")
                                 if tipo_serv_agenda == "Grupal":
                                     aforo_agenda = int(sede_objeto_agenda.get("max_camillas") or 8) if sede_objeto_agenda else None
-                                    st.caption(f"Aforo grupal: **{aforo_agenda if aforo_agenda is not None else '—'} camillas** (según configuración).")
+                                    st.caption(f"Aforo grupal: **{aforo_agenda if aforo_agenda is not None else '—'} Reformers** (según configuración).")
                                 elif tipo_serv_agenda == "Privado": aforo_agenda = 1
                                 else: aforo_agenda = None
                             with col_hora:
@@ -3470,24 +3754,21 @@ else:
                                         paquetes_con_reservas = set(ids_paquetes_historial)
                                         verificacion_reservas_ok = False
                                         st.warning("No se pudo verificar si los paquetes tienen reservas; la reversión quedará deshabilitada por seguridad.")
+                                    paquetes_no_reversibles = []
                                     for paquete_historial in paq_res.data:
                                         if paquete_historial.get("pagado") and not paquete_historial.get("pago_revertido_en"):
                                             id_paquete_historial = int(paquete_historial["id"])
                                             tiene_reservas = id_paquete_historial in paquetes_con_reservas
+                                            if tiene_reservas:
+                                                paquetes_no_reversibles.append(str(paquete_historial["tipo_paquete"]))
+                                                continue
                                             boton_reversion = st.button(
-                                                "Pago confirmado · no reversible (tiene reservas)"
-                                                if tiene_reservas else (
-                                                    "Reversión deshabilitada (no se pudo verificar)"
-                                                    if not verificacion_reservas_ok else
-                                                    f"Revertir pago confirmado · {paquete_historial['tipo_paquete']}"
-                                                ),
+                                                "Reversión deshabilitada (no se pudo verificar)"
+                                                if not verificacion_reservas_ok else
+                                                f"Revertir pago confirmado · {paquete_historial['tipo_paquete']}",
                                                 key=f"revertir_pago_{id_paquete_historial}_{st.session_state.clear_paquete_alumno}",
-                                                disabled=tiene_reservas or not verificacion_reservas_ok,
-                                                help="La base de datos no permite revertir un paquete que ya tiene reservas asociadas."
-                                                if tiene_reservas else (
-                                                    "No se pudo comprobar el historial de reservas."
-                                                    if not verificacion_reservas_ok else None
-                                                ),
+                                                disabled=not verificacion_reservas_ok,
+                                                help="No se pudo comprobar el historial de reservas." if not verificacion_reservas_ok else None,
                                             )
                                             if boton_reversion:
                                                 try:
@@ -3503,6 +3784,11 @@ else:
                                                         st.warning("No se puede revertir: el paquete tiene reservas asociadas. Actualiza la ficha para ver su estado actual.")
                                                     else:
                                                         st.error(f"No se pudo revertir el pago. Revisa los permisos y el estado del paquete: {e}")
+                                    if paquetes_no_reversibles:
+                                        st.caption(
+                                            "Pago confirmado · no reversible (tiene reservas): "
+                                            + ", ".join(paquetes_no_reversibles)
+                                        )
                                 else:
                                     st.info("Este alumno aún no tiene paquetes registrados.")
 
@@ -4162,17 +4448,17 @@ else:
                                     st.error(f"No se pudo guardar la configuración. Ejecuta supabase_mejoras_portal_instructor_horarios.sql en Supabase. Detalle: {e}")
 
                     with calendario_capacidad:
-                        st.caption("Define cuántas camillas grupales puede utilizar cada sede. Agenda tomará este valor automáticamente.")
+                        st.caption("Define cuántos Reformers grupales puede utilizar cada sede. Agenda tomará este valor automáticamente.")
                         if lista_locales_admin:
                             sedes_config = {f"{l['nombre']} {'(Inactiva)' if not l.get('activo', True) else ''}".strip(): l for l in lista_locales_admin}
                             sede_config_label = st.selectbox("Sede", [""] + list(sedes_config), key=f"sede_capacidad_{st.session_state.clear_configuracion}", placeholder="Selecciona una sede...")
                             sede_config = sedes_config.get(sede_config_label)
                             if sede_config:
-                                maximo_sede_config = st.number_input("Máximo de camillas", min_value=1, max_value=50, value=int(sede_config.get("max_camillas") or 8), key=f"max_camillas_config_{sede_config['id']}_{st.session_state.clear_configuracion}")
+                                maximo_sede_config = st.number_input("Máximo de Reformers", min_value=1, max_value=50, value=int(sede_config.get("max_camillas") or 8), key=f"max_camillas_config_{sede_config['id']}_{st.session_state.clear_configuracion}")
                                 if st.button("Guardar capacidad de la sede", key=f"guardar_capacidad_sede_{sede_config['id']}_{st.session_state.clear_configuracion}", type="primary"):
                                     try:
                                         supabase.schema("StudioPilates").table("locales").update({"max_camillas": int(maximo_sede_config)}).eq("id", sede_config["id"]).execute()
-                                        st.session_state.mensaje_resultado_app = f"Aforo de {sede_config['nombre']} actualizado a {int(maximo_sede_config)} camillas."
+                                        st.session_state.mensaje_resultado_app = f"Aforo de {sede_config['nombre']} actualizado a {int(maximo_sede_config)} Reformers."
                                         st.session_state.clear_configuracion += 1
                                         st.rerun()
                                     except Exception as e:
