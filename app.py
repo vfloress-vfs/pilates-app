@@ -1313,7 +1313,7 @@ else:
                                             "p_paquete_id": int(plan_seleccionado["id"]),
                                         }).execute()
                                         if es_paquete_par_sabado(plan_seleccionado.get("tipo_paquete")):
-                                            st.session_state["aviso_portal_mensaje"] = (
+                                            mensaje_confirmacion_reserva = (
                                                 'Se ha reservado la Clase, la cual se habilitará en "Mis clases", '
                                                 "cuando se completen las parejas requeridas."
                                             )
@@ -1321,17 +1321,19 @@ else:
                                             alumnos_requeridos_reserva = minimo_reservas_grupales_sesion(
                                                 sesion_seleccionada, reformers_por_sede_portal
                                             )
-                                            st.session_state["aviso_portal_mensaje"] = (
+                                            mensaje_confirmacion_reserva = (
                                                 'Se ha reservado la clase grupal. Su habilitación se actualizará en "Mis clases" '
                                                 f"cuando se complete el mínimo de {alumnos_requeridos_reserva} alumnos. "
                                                 "Si no se completa antes del plazo, se cancelará la clase y se devolverá tu crédito."
                                             )
                                         else:
-                                            st.session_state["aviso_portal_mensaje"] = "Reserva confirmada. La clase ya se descontó de tu plan."
-                                        st.session_state["aviso_portal"] = True
+                                            mensaje_confirmacion_reserva = "Reserva confirmada. La clase ya se descontó de tu plan."
                                         st.session_state.clear_portal_reserva += 1
                                         st.session_state.pop(sesion_portal_key, None)
-                                        st.rerun()
+                                        st.session_state.pop("aviso_portal_mensaje", None)
+                                        st.session_state.pop("aviso_portal", None)
+                                        st.success(mensaje_confirmacion_reserva)
+                                        st.stop()
                                     except Exception as error_reserva:
                                         detalle_reserva = str(
                                             getattr(error_reserva, "message", None)
