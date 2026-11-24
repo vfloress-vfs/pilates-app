@@ -298,11 +298,10 @@ def normalizar_texto_regla(valor):
     texto = unicodedata.normalize("NFKD", str(valor or "")).casefold()
     return "".join(caracter for caracter in texto if not unicodedata.combining(caracter)).strip()
 
-def es_paquete_par_sabado(nombre_paquete):
-    # Tolera acentos, guiones y etiquetas adicionales del catálogo.
+def es_paquete_duo(nombre_paquete):
     nombre = normalizar_texto_regla(nombre_paquete)
     nombre = " ".join("".join(caracter if caracter.isalnum() else " " for caracter in nombre).split())
-    return "par sabado" in nombre
+    return "duo" in nombre
 
 def minimo_reservas_grupales_sesion(sesion, reformers_por_sede):
     """Mínimo de parejas o alumnos según la mitad de los Reformers disponibles."""
@@ -369,13 +368,6 @@ def seleccionar_fecha_calendario(clave_fecha, fecha, clave_abierto):
     """Selecciona la fecha y cierra el calendario en el siguiente render."""
     st.session_state[clave_fecha] = fecha
     st.session_state[clave_abierto] = False
-
-def seleccionar_solo_una_casilla(claves, clave_activa):
-    """Al marcar una fila, desmarca las demás opciones del mismo grupo."""
-    if st.session_state.get(clave_activa):
-        for clave in claves:
-            if clave != clave_activa:
-                st.session_state[clave] = False
 
 def selector_fecha_disponible(etiqueta, opciones, key, valor_inicial=None, ayuda=None):
     """Muestra un campo de fecha; abre el calendario compacto solo desde el icono."""
@@ -1196,13 +1188,13 @@ else:
                         st.info(f"No hay clases con cupos y dentro del plazo de reserva. Las clases de mañana se reservan hasta las {limite_reserva_manana.strftime('%H:%M')} del día anterior; las de tarde, hasta {limite_reserva_tarde_horas} horas antes.")
                     else:
                         opciones_reserva = []
-                        hay_plan_par_sabado = any(
-                            es_paquete_par_sabado(plan.get("tipo_paquete")) for plan in paquetes_portal
+                        hay_plan_duo = any(
+                            es_paquete_duo(plan.get("tipo_paquete")) for plan in paquetes_portal
                         )
                         hay_candidato_sede_fija = False
                         for plan in paquetes_portal:
                             for sesion in sesiones_reserva_mostrables:
-                                es_par_plan = es_paquete_par_sabado(plan.get("tipo_paquete"))
+                                es_par_plan = es_paquete_duo(plan.get("tipo_paquete"))
                                 es_sabado = sesion["_inicio_dt"].weekday() == 5
                                 es_manana = sesion["_inicio_dt"].time().replace(tzinfo=None) < corte_turno_manana
                                 reglas_dia_plan = (
@@ -1264,8 +1256,8 @@ else:
                                                     st.info("Ya tienes esta clase reservada.")
                                                 else:
                                                     st.caption(f"{cupos_sesion} {'cupos disponibles' if cupos_sesion != 1 else 'cupo disponible'} · Reserva hasta {plazo_reserva.strftime('%d-%m-%Y a las %H:%M')}")
-                                                es_sabado_par = fecha_sesion_card.weekday() == 5
-                                                if es_sabado_par:
+                                                es_sabado_duo = fecha_sesion_card.weekday() == 5
+                                                if es_sabado_duo:
                                                     parejas_inscritas = parejas_por_sesion.get(sesion["id"], 0)
                                                     parejas_requeridas = minimo_reservas_grupales_sesion(sesion, reformers_por_sede_portal)
                                                     parejas_faltantes = max(0, parejas_requeridas - parejas_inscritas)
@@ -1322,11 +1314,11 @@ else:
                                             "p_paquete_id": int(plan_seleccionado["id"]),
                                         }).execute()
                                         inicio_seleccionado_reserva = sesion_seleccionada.get("_inicio_dt")
-                                        es_reserva_par_sabado = (
-                                            es_paquete_par_sabado(plan_seleccionado.get("tipo_paquete"))
+                                        es_reserva_duo = (
+                                            es_paquete_duo(plan_seleccionado.get("tipo_paquete"))
                                             or bool(inicio_seleccionado_reserva and inicio_seleccionado_reserva.weekday() == 5)
                                         )
-                                        if es_reserva_par_sabado:
+                                        if es_reserva_duo:
                                             mensaje_confirmacion_reserva = (
                                                 'Se ha reservado la Clase, la cual se habilitará en "Mis clases", '
                                                 "cuando se completen las parejas requeridas."
@@ -1357,12 +1349,12 @@ else:
                                         detalle_normalizado = normalizar_texto_regla(detalle_reserva)
                                         if "ya tienes una reserva" in detalle_normalizado or "reserva activa" in detalle_normalizado:
                                             st.info("Ya tienes una reserva para este horario. Puedes consultarla en ‘Mis clases’.")
-                                        elif "par sabado" in detalle_normalizado and ("manana" in detalle_normalizado or "grupal" in detalle_normalizado):
-                                            st.warning("Este plan solo permite clases grupales de sábado por la mañana. Elige un horario que cumpla esas condiciones.")
+                                        elif "duo" in detalle_normalizado and ("manana" in detalle_normalizado or "grupal" in detalle_normalizado):
+                                            st.warning("El plan Duo solo permite clases grupales de sábado por la mañana. Elige un horario que cumpla esas condiciones.")
                                         elif "paquete seleccionado" in detalle_normalizado or "paquete no permite" in detalle_normalizado:
                                             st.warning("No se pudo usar ese plan: puede estar vencido, sin créditos disponibles o no corresponder a la sede de la clase. Revisa ‘Mi plan’ o elige otro plan.")
                                         elif "minima para 6 reformers" in detalle_normalizado:
-                                            st.warning("El servidor todavía tiene la regla anterior y está bloqueando las primeras reservas de Par Sábado. El administrador debe volver a ejecutar la migración actualizada supabase_mejoras_planes_y_pagos.sql en Supabase.")
+                                            st.warning("El servidor todavía tiene la regla anterior y está bloqueando las primeras reservas del plan Duo. El administrador debe volver a ejecutar la migración actualizada supabase_mejoras_planes_y_pagos.sql en Supabase.")
                                         elif "dia operativo" in detalle_normalizado or "fecha no es un dia" in detalle_normalizado:
                                             st.warning("La fecha de esta clase no está habilitada en el calendario del estudio. Elige otra fecha o consulta con el estudio.")
                                         elif "plazo para reservar" in detalle_normalizado:
@@ -1374,9 +1366,9 @@ else:
                                         else:
                                             st.error("No se pudo guardar la reserva por una validación del sistema. Tu crédito no se descontó; vuelve a cargar el portal y, si continúa, contacta al estudio indicando el horario elegido.")
                         else:
-                            if hay_plan_par_sabado:
+                            if hay_plan_duo:
                                 st.info(
-                                    "Tu plan Par Sábado permite reservar solo clases grupales de sábado por la mañana. "
+                                    "Tu plan Duo permite reservar solo clases grupales de sábado por la mañana. "
                                     "Todavía no hay una clase de ese tipo con cupo dentro del plazo de reserva. "
                                     "Revisa que el sábado esté habilitado en Configuración y que la clase esté programada."
                                 )
@@ -1425,7 +1417,6 @@ else:
                                 ).in_("id", list(ids_historial)).execute().data or []
                                 datos_sesion_historial = {s["id"]: s for s in filas_sesion_historial}
                             filas_historial = []
-                            ids_reservas_historial = []
                             orden_filas_historial = []
                             for reserva in reservas_alumno:
                                 sesion_hist = datos_sesion_historial.get(reserva.get("sesion_id"), {})
@@ -1448,109 +1439,15 @@ else:
                                     "Clase": sesion_hist.get("tipo_servicio") or reserva.get("tipo_servicio", "—"),
                                     "Instructora": nombre_instructora_portal.get(sesion_hist.get("instructora_id", reserva.get("instructora_id")), "—"),
                                     "Estado": estado_historial,
-                                    "Seleccionar": False,
                                 })
-                                ids_reservas_historial.append(reserva.get("id"))
                                 orden_filas_historial.append((str(fecha_hist or ""), str(hora_hist or ""), len(filas_historial) - 1))
                             orden_indices_historial = [item[2] for item in sorted(orden_filas_historial)]
                             filas_historial = [filas_historial[i] for i in orden_indices_historial]
-                            ids_reservas_historial = [ids_reservas_historial[i] for i in orden_indices_historial]
-                            selector_mis_clases_key = f"seleccionar_reserva_mis_clases_{id_alumno_portal}_{st.session_state.clear_portal_reserva}"
-                            claves_checkbox_reserva = [f"{selector_mis_clases_key}_{id_reserva}" for id_reserva in ids_reservas_historial]
-                            anchos_columnas_historial = [1.0, 0.55, 1.0, 0.95, 1.05, 1.45, 0.52]
-                            encabezados_historial = ["Fecha", "Hora", "Sede", "Clase", "Instructor", "Estado", "Gestión"]
-                            campos_historial = ["Fecha", "Hora", "Sede", "Clase", "Instructora", "Estado"]
-                            st.markdown(
-                                """
-<style>
-@media (max-width: 768px) {
-  div[class*="st-key-mis_clases_"] [data-testid="stHorizontalBlock"] {
-    display: flex !important;
-    flex-direction: row !important;
-    flex-wrap: nowrap !important;
-    gap: .5rem !important;
-    overflow-x: auto !important;
-    -webkit-overflow-scrolling: touch;
-    touch-action: pan-x;
-    padding-bottom: .35rem;
-  }
-  div[class*="st-key-mis_clases_"] [data-testid="column"] { flex-shrink: 0 !important; }
-  div[class*="st-key-mis_clases_"] [data-testid="column"]:nth-child(1) { flex: 0 0 6.5rem !important; }
-  div[class*="st-key-mis_clases_"] [data-testid="column"]:nth-child(2) { flex: 0 0 4.2rem !important; }
-  div[class*="st-key-mis_clases_"] [data-testid="column"]:nth-child(3) { flex: 0 0 7rem !important; }
-  div[class*="st-key-mis_clases_"] [data-testid="column"]:nth-child(4) { flex: 0 0 6rem !important; }
-  div[class*="st-key-mis_clases_"] [data-testid="column"]:nth-child(5) { flex: 0 0 7rem !important; }
-  div[class*="st-key-mis_clases_"] [data-testid="column"]:nth-child(6) { flex: 0 0 9rem !important; }
-  div[class*="st-key-mis_clases_"] [data-testid="column"]:nth-child(7) { flex: 0 0 4rem !important; }
-}
-</style>
-                                """,
-                                unsafe_allow_html=True,
+                            st.dataframe(
+                                pd.DataFrame(filas_historial),
+                                use_container_width=True,
+                                hide_index=True,
                             )
-                            st.caption("En el móvil, desliza la grilla horizontalmente para consultar todas las columnas.")
-                            with st.container(key=f"mis_clases_header_{id_alumno_portal}"):
-                                columnas_encabezado = st.columns(anchos_columnas_historial)
-                                for columna, titulo in zip(columnas_encabezado, encabezados_historial):
-                                    columna.markdown(
-                                        f"<div style='font-size:.78rem;font-weight:700;white-space:nowrap;line-height:2rem'>{html.escape(titulo)}</div>",
-                                        unsafe_allow_html=True,
-                                    )
-
-                            ids_seleccionados = []
-                            for indice_historial, (fila_historial, id_reserva_historial) in enumerate(zip(filas_historial, ids_reservas_historial)):
-                                reserva_fila = next((r for r in reservas_alumno if str(r.get("id")) == str(id_reserva_historial)), {})
-                                sesion_fila = datos_sesion_historial.get(reserva_fila.get("sesion_id"), {})
-                                puede_gestionar = False
-                                motivo_no_gestion = ""
-                                if reserva_fila.get("estado") != "Programada":
-                                    estado_reserva = str(reserva_fila.get("estado") or "sin estado").lower()
-                                    motivo_no_gestion = f"La reserva está {estado_reserva}."
-                                elif es_paquete_par_sabado(nombres_paquetes_historial_portal.get(int(reserva_fila.get("paquete_id") or 0))) or (
-                                    str(sesion_fila.get("fecha_clase") or "").strip()
-                                    and datetime.fromisoformat(str(sesion_fila["fecha_clase"])).date().weekday() == 5
-                                ):
-                                    motivo_no_gestion = "El plan Par Sábado no permite cancelar ni reagendar."
-                                elif sesion_fila.get("estado") != "Programada":
-                                    motivo_no_gestion = "La clase ya no está programada."
-                                else:
-                                    try:
-                                        inicio_fila = datetime.combine(
-                                            datetime.fromisoformat(str(sesion_fila["fecha_clase"])).date(),
-                                            datetime_time.fromisoformat(str(sesion_fila["hora_inicio"])),
-                                        ).replace(tzinfo=ZoneInfo("America/Lima"))
-                                        if inicio_fila <= ahora_portal:
-                                            motivo_no_gestion = "La clase ya pasó."
-                                        elif ahora_portal > limite_reserva_cancelacion(inicio_fila):
-                                            motivo_no_gestion = "Venció el plazo para cancelar o reagendar."
-                                        else:
-                                            puede_gestionar = True
-                                    except (KeyError, TypeError, ValueError):
-                                        motivo_no_gestion = "No se pudo validar la fecha de la clase."
-
-                                clave_checkbox_gestion = f"{selector_mis_clases_key}_{id_reserva_historial}"
-                                if not puede_gestionar:
-                                    st.session_state.pop(clave_checkbox_gestion, None)
-                                with st.container(key=f"mis_clases_fila_{id_alumno_portal}_{id_reserva_historial}"):
-                                    columnas_fila = st.columns(anchos_columnas_historial)
-                                    for columna, campo in zip(columnas_fila[:6], campos_historial):
-                                        valor_celda = str(fila_historial.get(campo, "—"))
-                                        columna.markdown(
-                                            f"<div title='{html.escape(valor_celda, quote=True)}' style='font-size:.78rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;line-height:2.35rem'>{html.escape(valor_celda)}</div>",
-                                            unsafe_allow_html=True,
-                                        )
-                                    marcado = columnas_fila[6].checkbox(
-                                        "Gestionar",
-                                        key=clave_checkbox_gestion,
-                                        disabled=not puede_gestionar,
-                                        label_visibility="collapsed",
-                                        help=motivo_no_gestion or "Marca para cancelar o reagendar esta reserva.",
-                                        on_change=seleccionar_solo_una_casilla,
-                                        args=(claves_checkbox_reserva, clave_checkbox_gestion),
-                                    )
-                                    if marcado:
-                                        ids_seleccionados.append(id_reserva_historial)
-
-                            id_reserva_seleccionada = ids_seleccionados[0] if len(ids_seleccionados) == 1 else None
                             proximas_reservas = [
                                 r for r in reservas_alumno
                                 if r.get("estado") == "Programada" and r.get("sesion_id") in datos_sesion_historial
@@ -1563,7 +1460,7 @@ else:
                             reservas_cancelables = []
                             for reserva_cancelable in proximas_reservas:
                                 sesion_cancelable = datos_sesion_historial[reserva_cancelable["sesion_id"]]
-                                if es_paquete_par_sabado(nombres_paquetes_historial_portal.get(int(reserva_cancelable.get("paquete_id") or 0))) or datetime.fromisoformat(str(sesion_cancelable["fecha_clase"])).date().weekday() == 5:
+                                if es_paquete_duo(nombres_paquetes_historial_portal.get(int(reserva_cancelable.get("paquete_id") or 0))) or datetime.fromisoformat(str(sesion_cancelable["fecha_clase"])).date().weekday() == 5:
                                     continue
                                 inicio_cancelable = datetime.combine(
                                     datetime.fromisoformat(str(sesion_cancelable["fecha_clase"])).date(),
@@ -1573,10 +1470,26 @@ else:
                                 reserva_cancelable["_limite_cancelacion"] = limite_cancelacion
                                 if ahora_portal <= limite_cancelacion:
                                     reservas_cancelables.append(reserva_cancelable)
-                            reserva_seleccionada_cancelable = next(
-                                (r for r in reservas_cancelables if str(r.get("id")) == str(id_reserva_seleccionada)),
-                                None,
-                            )
+                            reservas_cancelables_por_id = {
+                                int(reserva["id"]): reserva for reserva in reservas_cancelables
+                            }
+                            if reservas_cancelables:
+                                id_reserva_seleccionada = st.selectbox(
+                                    "Selecciona una clase para cancelar o reagendar",
+                                    [None, *reservas_cancelables_por_id],
+                                    index=0,
+                                    format_func=lambda id_reserva: "Elige una clase" if id_reserva is None else (
+                                        f"{fecha_visible(datos_sesion_historial[reservas_cancelables_por_id[id_reserva]['sesion_id']].get('fecha_clase'))} · "
+                                        f"{str(datos_sesion_historial[reservas_cancelables_por_id[id_reserva]['sesion_id']].get('hora_inicio') or '')[:5]} · "
+                                        f"{datos_sesion_historial[reservas_cancelables_por_id[id_reserva]['sesion_id']].get('tipo_servicio') or 'Clase'} · "
+                                        f"{nombre_local_portal.get(datos_sesion_historial[reservas_cancelables_por_id[id_reserva]['sesion_id']].get('local_id'), 'Sede')}"
+                                    ),
+                                    key=f"reserva_gestionada_portal_{id_alumno_portal}_{st.session_state.clear_portal_reserva}",
+                                )
+                            else:
+                                id_reserva_seleccionada = None
+                                st.caption("No tienes clases pendientes dentro del plazo permitido para cancelar o reagendar.")
+                            reserva_seleccionada_cancelable = reservas_cancelables_por_id.get(id_reserva_seleccionada)
                             if reserva_seleccionada_cancelable:
                                 pestaña_cancelar, pestaña_reagendar = st.tabs(
                                     ["Cancelar una Reserva", "Reagendar una Reserva"],
@@ -1636,8 +1549,8 @@ else:
                                             if int(s["id"]) != int(reserva_seleccionada_cancelable.get("sesion_id") or 0)
                                             and int(s["id"]) not in sesiones_reservadas_alumno
                                             and paquete_reagenda
-                                            and (es_paquete_par_sabado(paquete_reagenda.get("tipo_paquete")) == (s["_inicio_dt"].weekday() == 5))
-                                            and (not es_paquete_par_sabado(paquete_reagenda.get("tipo_paquete")) or (s["_inicio_dt"].time().replace(tzinfo=None) < corte_turno_manana and s.get("tipo_servicio") == "Grupal"))
+                                            and (es_paquete_duo(paquete_reagenda.get("tipo_paquete")) == (s["_inicio_dt"].weekday() == 5))
+                                            and (not es_paquete_duo(paquete_reagenda.get("tipo_paquete")) or (s["_inicio_dt"].time().replace(tzinfo=None) < corte_turno_manana and s.get("tipo_servicio") == "Grupal"))
                                             and (paquete_reagenda.get("modalidad_plan") != "Fixed"
                                                  or paquete_reagenda.get("local_id_fijo") == s.get("local_id"))
                                         ]
@@ -1721,22 +1634,22 @@ else:
                     st.subheader("Términos y Condiciones de Clases y Paquetes")
                     st.markdown(
                         """
-> Para garantizar una atención personalizada, la higiene de nuestros equipos y la disponibilidad de nuestros 6 reformers para todos los alumnos, al adquirir cualquier plan aceptas las siguientes políticas:
+> Para garantizar una atención personalizada, la higiene de nuestros equipos y la disponibilidad de los Reformers registrados en la Configuración para todos los alumnos, al adquirir cualquier plan aceptas las siguientes políticas:
 
-1. **Vigencia y no congelamiento (*No Freezing*):** Todos los paquetes de 1, 4, 8 y 12 sesiones tienen una vigencia estricta de **30 días calendario** desde la fecha de compra (o primera reserva). La Membresía Ilimitada tiene vigencia de **60 días calendario** (máximo 1 clase por día, de lunes a viernes). Los planes **no se congelan ni extienden** bajo ningún motivo.
+1. **Vigencia y no congelamiento (*No Freezing*):** Todos los paquetes de 1, 4, 8 y 12 sesiones tienen una vigencia estricta de **30 días calendario** desde la fecha de compra (o primera reserva). El plan **Unlimited** tiene vigencia de **60 días calendario** (máximo 1 clase por día, de lunes a viernes). Los planes **no se congelan ni extienden** bajo ningún motivo.
 2. **Cancelaciones y reprogramaciones por el alumno:** Puedes cancelar y reprogramar tus sesiones desde la aplicación únicamente **dentro del periodo de vigencia de tu paquete** (sujeto a disponibilidad de máquinas) respetando los siguientes plazos límite:
    - **Clases de la mañana (Lun–Vie):** Hasta las **7:00 p. m.** del día anterior.
    - **Clases de la tarde (Lun–Vie):** Hasta **4 horas antes** del inicio de la clase.
-   - **Par Sábado:** No cuenta con Cancelaciones o reprogramaciones.  
+   - **Duo:** No cuenta con cancelaciones o reprogramaciones.  
      *(Las clases no tomadas al vencer el plan se pierden automáticamente).*
-3. **Quórum mínimo de apertura:** Nuestras clases funcionan con un mínimo del **50% de reformers reservados (3 alumnos)**.
-4. **Aviso por falta de quórum (por el estudio):** En caso de no alcanzarse el mínimo de 3 alumnos al cierre de reservas (**7:00 p. m.** del día anterior para turnos mañana, o **4 horas antes** para turnos tarde), el estudio notificará la cancelación de la clase a través de la aplicación. En estos casos, tu sesión regresará intacta a tu paquete para que puedas reagendarla.
+3. **Quórum mínimo de apertura:** La clase requiere reservas equivalentes a la mitad de los Reformers registrados para la sede, redondeando hacia abajo: con **6 o 7 Reformers se requieren 3 reservas**; con **4 o 5 se requieren 2**. Para Duo cada reserva corresponde a una pareja; en las clases grupales, a un alumno.
+4. **Aviso por falta de quórum (por el estudio):** En caso de no alcanzarse el mínimo requerido al cierre de reservas (**7:00 p. m.** del día anterior para turnos mañana, o **4 horas antes** para turnos tarde), el estudio notificará la cancelación de la clase a través de la aplicación. En estos casos, tu sesión regresará intacta a tu paquete para que puedas reagendarla.
 5. **Puntualidad y tiempo de tolerancia:** Te recomendamos llegar **10 minutos antes** de tu sesión para acomodarte y preparar tu máquina. Por respeto al instructor y a tus compañeros, **pasados los 5 minutos de iniciada la clase no se permitirá el ingreso** a la sala.
 6. **Cancelaciones fuera de plazo, tardanzas e Inasistencias (*No-Show*):** Todo alumno que llegue fuera del tiempo de tolerancia (pasados los 5 minutos) o no asista a la clase reservada, tendrá la sesión marcada como **Inasistencia**:
-   - **Paquetes por sesiones (1, 4, 8, 12 y Par Sábado):** Se descontará automáticamente **1 sesión** del paquete.
-   - **Membresía Ilimitada:** Se descontará **1 día calendario de vigencia** de la membresía.
+   - **Paquetes por sesiones (1, 4, 8, 12 y Duo):** Se descontará automáticamente **1 sesión** del paquete.
+   - **Plan Unlimited:** Se descontará **1 día calendario de vigencia** de la membresía.
 7. **Higiene y vestimenta obligatoria:** Por motivos de higiene y seguridad sobre los reformers, es **obligatorio el uso de medias antideslizantes** durante toda la sesión.
-8. **Condiciones del Plan Par Sábado:** Válido exclusivamente para los 4 sábados consecutivos del mes contratado, en el turno mañana (7:00 a. m. – 12:00 m.). Las sesiones de este plan promocional no son transferibles ni recuperables de lunes a viernes.
+8. **Condiciones del Plan Duo:** Válido exclusivamente para los 4 sábados consecutivos del mes contratado, en el turno mañana (7:00 a. m. – 12:00 m.). Las sesiones de este plan promocional no son transferibles ni recuperables de lunes a viernes.
                         """
                     )
             except Exception as e:
@@ -3071,7 +2984,7 @@ else:
                                                         st.caption(f"Aforo resultante: {aforo_nuevo_sesion} Reformers · Ocupados: {reformers_sesion_ocupados}")
                                                         cambio_invalido_aforo = reformers_sesion_ocupados > aforo_nuevo_sesion or (clase_es_sabado and nuevo_tipo_sesion != "Grupal")
                                                         if cambio_invalido_aforo:
-                                                            st.warning("La modalidad elegida no admite la ocupación actual, o el horario sabatino debe seguir siendo grupal para Par Sábado.")
+                                            st.warning("La modalidad elegida no admite la ocupación actual, o el horario sabatino debe seguir siendo grupal para el plan Duo.")
                                                         if st.button(
                                                             "Guardar cambios de la clase",
                                                             key=f"guardar_modificar_sesion_{sesion_seleccionada_gestion['id']}_{st.session_state.clear_estado_sesion}",
