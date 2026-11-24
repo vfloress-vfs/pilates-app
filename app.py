@@ -2984,7 +2984,7 @@ else:
                                                         st.caption(f"Aforo resultante: {aforo_nuevo_sesion} Reformers · Ocupados: {reformers_sesion_ocupados}")
                                                         cambio_invalido_aforo = reformers_sesion_ocupados > aforo_nuevo_sesion or (clase_es_sabado and nuevo_tipo_sesion != "Grupal")
                                                         if cambio_invalido_aforo:
-                                            st.warning("La modalidad elegida no admite la ocupación actual, o el horario sabatino debe seguir siendo grupal para el plan Duo.")
+                                                            st.warning("La modalidad elegida no admite la ocupación actual, o el horario sabatino debe seguir siendo grupal para el plan Duo.")
                                                         if st.button(
                                                             "Guardar cambios de la clase",
                                                             key=f"guardar_modificar_sesion_{sesion_seleccionada_gestion['id']}_{st.session_state.clear_estado_sesion}",
