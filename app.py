@@ -314,12 +314,12 @@ def minimo_reservas_grupales_sesion(sesion, reformers_por_sede):
 
 def dibujar_filas_agenda_instructora(sesiones, id_instructora, pagos_por_sesion, reservas_por_sesion, reservas_activas_por_sesion, reformers_ocupados_por_sesion, locales_por_id):
     """Dibuja una tabla de sesiones y devuelve las filas marcadas para gestión."""
-    anchos = [0.9, 0.95, 1.0, 0.9, 0.7, 0.8, 0.8, 0.6]
+    anchos = [0.9, 0.95, 1.0, 0.9, 1.0, 0.8, 0.8, 0.6]
     encabezados = ["Fecha", "Horario", "Sede", "Clase", "Reformers", "Estado", "Asistencia", "Gestión"]
     columnas = st.columns(anchos)
     for columna, titulo in zip(columnas, encabezados):
         columna.markdown(
-            f"<div style='font-size:.82rem;font-weight:700;white-space:normal;line-height:1.4rem'>{html.escape(titulo)}</div>",
+            f"<div style='font-size:.82rem;font-weight:700;white-space:{'nowrap' if titulo == 'Reformers' else 'normal'};line-height:1.4rem'>{html.escape(titulo)}</div>",
             unsafe_allow_html=True,
         )
     ids_seleccionadas = []
@@ -348,10 +348,11 @@ def dibujar_filas_agenda_instructora(sesiones, id_instructora, pagos_por_sesion,
             sesion.get("estado", "—"),
             ", ".join(sorted({r["estado"] for r in reservas_por_sesion.get(sesion["id"], [])})) or "—",
         ]
-        for columna, valor in zip(columnas_fila[:7], valores):
+        for indice_valor, (columna, valor) in enumerate(zip(columnas_fila[:7], valores)):
             texto = str(valor)
+            estilo_ajuste = "white-space:nowrap;overflow-wrap:normal;" if indice_valor == 4 else "white-space:normal;overflow-wrap:anywhere;"
             columna.markdown(
-                f"<div title='{html.escape(texto, quote=True)}' style='font-size:.82rem;white-space:normal;overflow-wrap:anywhere;line-height:1.35rem;min-height:2.2rem;padding:.3rem 0'>{html.escape(texto)}</div>",
+                f"<div title='{html.escape(texto, quote=True)}' style='font-size:.82rem;{estilo_ajuste}line-height:1.35rem;min-height:2.2rem;padding:.3rem 0'>{html.escape(texto)}</div>",
                 unsafe_allow_html=True,
             )
         clave = f"gestion_sesion_{id_instructora}_{sesion['id']}_{st.session_state.clear_estado_sesion}"
@@ -720,6 +721,40 @@ def hay_sesion_autenticada():
         or st.session_state.get("instructor_sesion_id")
     )
 
+def actualizar_marca_actividad():
+    st.session_state["_app_ultima_actividad"] = datetime.now(ZoneInfo("UTC")).timestamp()
+
+componente_actividad = st.components.v2.component(
+    "studiopilates_activity_tracker",
+    html="<span aria-hidden='true' style='display:none'></span>",
+    js="""
+    export default function(component) {
+        const { setStateValue } = component;
+        let ultimoEnvio = 0;
+        const registrar = () => {
+            const ahora = Date.now();
+            if (ahora - ultimoEnvio < 15000) return;
+            ultimoEnvio = ahora;
+            setStateValue('actividad', ahora);
+        };
+        const eventos = ['pointerdown', 'keydown', 'input', 'scroll', 'touchstart'];
+        eventos.forEach((evento) => document.addEventListener(evento, registrar, {capture: true, passive: true}));
+        return () => eventos.forEach((evento) => document.removeEventListener(evento, registrar, true));
+    }
+    """,
+)
+
+def registrar_actividad_navegador():
+    """Mantiene viva la sesión al detectar interacción real, incluso dentro de formularios."""
+    componente_actividad(
+        key="studiopilates_activity_tracker",
+        default={"actividad": 0},
+        on_actividad_change=actualizar_marca_actividad,
+    )
+
+if hay_sesion_autenticada():
+    registrar_actividad_navegador()
+
 @st.fragment(run_every="10s")
 def vigilar_inactividad_app():
     if not hay_sesion_autenticada():
@@ -733,10 +768,8 @@ def vigilar_inactividad_app():
 vigilar_inactividad_app()
 if hay_sesion_autenticada():
     ahora_actividad = datetime.now(ZoneInfo("UTC")).timestamp()
-    ultima_actividad = st.session_state.get("_app_ultima_actividad")
-    if ultima_actividad and ahora_actividad - ultima_actividad >= 300:
-        expirar_sesiones_app()
-        st.rerun()
+    # Cualquier evento que ejecute la app de nuevo cuenta como actividad.
+    # El fragmento vigila el tiempo entre estos eventos y expira solo si no hay uso.
     st.session_state["_app_ultima_actividad"] = ahora_actividad
 else:
     st.session_state["_app_ultima_actividad"] = None
@@ -826,12 +859,6 @@ else:
         ahora_utc = datetime.now(ZoneInfo("UTC"))
         alumno_portal_id = st.session_state.get("alumno_portal_id")
         if alumno_portal_id is not None:
-            ultima_actividad = st.session_state.get("alumno_portal_ultima_actividad", 0)
-            if ahora_utc.timestamp() - ultima_actividad >= 300:
-                for clave_alumno in ("alumno_portal_id", "alumno_portal_hash", "alumno_portal_telefono", "alumno_portal_ultima_actividad"):
-                    st.session_state.pop(clave_alumno, None)
-                st.warning("Tu sesión expiró por inactividad. Ingresa nuevamente.")
-                st.rerun()
             st.session_state.alumno_portal_ultima_actividad = ahora_utc.timestamp()
             try:
                 cuenta_alumno = (
@@ -1394,11 +1421,11 @@ else:
                         nombres_paquetes_historial_portal = {}
                     reservas_pasadas = [r for r in reservas_alumno if r.get("estado") in {"Asistencia", "Inasistencia"}]
                     reservas_canceladas = [r for r in reservas_alumno if str(r.get("estado") or "").startswith("Cancelada")]
-                    with st.expander("Clases con asistencia", expanded=False):
+                    with st.expander("Clases No canceladas", expanded=False):
                         if reservas_pasadas:
                             st.dataframe(pd.DataFrame([{"Fecha": fecha_visible(r.get("fecha_clase")), "Hora": str(r.get("hora_clase") or "")[:5], "Clase": r.get("tipo_servicio") or "—", "Estado": r.get("estado")} for r in reservas_pasadas]), hide_index=True, use_container_width=True)
                         else:
-                            st.caption("Aún no tienes clases con asistencia registrada.")
+                            st.caption("Aún no tienes clases no canceladas.")
                     with st.expander("Clases canceladas", expanded=False):
                         if reservas_canceladas:
                             st.dataframe(pd.DataFrame([{"Fecha": fecha_visible(r.get("fecha_clase")), "Hora": str(r.get("hora_clase") or "")[:5], "Clase": r.get("tipo_servicio") or "—", "Estado": "Cancelada por no completar el mínimo; el crédito fue devuelto." if r.get("estado") == "Cancelada por cupo mínimo" else r.get("estado")} for r in reservas_canceladas]), hide_index=True, use_container_width=True)
@@ -1671,18 +1698,43 @@ else:
                 try:
                     cuenta_instructor = (supabase.schema("StudioPilates").table("usuarios_instructores")
                         .select("id,usuario,contrasena_encriptada,instructora_id,activo,debe_cambiar_contrasena,acceso_bloqueado_hasta,instructoras(nombre,activo)")
-                        .eq("usuario", usuario_instructor_login.strip()).eq("activo", True).limit(1).execute().data or [])
+                        .ilike("usuario", usuario_instructor_login.strip()).limit(1).execute().data or [])
                     cuenta = cuenta_instructor[0] if cuenta_instructor else None
-                    persona = (cuenta or {}).get("instructoras") or {}
+                    persona_relacionada = (cuenta or {}).get("instructoras") or {}
+                    persona = (
+                        persona_relacionada[0] if persona_relacionada else {}
+                    ) if isinstance(persona_relacionada, list) else persona_relacionada
                     coincide_instructor = False
-                    if cuenta and persona.get("activo", True):
+                    if not cuenta:
+                        st.error("No encontramos ese usuario. Verifica el nombre de usuario o solicita a la administración que revise tu cuenta.")
+                    elif not cuenta.get("activo", False):
+                        st.error("Tu cuenta de acceso está desactivada. Solicita a la administración que la habilite.")
+                    elif not persona.get("activo", True):
+                        st.error("Tu ficha de instructor está inactiva. Solicita a la administración que revise tu estado.")
+                    elif cuenta.get("instructora_id") is None:
+                        st.error("Tu usuario no está vinculado a una ficha de instructor. Solicita a la administración que complete el vínculo.")
+                    else:
                         bloqueo_inst = convertir_a_datetime_utc(cuenta.get("acceso_bloqueado_hasta"))
                         if bloqueo_inst and bloqueo_inst > datetime.now(ZoneInfo("UTC")):
                             st.error("Acceso temporalmente bloqueado por intentos fallidos. Intenta más tarde o contacta a la administración.")
                             st.stop()
-                        coincide_instructor, _ = verificar_contrasena(clave_instructor_login, cuenta["contrasena_encriptada"])
-                        resultado_intento_inst = supabase.rpc("registrar_intento_login_instructor", {"p_usuario_id": int(cuenta["id"]), "p_login_correcto": bool(coincide_instructor)}).execute().data or []
-                        coincide_instructor = coincide_instructor and bool(resultado_intento_inst and resultado_intento_inst[0].get("acceso_permitido"))
+                        contrasena_correcta_inst, _ = verificar_contrasena(
+                            clave_instructor_login, cuenta.get("contrasena_encriptada")
+                        )
+                        resultado_intento_inst = supabase.rpc("registrar_intento_login_instructor", {"p_usuario_id": int(cuenta["id"]), "p_login_correcto": bool(contrasena_correcta_inst)}).execute().data or []
+                        acceso_permitido_inst = bool(resultado_intento_inst and resultado_intento_inst[0].get("acceso_permitido"))
+                        coincide_instructor = contrasena_correcta_inst and acceso_permitido_inst
+                        if not coincide_instructor:
+                            bloqueo_inst_resultado = convertir_a_datetime_utc(
+                                resultado_intento_inst[0].get("bloqueado_hasta")
+                                if resultado_intento_inst else None
+                            )
+                            if bloqueo_inst_resultado and bloqueo_inst_resultado > datetime.now(ZoneInfo("UTC")):
+                                st.error("Se alcanzó el límite de intentos. El acceso está bloqueado temporalmente; vuelve a intentar más tarde.")
+                            elif not contrasena_correcta_inst:
+                                st.error("La contraseña no coincide. Verifica que estés usando la contraseña actual asignada por la administración.")
+                            else:
+                                st.error("No se pudo autorizar el acceso. Solicita a la administración que revise los permisos de tu cuenta.")
                     if coincide_instructor:
                         st.session_state.instructor_sesion_id = cuenta["instructora_id"]
                         st.session_state.instructor_sesion_nombre = persona.get("nombre", cuenta["usuario"])
@@ -1691,21 +1743,10 @@ else:
                         st.session_state.instructor_ultima_actividad = datetime.now(ZoneInfo("UTC")).timestamp()
                         st.session_state.instructor_debe_cambiar_clave = bool(cuenta.get("debe_cambiar_contrasena", False))
                         st.rerun()
-                    else:
-                        st.error("Usuario o contraseña incorrectos, o la cuenta está inactiva. Consulta con la administración.")
                 except Exception as error_login_instructor:
                     st.error(f"No se pudo validar el acceso. Ejecuta la migración de cuentas de instructores en Supabase. Detalle: {error_login_instructor}")
         else:
             id_instructor_portal = st.session_state.instructor_sesion_id
-            if datetime.now(ZoneInfo("UTC")).timestamp() - st.session_state.get("instructor_ultima_actividad", 0) >= 300:
-                st.session_state.instructor_sesion_id = None
-                st.session_state.instructor_sesion_nombre = ""
-                st.session_state.instructor_cuenta_id = None
-                st.session_state.pop("instructor_hash_sesion", None)
-                st.session_state.pop("instructor_ultima_actividad", None)
-                st.session_state.instructor_debe_cambiar_clave = False
-                st.warning("Tu sesión expiró por inactividad. Ingresa nuevamente.")
-                st.rerun()
             st.session_state.instructor_ultima_actividad = datetime.now(ZoneInfo("UTC")).timestamp()
             if st.sidebar.button("Cerrar sesión de instructor", key="salir_sesion_instructor", type="primary"):
                 st.session_state.instructor_sesion_id = None
@@ -1966,16 +2007,6 @@ else:
                     st.error(f"❌ Error al validar credenciales: {e}")
         else:
             ahora_admin_utc = datetime.now(ZoneInfo("UTC")).timestamp()
-            if ahora_admin_utc - st.session_state.get("admin_ultima_actividad", 0) >= 300:
-                st.session_state.logged_in = False
-                st.session_state.admin_id = None
-                st.session_state.admin_usuario = ""
-                st.session_state.admin_es_superadmin = False
-                st.session_state.admin_permisos = []
-                st.session_state.admin_migracion_pendiente = False
-                st.session_state.pop("admin_ultima_actividad", None)
-                st.warning("Tu sesión expiró por 5 minutos de inactividad. Ingresa nuevamente.")
-                st.rerun()
             st.session_state.admin_ultima_actividad = ahora_admin_utc
             st.title(":material/dashboard: Panel de Control")
             mensaje_resultado_app = st.session_state.pop("mensaje_resultado_app", None)
@@ -3013,7 +3044,7 @@ else:
 
                                     if sesiones_por_pagar:
                                         st.markdown("#### Registrar pago de clases con asistencia validada")
-                                        st.caption("Selecciona el mes y la sede para registrar en un solo movimiento todas las clases pendientes de pago.")
+                                        st.caption("Selecciona el periodo real y la sede para registrar en un solo movimiento las clases pendientes de pago.")
                                         grupos_pago = {}
                                         for sesion_pendiente in sesiones_por_pagar:
                                             fecha_pendiente = datetime.fromisoformat(str(sesion_pendiente["fecha_clase"])).date()
@@ -3022,10 +3053,13 @@ else:
                                             grupos_pago.setdefault(clave_grupo_pago, []).append(sesion_pendiente)
                                         pagos_opciones = {}
                                         for clave_grupo_pago, sesiones_grupo in sorted(grupos_pago.items()):
-                                            anio_pago, mes_pago, id_sede_pago = clave_grupo_pago
-                                            ultimo_dia_mes = calendario_lib.monthrange(anio_pago, mes_pago)[1]
-                                            inicio_periodo = datetime(anio_pago, mes_pago, 1).date()
-                                            fin_periodo = datetime(anio_pago, mes_pago, ultimo_dia_mes).date()
+                                            _, _, id_sede_pago = clave_grupo_pago
+                                            fechas_grupo_pago = [
+                                                datetime.fromisoformat(str(sesion["fecha_clase"])).date()
+                                                for sesion in sesiones_grupo
+                                            ]
+                                            inicio_periodo = min(fechas_grupo_pago)
+                                            fin_periodo = max(fechas_grupo_pago)
                                             nombre_sede_pago = locales_por_id_inst.get(id_sede_pago, "Sede")
                                             importe_grupo = sum(monto_fijo_sesion(s) for s in sesiones_grupo)
                                             etiqueta_grupo_pago = (
