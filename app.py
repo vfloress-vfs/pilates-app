@@ -248,6 +248,22 @@ def fecha_visible(valor, incluir_hora=False):
                 return texto
     return fecha.strftime("%d-%m-%Y %H:%M" if incluir_hora else "%d-%m-%Y")
 
+def mes_anio_desde_fecha(valor):
+    """Devuelve (año, mes) y el nombre del mes en español para agrupar historiales."""
+    nombres_meses = (
+        "Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio",
+        "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre",
+    )
+    try:
+        if isinstance(valor, datetime):
+            fecha = valor
+        else:
+            fecha = datetime.fromisoformat(str(valor).strip().replace("Z", "+00:00"))
+        clave = (fecha.year, fecha.month)
+        return clave, f"{nombres_meses[fecha.month - 1]} {fecha.year}"
+    except (TypeError, ValueError, IndexError):
+        return None, "Sin fecha"
+
 try:
     @st.cache_data(ttl=60, show_spinner=False)
     def cargar_configuracion_estudio():
@@ -314,12 +330,12 @@ def minimo_reservas_grupales_sesion(sesion, reformers_por_sede):
 
 def dibujar_filas_agenda_instructora(sesiones, id_instructora, pagos_por_sesion, reservas_por_sesion, reservas_activas_por_sesion, reformers_ocupados_por_sesion, locales_por_id):
     """Dibuja una tabla de sesiones y devuelve las filas marcadas para gestión."""
-    anchos = [0.9, 0.95, 1.0, 0.9, 1.0, 0.8, 0.8, 0.6]
+    anchos = [0.9, 0.95, 1.0, 0.9, 1.0, 1.0, 1.1, 0.85]
     encabezados = ["Fecha", "Horario", "Sede", "Clase", "Reformers", "Estado", "Asistencia", "Gestión"]
     columnas = st.columns(anchos)
     for columna, titulo in zip(columnas, encabezados):
         columna.markdown(
-            f"<div style='font-size:.82rem;font-weight:700;white-space:{'nowrap' if titulo == 'Reformers' else 'normal'};line-height:1.4rem'>{html.escape(titulo)}</div>",
+            f"<div style='font-size:.8rem;font-weight:700;white-space:{'nowrap' if titulo in {'Reformers', 'Estado', 'Asistencia', 'Gestión'} else 'normal'};line-height:1.4rem'>{html.escape(titulo)}</div>",
             unsafe_allow_html=True,
         )
     ids_seleccionadas = []
@@ -350,9 +366,9 @@ def dibujar_filas_agenda_instructora(sesiones, id_instructora, pagos_por_sesion,
         ]
         for indice_valor, (columna, valor) in enumerate(zip(columnas_fila[:7], valores)):
             texto = str(valor)
-            estilo_ajuste = "white-space:nowrap;overflow-wrap:normal;" if indice_valor == 4 else "white-space:normal;overflow-wrap:anywhere;"
+            estilo_ajuste = "white-space:nowrap;overflow-wrap:normal;" if indice_valor in {4, 5, 6} else "white-space:normal;overflow-wrap:anywhere;"
             columna.markdown(
-                f"<div title='{html.escape(texto, quote=True)}' style='font-size:.82rem;{estilo_ajuste}line-height:1.35rem;min-height:2.2rem;padding:.3rem 0'>{html.escape(texto)}</div>",
+                f"<div title='{html.escape(texto, quote=True)}' style='font-size:.78rem;{estilo_ajuste}line-height:1.35rem;min-height:2.2rem;padding:.3rem 0'>{html.escape(texto)}</div>",
                 unsafe_allow_html=True,
             )
         clave = f"gestion_sesion_{id_instructora}_{sesion['id']}_{st.session_state.clear_estado_sesion}"
@@ -1844,33 +1860,43 @@ else:
                     "1. Mi agenda", "2. Clases realizadas", "3. Pagos recibidos"
                 ], key="tabs_portal_instructor", on_change="rerun")
 
-                def mostrar_clases_instructor(filas_sesiones):
+                def mostrar_clases_instructor(filas_sesiones, agrupar_por_mes=False):
                     if not filas_sesiones:
                         st.info("No hay clases para mostrar en este periodo.")
                         return
-                    filas_agenda_instructor = []
+                    sesiones_por_mes = {}
                     for clase_instructor in filas_sesiones:
-                        totales = conteo_alumnos_sesion.get(clase_instructor["id"], {})
-                        filas_agenda_instructor.append({
-                            "Fecha": fecha_visible(clase_instructor["fecha_clase"]),
-                            "Horario": f"{str(clase_instructor['hora_inicio'])[:5]}–{str(clase_instructor['hora_fin'])[:5]}",
-                            "Sede": sedes_instructor_map.get(int(clase_instructor["local_id"]), "Sede"),
-                            "Clase": clase_instructor.get("tipo_servicio", "—"),
-                            "Aforo": int(clase_instructor.get("capacidad") or 0),
-                            "Reservas": totales.get("programados", 0),
-                            "Asistieron": totales.get("asistencias", 0),
-                            "Inasistencias": totales.get("inasistencias", 0),
-                            "Cancelados": totales.get("cancelados", 0),
-                            "Estado": clase_instructor.get("estado", "—"),
-                        })
-                    st.dataframe(pd.DataFrame(filas_agenda_instructor), hide_index=True, use_container_width=True)
+                        (clave_mes, etiqueta_mes) = mes_anio_desde_fecha(clase_instructor.get("fecha_clase"))
+                        clave_grupo = clave_mes if clave_mes is not None else (0, 0)
+                        sesiones_por_mes.setdefault(clave_grupo, {"etiqueta": etiqueta_mes, "sesiones": []})["sesiones"].append(clase_instructor)
+
+                    grupos_a_mostrar = sorted(sesiones_por_mes.items(), reverse=True) if agrupar_por_mes else [(None, {"etiqueta": "", "sesiones": filas_sesiones})]
+                    for indice_grupo, (_, grupo_mes) in enumerate(grupos_a_mostrar):
+                        contexto = st.expander(grupo_mes["etiqueta"], expanded=(indice_grupo == 0)) if agrupar_por_mes else st.container()
+                        with contexto:
+                            filas_agenda_instructor = []
+                            for clase_instructor in grupo_mes["sesiones"]:
+                                totales = conteo_alumnos_sesion.get(clase_instructor["id"], {})
+                                filas_agenda_instructor.append({
+                                    "Fecha": fecha_visible(clase_instructor["fecha_clase"]),
+                                    "Horario": f"{str(clase_instructor['hora_inicio'])[:5]}–{str(clase_instructor['hora_fin'])[:5]}",
+                                    "Sede": sedes_instructor_map.get(int(clase_instructor["local_id"]), "Sede"),
+                                    "Clase": clase_instructor.get("tipo_servicio", "—"),
+                                    "Aforo": int(clase_instructor.get("capacidad") or 0),
+                                    "Reservas": totales.get("programados", 0),
+                                    "Asistieron": totales.get("asistencias", 0),
+                                    "Inasistencias": totales.get("inasistencias", 0),
+                                    "Cancelados": totales.get("cancelados", 0),
+                                    "Estado": clase_instructor.get("estado", "—"),
+                                })
+                            st.dataframe(pd.DataFrame(filas_agenda_instructor), hide_index=True, use_container_width=True)
 
                 with tab_agenda_instructor:
                     st.caption("Consulta tus próximas clases y el número de alumnos reservados.")
                     mostrar_clases_instructor(agenda_futura_instructor)
                 with tab_historial_instructor:
                     st.caption("Consulta las clases impartidas, las asistencias y las inasistencias registradas.")
-                    mostrar_clases_instructor(historial_clases_instructor)
+                    mostrar_clases_instructor(historial_clases_instructor, agrupar_por_mes=True)
                 with tab_pagos_instructor:
                     pagos_instructor_portal = supabase.schema("StudioPilates").table("pagos_instructoras").select(
                         "id,sesion_id,fecha_pago,importe,referencia"
@@ -1880,10 +1906,12 @@ else:
                             "id,local_id,fecha_clase,hora_inicio,tipo_servicio"
                         ).in_("id", [p["sesion_id"] for p in pagos_instructor_portal]).execute().data or []
                         sesiones_pago_map = {s["id"]: s for s in sesiones_pago_portal}
-                        filas_pagos_instructor = []
+                        filas_pagos_por_mes = {}
                         for pago_instructor in pagos_instructor_portal:
                             sesion_pago_instructor = sesiones_pago_map.get(pago_instructor["sesion_id"], {})
-                            filas_pagos_instructor.append({
+                            clave_mes_pago, etiqueta_mes_pago = mes_anio_desde_fecha(pago_instructor.get("fecha_pago"))
+                            clave_grupo_mes_pago = clave_mes_pago if clave_mes_pago is not None else (0, 0)
+                            filas_pagos_por_mes.setdefault(clave_grupo_mes_pago, {"etiqueta": etiqueta_mes_pago, "filas": []})["filas"].append({
                                 "Fecha de clase": fecha_visible(sesion_pago_instructor.get("fecha_clase")),
                                 "Horario": str(sesion_pago_instructor.get("hora_inicio", ""))[:5],
                                 "Fecha de pago": fecha_visible(pago_instructor.get("fecha_pago")),
@@ -1893,7 +1921,9 @@ else:
                                 "Referencia": pago_instructor.get("referencia") or "—",
                             })
                         st.metric("Total recibido", f"S/ {sum(float(p.get('importe') or 0) for p in pagos_instructor_portal):.2f}")
-                        st.dataframe(pd.DataFrame(filas_pagos_instructor), hide_index=True, use_container_width=True)
+                        for indice_grupo_pago, (_, grupo_pagos_mes) in enumerate(sorted(filas_pagos_por_mes.items(), reverse=True)):
+                            with st.expander(grupo_pagos_mes["etiqueta"], expanded=(indice_grupo_pago == 0)):
+                                st.dataframe(pd.DataFrame(grupo_pagos_mes["filas"]), hide_index=True, use_container_width=True)
                     else:
                         st.info("Aún no hay pagos registrados a tu nombre.")
             except Exception as error_portal_instructor:
@@ -3082,8 +3112,7 @@ else:
                                         )
                                         grupo_pago_seleccionado = pagos_opciones.get(pago_sesion_label)
                                         if grupo_pago_seleccionado:
-                                            texto_periodo_pago = f"del {grupo_pago_seleccionado['inicio'].strftime('%d-%m-%Y')} al {grupo_pago_seleccionado['fin'].strftime('%d-%m-%Y')}"
-                                            referencia_predeterminada = f"Por {len(grupo_pago_seleccionado['sesiones'])} clases - {texto_periodo_pago} - {grupo_pago_seleccionado['sede']}"
+                                            referencia_predeterminada = f"Pagado el {datetime.now(ZoneInfo('America/Lima')).strftime('%d-%m-%Y %H:%M')}"
                                             llave_referencia_pago = hashlib.sha256(pago_sesion_label.encode("utf-8")).hexdigest()[:12]
                                             pago_referencia = st.text_input(
                                                 "Referencia o nota del pago",
